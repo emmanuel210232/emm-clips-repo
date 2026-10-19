@@ -1,0 +1,11 @@
+{
+  "name": "emm-clips",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Emm Clips — corta groserías y crea Shorts con IA de directos (local, GPU)",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": { "node": ">=20" }
+}

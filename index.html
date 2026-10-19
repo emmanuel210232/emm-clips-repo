@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Emm Clips</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><span class="badge">Asistente</span></header>
+  <main>
+    <nav class="wizard" id="wizard" aria-label="Pasos">
+      <button type="button" class="wstep" data-step="1"><span class="wnum">1</span><span class="wlbl">Abrir</span></button>
+      <button type="button" class="wstep" data-step="2"><span class="wnum">2</span><span class="wlbl">Transcribir</span></button>
+      <button type="button" class="wstep" data-step="3"><span class="wnum">3</span><span class="wlbl">Momentos</span></button>
+      <button type="button" class="wstep" data-step="4"><span class="wnum">4</span><span class="wlbl">Exportar</span></button>
+    </nav>
+    <div id="readyBar" class="readyBar" hidden></div>
+    <div id="notice" class="notice" hidden></div>
+    <div id="jobBar" class="jobBar" hidden>
+      <div class="jobBarHead">
+        <span id="jobLabel" class="jobLabel">Procesando…</span>
+        <span id="jobPct" class="jobPct">0%</span>
+        <button id="cancelJob" type="button" class="cancelBtn">Cancelar</button>
+      </div>
+      <div class="jobTrack"><div id="jobFill" class="jobFill"></div></div>
+    </div>
+
+    <!-- PASO 1 -->
+    <section class="step" data-step="1">
+      <h2 class="stepTitle">Paso 1 · Abre el video del directo</h2>
+      <p class="stepLead">Elige el archivo del directo que ya recortaste. No se copia, así que da igual que pese varios GB.</p>
+      <div class="card"><div class="cardhead"><div><span class="number">1</span><h2>Video original</h2></div><span id="videoStatus" class="status">Sin video</span></div>
+        <div class="row"><button id="pickVideo" class="primary big">📂 Elegir video del directo…</button><span class="muted">Se abre el explorador de Windows.</span></div>
+        <details class="advOpen"><summary>Otras formas de abrir</summary>
+          <div class="row" style="margin-top:9px"><input id="videoPath" type="text" placeholder="C:\Videos\mi_video.mp4" aria-label="Ruta del video"><button id="openVideo" class="secondary">Abrir por ruta</button></div>
+          <div class="or">o sube una copia a la app</div>
+          <input id="videoFile" type="file" accept="video/*,.mkv,.avi,.mpg,.mpeg">
+        </details>
+        <div class="previewAction"><button id="makePreview" class="secondary">Crear vista previa MP4</button><span class="muted">Útil para MPG y formatos que el navegador no reproduce.</span></div>
+        <div class="player"><video id="video" controls preload="metadata"></video><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
+      </div>
+      <div class="stepNav"><span></span><button type="button" class="primary next" data-go="2">Siguiente: Transcribir →</button></div>
+    </section>
+
+    <!-- PASO 2 -->
+    <section class="step" data-step="2" hidden>
+      <h2 class="stepTitle">Paso 2 · Transcribe y revisa groserías</h2>
+      <p class="stepLead">Transcribe el audio (usa tu GPU si está disponible) y marca las groserías que quieras silenciar. El diccionario ya trae las comunes.</p>
+      <div class="card"><div class="cardhead"><div><span class="number">A</span><h2>Transcribir y palabras detectadas</h2></div><span id="matchCount" class="status">0 coincidencias</span></div>
+        <div class="row wrap"><button id="transcribe" class="primary">Transcribir video</button><label class="fileButton">Importar SRT / JSON<input id="transcriptFile" type="file" accept=".srt,.vtt,.json"></label><button id="selectAll" class="secondary">Seleccionar todas</button><button id="selectNone" class="secondary">Ninguna</button></div>
+        <p class="hint">Al importar SRT los tiempos por palabra son estimados; revisa esos cortes antes de exportar. Volver a transcribir reemplaza las propuestas y sus correcciones; los MP4 ya creados permanecen en <code>exports</code>.</p>
+        <div id="matches" class="matches empty">Las coincidencias aparecerán aquí después de transcribir o importar subtítulos.</div>
+        <details class="manualEditor"><summary>Agregar corte que la transcripción no detectó</summary>
+          <p class="hint">Escribe los segundos exactos del fragmento a quitar. Puedes pausar el reproductor y copiar su tiempo con los botones. Escucha el salto antes de exportar.</p>
+          <div class="row wrap"><label>Inicio (s) <input id="manualStart" type="number" min="0" step="0.01" value="0"></label><button id="takeManualStart" class="secondary">Tomar inicio del video</button><label>Final (s) <input id="manualEnd" type="number" min="0" step="0.01" value="0"></label><button id="takeManualEnd" class="secondary">Tomar final del video</button></div>
+          <div class="row wrap"><input id="manualLabel" type="text" maxlength="80" placeholder="Motivo (opcional)"><button id="addManualCut" class="primary">Agregar corte manual</button></div>
+          <div id="manualCuts" class="matches"></div>
+        </details>
+      </div>
+      <div class="card"><div class="cardhead"><div><span class="number">B</span><h2>Diccionario de groserías</h2></div><span id="termCount" class="status"></span></div>
+        <p class="hint">Puedes agregar palabras y frases mexicanas. Solo se detectan palabras completas. Desactiva las que quieras revisar sin cortarlas.</p>
+        <div class="row"><input id="newTerm" type="text" placeholder="Palabra o frase; separa varias con comas"><button id="addTerm" class="primary compact">Agregar</button></div>
+        <div id="terms" class="terms"></div>
+        <button id="saveTerms" class="secondary wide">Guardar diccionario</button>
+      </div>
+      <details class="card"><summary class="cardSummary">Pausas largas (opcional) <span id="pauseCount" class="status">0 pausas</span></summary>
+        <p class="hint">Busca silencios de 1.5 segundos o más. Se conserva un pequeño margen antes y después. Marca solo las que quieras quitar del video largo (solo aplican al modo Cortar).</p>
+        <div class="row"><button id="analyzePauses" class="secondary">Buscar pausas</button></div>
+        <div id="pauses" class="matches empty">Todavía no se ha analizado el audio.</div>
+      </details>
+      <div class="stepNav"><button type="button" class="secondary prev" data-go="1">← Atrás</button><button type="button" class="primary next" data-go="3">Siguiente: Momentos →</button></div>
+    </section>
+
+    <!-- PASO 3 -->
+    <section class="step" data-step="3" hidden>
+      <h2 class="stepTitle">Paso 3 · Encuentra y crea tus Shorts</h2>
+      <p class="stepLead">La IA busca los momentos más virales (30–60 s) y te propone un gancho. O crea uno exacto con los minutos. Los Shorts silencian groserías solos.</p>
+      <div class="card"><div class="cardhead"><div><span class="number">3</span><h2>Propuestas de Shorts</h2></div><span id="shortCount" class="status">0 propuestas</span></div>
+        <p class="hint">La IA de tu PC (Ollama) lee la transcripción, busca los <b>momentos más virales de 30–60 s</b> (humor, pleitos, remates) y te propone un <b>gancho</b> para cada uno. Si Ollama no está, usa el ritmo del audio. Los Shorts <b>ya silencian las groserías</b> del diccionario automáticamente. Revisa subtítulos y encuadre antes de publicar.</p>
+        <div class="row wrap"><button id="suggestShorts" class="primary">🤖 Buscar 5 momentos virales</button><button id="renderAllShorts" class="secondary">Crear los 5 Shorts</button><span class="muted">30–60 s con gancho · o crea uno exacto abajo</span></div>
+        <details class="manualEditor" id="manualShortBox"><summary>➕ Crear Short de un momento exacto</summary>
+          <p class="hint">Escribe el <b>inicio</b> y el <b>final</b> del momento (en <b>mm:ss</b> como <code>12:00</code>, o en segundos). La app lo hace vertical con subtítulos y zoom. Debe durar entre 10 y 100 s. Aparece arriba en la lista; luego pulsa <b>Crear Short vertical</b>.</p>
+          <div class="row wrap"><label>Inicio <input id="msStart" type="text" placeholder="12:00"></label><label>Final <input id="msEnd" type="text" placeholder="12:52"></label></div>
+          <div class="row wrap"><input id="msHook" type="text" maxlength="40" placeholder="Gancho arriba del video (opcional)"><button id="addManualShort" class="primary">Crear Short de este momento</button></div>
+        </details>
+        <div id="shorts" class="shorts empty">Transcribe el video para generar propuestas.</div>
+      </div>
+      <div class="stepNav"><button type="button" class="secondary prev" data-go="2">← Atrás</button><button type="button" class="primary next" data-go="4">Siguiente: Exportar →</button></div>
+    </section>
+
+    <!-- PASO 4 -->
+    <section class="step" data-step="4" hidden>
+      <h2 class="stepTitle">Paso 4 · Exporta el video limpio</h2>
+      <p class="stepLead">Exporta el video largo sin groserías. Luego guárdalo donde quieras con “Guardar como…”.</p>
+      <div class="card"><div class="cardhead"><div><span class="number">4</span><h2>Exportar video limpio</h2></div></div>
+        <p class="hint">Elige qué hacer con las groserías seleccionadas. El archivo terminado se guarda en <code>exports</code>.</p>
+        <div class="row wrap censorMode">
+          <label class="inlineCheck"><input type="radio" name="censorMode" value="mute" checked> <span><strong>Silenciar</strong> — calla la palabra pero deja el video continuo, sin saltos (recomendado para IRL). Rápido: no reprocesa el video.</span></label>
+          <label class="inlineCheck"><input type="radio" name="censorMode" value="cut"> <span><strong>Cortar</strong> — quita ese tiempo del video (también elimina pausas seleccionadas). Puede notarse un brinco.</span></label>
+        </div>
+        <label class="inlineCheck" style="margin:2px 0 10px"><input type="checkbox" id="compressExport"> <span><strong>Comprimir para subir más rápido</strong> — archivo mucho más liviano (reencodea; tarda un poco más). Útil si el video pesa varios GB.</span></label>
+        <div class="row"><button id="export" class="primary">Exportar MP4</button><span id="exportInfo" class="muted"></span></div>
+        <div id="exportedFiles" class="exportedFiles"></div>
+      </div>
+      <div class="stepNav"><button type="button" class="secondary prev" data-go="3">← Atrás</button><span></span></div>
+    </section>
+
+    <details class="card settings" id="configFooter"><summary>⚙️ Configuración de motores</summary><p class="hint">La transcripción local usa whisper.cpp y un modelo multilingüe. El corte usa FFmpeg. Puedes indicar sus rutas aquí o poner los ejecutables en PATH.</p>
+      <label>FFmpeg <input id="ffmpegPath" type="text" placeholder="Ruta de ffmpeg.exe"></label>
+      <label>FFprobe <input id="ffprobePath" type="text" placeholder="Ruta de ffprobe.exe"></label>
+      <label>Whisper CLI <input id="whisperPath" type="text" placeholder="Ruta de whisper-cli.exe"></label>
+      <label>Modelo en español <input id="modelPath" type="text" placeholder="Ruta de ggml-large-v3-turbo-q5_0.bin"></label>
+      <label>Usuario o marca en Shorts <input id="brandHandle" type="text" placeholder="@TuCanal"></label>
+      <label>Inicial de marca <input id="brandMark" type="text" maxlength="8" placeholder="Opcional"></label>
+      <button id="saveConfig" class="secondary wide">Guardar rutas</button><div id="engineStatus" class="engineStatus"></div>
+      <div class="updateBox">
+        <div class="row wrap"><button id="checkUpdate" type="button" class="secondary">🔄 Buscar actualizaciones</button><span id="updateInfo" class="muted"></span></div>
+      </div>
+    </details>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

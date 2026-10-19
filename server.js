@@ -1,0 +1,640 @@
+'use strict';
+
+const http = require('node:http');
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { spawn, spawnSync } = require('node:child_process');
+const { normalize, findMatches, buildCuts, keptIntervals, adjustedCuts, parseSrt, parseWhisperJson, tokenizeTranscript } = require('./lib/core');
+const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES } = require('./lib/shorts');
+const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/editorial');
+const { detectSubjectX, smoothTrack, cropExpression, zoomExpression } = require('./lib/framing');
+const channelStyle = require('./channel_style.json');
+
+const ROOT = __dirname;
+const DATA = path.join(ROOT, 'data');
+const EXPORTS = path.join(ROOT, 'exports');
+const PORT = Number(process.env.EDITOR_IRL_PORT || 4177);
+const files = { project: path.join(DATA, 'project.json'), config: path.join(DATA, 'config.json'), transcript: path.join(DATA, 'transcript.json'), shorts: path.join(DATA, 'shorts.json'), adjustments:path.join(DATA,'cut_adjustments.json'), pauses:path.join(DATA,'pauses.json'), manualCuts:path.join(DATA,'manual_cuts.json'), selection:path.join(DATA,'selection.json'), dictionary: path.join(ROOT, 'dictionary.json') };
+fs.mkdirSync(DATA, { recursive: true });
+fs.mkdirSync(EXPORTS, { recursive: true });
+
+function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } }
+function writeJson(file, value) { fs.writeFileSync(file, JSON.stringify(value, null, 2), 'utf8'); }
+let project = readJson(files.project, null);
+let config = { ffmpeg: '', ffprobe: '', whisper: '', model: '', brandHandle: channelStyle.brandHandle || '', brandMark: channelStyle.brandMark || '', ...readJson(files.config, {}) };
+let dictionary = readJson(files.dictionary, []);
+let transcript = readJson(files.transcript, []);
+let shorts = readJson(files.shorts, []);
+let adjustments = readJson(files.adjustments, {});
+let pauses = readJson(files.pauses, []);
+let manualCuts = readJson(files.manualCuts, []);
+let selection = readJson(files.selection, null);
+let job = { status: 'idle', message: '', progress: '', percent: 0 };
+let activeProc = null; // proceso ffmpeg/whisper en curso (para poder cancelar)
+
+function parseProgressSeconds(s) {
+  // ffmpeg imprime time=00:01:23.45 ; whisper-cli imprime [00:01:23.000 --> ...]
+  let m = s.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (m) return (+m[1])*3600 + (+m[2])*60 + (+m[3]);
+  m = s.match(/\[(\d+):(\d+):(\d+(?:\.\d+)?)\s*--?>/);
+  if (m) return (+m[1])*3600 + (+m[2])*60 + (+m[3]);
+  return null;
+}
+function progress(total, label) {
+  return s => {
+    const sec = parseProgressSeconds(s);
+    if (sec != null && total > 0) job.percent = Math.max(0, Math.min(99, Math.round(sec/total*100)));
+    job.progress = (label ? label+' · ' : '') + (job.percent||0) + '%';
+  };
+}
+
+function executable(explicit, name) {
+  if (explicit && fs.existsSync(explicit)) return explicit;
+  const local = path.join(ROOT, 'tools', process.platform === 'win32' ? `${name}.exe` : name);
+  if (fs.existsSync(local)) return local;
+  const probe = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', [name], { encoding: 'utf8', windowsHide: true });
+  return probe.status === 0 ? probe.stdout.trim().split(/\r?\n/)[0] : '';
+}
+function resolveWhisper() {
+  if (config.whisper && fs.existsSync(config.whisper)) return config.whisper;
+  const gpu = path.join(ROOT, 'tools-gpu', 'whisper-cli.exe'); // build CUDA (si está, se usa la GPU)
+  if (fs.existsSync(gpu)) return gpu;
+  return executable('', 'whisper-cli');
+}
+function readiness() { const preferred=path.join(ROOT,'tools','ggml-large-v3-turbo-q5_0.bin'), fallback=path.join(ROOT,'tools','ggml-small.bin'); const whisper=resolveWhisper(); return { ffmpeg: executable(config.ffmpeg, 'ffmpeg'), ffprobe: executable(config.ffprobe, 'ffprobe'), whisper, whisperGpu: whisper.includes('tools-gpu'), model: config.model && fs.existsSync(config.model) ? config.model : fs.existsSync(preferred) ? preferred : fs.existsSync(fallback) ? fallback : '' }; }
+function listExports() { return fs.readdirSync(EXPORTS).filter(name=>name.toLowerCase().endsWith('.mp4')).map(name=>({name,modified:fs.statSync(path.join(EXPORTS,name)).mtimeMs})).sort((a,b)=>b.modified-a.modified).slice(0,20); }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), version: APP_VERSION, job }; }
+function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
+function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
+async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
+function run(exe, args, onOutput = () => {}) { return new Promise((resolve, reject) => { const child = spawn(exe, args, { windowsHide: true, cwd: ROOT }); activeProc = child; let stderr=''; child.stderr.on('data', b => { const s=b.toString(); stderr=(stderr+s).slice(-5000); onOutput(s); }); child.stdout.on('data', b => onOutput(b.toString())); child.on('error', e => { if (activeProc===child) activeProc=null; reject(e); }); child.on('close', code => { if (activeProc===child) activeProc=null; if (code === 0) resolve(); else if (job.cancelRequested) reject(Error('Proceso cancelado por el usuario.')); else reject(Error(`${path.basename(exe)} terminó con código ${code}: ${stderr.slice(-700)}`)); }); }); }
+function capture(exe,args,maxBytes=30*1024*1024) { return new Promise((resolve,reject)=>{ const child=spawn(exe,args,{windowsHide:true,cwd:ROOT}); const chunks=[];let size=0,stderr='';child.stdout.on('data',b=>{size+=b.length;if(size>maxBytes){child.kill();reject(Error('Demasiados fotogramas para analizar.'));return;}chunks.push(b)});child.stderr.on('data',b=>{stderr=(stderr+b.toString()).slice(-2000)});child.on('error',reject);child.on('close',code=>code===0?resolve(Buffer.concat(chunks)):reject(Error(`FFmpeg no pudo analizar el encuadre: ${stderr.slice(-500)}`)));}); }
+// Diálogos nativos de Windows (abrir/guardar) — la app corre en la PC del usuario.
+function nativeDialog(kind, defaultName='') {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve('');
+    const safeDefault=String(defaultName).replace(/'/g,"''");
+    const ps = kind==='save'
+      ? `Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.SaveFileDialog; $f.Filter='Video MP4|*.mp4|Todos los archivos|*.*'; $f.FileName='${safeDefault}'; $f.Title='Guardar video como'; $f.OverwritePrompt=$true; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}`
+      : `Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.OpenFileDialog; $f.Filter='Videos|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v;*.mpg;*.mpeg|Todos los archivos|*.*'; $f.Title='Elige el video del directo'; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}`;
+    const child=spawn('powershell.exe',['-NoProfile','-STA','-Command',ps],{windowsHide:true});
+    let out=''; child.stdout.on('data',b=>out+=b.toString()); child.on('error',()=>resolve('')); child.on('close',()=>resolve(out.trim()));
+  });
+}
+// ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
+const APP_VERSION = '1.0.0';
+const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips/main/';
+const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
+function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
+async function fetchText(url){const r=await fetch(url,{signal:AbortSignal.timeout(20000),cache:'no-store'});if(!r.ok)throw Error('No se pudo descargar ('+r.status+')');return r.text();}
+async function checkUpdate(){
+  const manifest=JSON.parse(await fetchText(UPDATE_RAW+'version.json?t='+Date.now()));
+  const latest=String(manifest.version||'0');
+  return {current:APP_VERSION, latest, hasUpdate:cmpVer(latest,APP_VERSION)>0, notes:String(manifest.notes||''), files:Array.isArray(manifest.files)?manifest.files:[]};
+}
+async function applyUpdate(){
+  const info=await checkUpdate();
+  if(!info.hasUpdate) return {applied:0, message:'Ya tienes la última versión ('+APP_VERSION+').'};
+  let applied=0;
+  for(const rel of info.files){
+    const safe=String(rel).replace(/\\/g,'/');
+    if(safe.includes('..')||safe.startsWith('/')||/^[a-zA-Z]:/.test(safe)) throw Error('Ruta insegura en la actualización: '+rel);
+    if(!UPDATE_ALLOW.has(path.extname(safe).toLowerCase())) throw Error('Tipo de archivo no permitido: '+rel);
+    const content=await fetchText(UPDATE_RAW+safe+'?t='+Date.now());
+    const dest=path.join(ROOT,safe);
+    if(!dest.startsWith(ROOT)) throw Error('Destino fuera de la app: '+rel);
+    await fsp.mkdir(path.dirname(dest),{recursive:true});
+    await fsp.writeFile(dest,content,'utf8');
+    applied++;
+  }
+  return {applied, latest:info.latest, message:`Actualizado a la versión ${info.latest}. Cierra y vuelve a abrir la app para aplicar los cambios.`};
+}
+function videoDimensions(videoPath) { const bin=readiness().ffprobe;if(!bin) throw Error('Configura ffprobe antes de crear el Short.'); const out=spawnSync(bin,['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','json',videoPath],{encoding:'utf8',windowsHide:true}); const stream=JSON.parse(out.stdout||'{}').streams?.[0]; if(out.status!==0||!stream?.width||!stream?.height) throw Error('No pude leer el tamaño del video.'); return stream; }
+async function framingForClip(clip,bin,width,height) {
+  if(width<=height*9/16) return {portrait:true};
+  if(clip.framingMode==='blur') return null;
+  if(clip.framingMode==='manual') {const cropWidth=Math.floor((height*9/16)/2)*2,maxLeft=width-cropWidth;return {track:[{t:0,x:+Math.max(0,Math.min(maxLeft,(Number(clip.cropCenter)||.5)*width-cropWidth/2)).toFixed(1)}],cropWidth,confidence:1};}
+  const interval=3,frameBytes=320*180*3;
+  const raw=await capture(bin,['-hide_banner','-loglevel','error','-ss',String(clip.start),'-t',String(clip.end-clip.start),'-i',project.videoPath,'-vf',`fps=1/${interval},scale=320:180,format=rgb24`,'-f','rawvideo','pipe:1']);
+  const observations=[];
+  for(let i=0;i+frameBytes<=raw.length;i+=frameBytes) observations.push({t:observations.length*interval,subject:detectSubjectX(raw.subarray(i,i+frameBytes),320,180)});
+  return smoothTrack(observations,width,height);
+}
+async function durationOf(videoPath) {
+  const bin = readiness().ffprobe;
+  if (!bin) throw Error('Configura ffprobe para leer la duración del video.');
+  const out = spawnSync(bin, ['-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',videoPath], { encoding:'utf8', windowsHide:true });
+  const seconds = Number(out.stdout?.trim());
+  if (out.status !== 0 || !Number.isFinite(seconds) || seconds <= 0) throw Error('No se pudo leer la duración del video.');
+  return seconds;
+}
+async function importTranscript(file) {
+  const input = await fsp.readFile(file, 'utf8');
+  const parsed = path.extname(file).toLowerCase() === '.json' ? parseWhisperJson(JSON.parse(input)) : parseSrt(input);
+  if (!parsed.length) throw Error('La transcripción no tiene segmentos válidos. Usa SRT o JSON de whisper.cpp.');
+  transcript = parsed;
+  writeJson(files.transcript, transcript);
+  adjustments={};writeJson(files.adjustments,adjustments);
+  selection=null;writeJson(files.selection,selection);
+  shorts = [];
+  writeJson(files.shorts, shorts);
+  if (project) { project.transcriptSource = file; writeJson(files.project, project); }
+}
+async function transcribe() {
+  const bins = readiness();
+  if (!project?.videoPath) throw Error('Abre un video primero.');
+  if (!bins.ffmpeg || !bins.whisper || !bins.model) throw Error('Configura FFmpeg, whisper-cli y un modelo multilingüe antes de transcribir.');
+  if (job.status === 'running') throw Error('Ya hay un proceso en curso.');
+  const total = await durationOf(project.videoPath).catch(() => 0);
+  job = { status:'running', message:'Extrayendo audio…', progress:'', percent:0, cancelRequested:false };
+  const wav = path.join(DATA, 'audio.wav');
+  const outputBase = path.join(DATA, 'whisper');
+  (async () => {
+    try {
+      await run(bins.ffmpeg, ['-y','-i',project.videoPath,'-vn','-ar','16000','-ac','1','-c:a','pcm_s16le',wav], progress(total,'Audio'));
+      job.message='Transcribiendo en español…'; job.progress=''; job.percent=0;
+      const prompt = channelStyle.transcriptionPrompt || 'Conversación informal en español de México. Directo, chat, güey, no mames.';
+      await run(bins.whisper, ['-m',bins.model,'-f',wav,'-l','es','-ml','1','-sow','-ojf','-of',outputBase,'--prompt',prompt], progress(total,'Texto'));
+      await importTranscript(outputBase + '.json');
+      job = { status:'done', message:`Transcripción lista: ${transcript.length} segmentos.`, progress:'', percent:100 };
+    } catch (e) { job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
+    finally { fsp.unlink(wav).catch(() => {}); }
+  })();
+}
+async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',compress=false) {
+  const bins = readiness();
+  if (!project?.videoPath) throw Error('Abre un video primero.');
+  if (!bins.ffmpeg || !bins.ffprobe) throw Error('Configura FFmpeg y ffprobe antes de exportar.');
+  if (job.status === 'running') throw Error('Ya hay un proceso en curso.');
+  const duration = await durationOf(project.videoPath);
+  const matches = findMatches(transcript, dictionary);
+  const words = tokenizeTranscript(transcript);
+  const baseName = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
+  if (mode === 'mute') {
+    // Silencia las groserías sin quitar tiempo: el video queda continuo (sin saltos) y solo se calla el audio.
+    const ranges = adjustedCuts(matches, selectedIds, duration, words, adjustments, manualCuts);
+    if (!ranges.length) throw Error('Selecciona al menos una palabra o agrega un corte manual para silenciar.');
+    const pad = 0.15; // margen para cubrir el timing aproximado de whisper y no dejar oír la palabra
+    const enable = ranges.map(r=>`between(t,${Math.max(0,r.start-pad).toFixed(3)},${Math.min(duration,r.end+pad).toFixed(3)})`).join('+');
+    const output = path.join(EXPORTS, `${baseName}_censurado${compress?'_lite':''}_${Date.now()}.mp4`);
+    const temporary = path.join(DATA, `export_${crypto.randomUUID()}.mp4`);
+    const videoArgs = compress ? ['-c:v','libx264','-preset','veryfast','-crf','24','-pix_fmt','yuv420p'] : ['-c:v','copy'];
+    job = { status:'running', message:compress?`Silenciando y comprimiendo (${ranges.length} groserías)…`:`Silenciando ${ranges.length} ${ranges.length===1?'grosería':'groserías'}…`, progress:'', percent:0, cancelRequested:false };
+    (async () => {
+      try {
+        await run(bins.ffmpeg, ['-y','-i',project.videoPath,'-map','0:v:0','-map','0:a:0',...videoArgs,'-af',`volume=enable='${enable}':volume=0`,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(duration,compress?'Comprimiendo':'Silenciando'));
+        await fsp.rename(temporary,output);
+        job = { status:'done', message:`Video con groserías silenciadas: ${output}`, progress:'', percent:100, output };
+      } catch (e) { await fsp.unlink(temporary).catch(()=>{}); job = { status: job.cancelRequested?'cancelled':'error', message: job.cancelRequested?e.message:`No se pudo silenciar (quizá el video no es H.264/MP4 para copiar el video tal cual): ${e.message}`, progress:'', percent:0 }; }
+    })();
+    return { output, cuts: ranges.length, mode };
+  }
+  const chosenPauses=pauses.filter(p=>selectedPauseIds.includes(p.id));
+  const cuts = adjustedCuts(matches, selectedIds, duration, words, adjustments,[...chosenPauses,...manualCuts]);
+  if (!cuts.length) throw Error('Selecciona al menos una palabra o pausa para cortar.');
+  const keep = keptIntervals(cuts, duration);
+  if (!keep.length) throw Error('Los cortes eliminarían el video completo.');
+  const keptTotal = keep.reduce((a,k)=>a+(k.end-k.start),0);
+  const filter = [];
+  keep.forEach((k,i) => {
+    filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
+    const length=k.end-k.start,fade=Math.min(.012,length/3);
+    filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
+  });
+  filter.push(keep.map((_,i) => `[v${i}][a${i}]`).join('') + `concat=n=${keep.length}:v=1:a=1[v][a]`);
+  const script = path.join(DATA,'filter.txt');
+  await fsp.writeFile(script, filter.join(';\n'), 'utf8');
+  const name = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
+  const output = path.join(EXPORTS, `${name}_limpio_${Date.now()}.mp4`);
+  const temporary = path.join(DATA, `export_${crypto.randomUUID()}.mp4`);
+  job = { status:'running', message:'Exportando video limpio…', progress:'', percent:0, cancelRequested:false };
+  (async () => {
+    try {
+      await run(bins.ffmpeg, ['-y','-i',project.videoPath,'-/filter_complex',script,'-map','[v]','-map','[a]','-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf','19','-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(keptTotal,'Exportando'));
+      await fsp.rename(temporary,output);
+      job = { status:'done', message:`Video exportado: ${output}`, progress:'', percent:100, output };
+    } catch (e) { await fsp.unlink(temporary).catch(()=>{});job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
+  })();
+  return { output, cuts:cuts.length };
+}
+async function analyzePauses() {
+  const bin=readiness().ffmpeg;
+  if(!project?.videoPath||!bin) throw Error('Abre un video y configura FFmpeg.');
+  if(job.status==='running') throw Error('Ya hay un proceso en curso.');
+  const total=await durationOf(project.videoPath).catch(()=>0);
+  job={status:'running',message:'Buscando pausas largas en el audio…',progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+    try {
+      let log='';
+      const report=progress(total,'Pausas');
+      await run(bin,['-hide_banner','-i',project.videoPath,'-vn','-af','silencedetect=noise=-35dB:d=1.5','-f','null','NUL'],s=>{log=(log+s).slice(-1000000);report(s);});
+      const found=[];let start=null;
+      for(const line of log.split(/\r?\n/)) {
+        const a=line.match(/silence_start:\s*([\d.]+)/),b=line.match(/silence_end:\s*([\d.]+)/);
+        if(a) start=Number(a[1]);
+        if(b&&start!==null) {const end=Number(b[1]);if(end-start>=1.5&&end-start>.7)found.push({id:`p${Math.round(start*100)}`,start:+(start+.35).toFixed(2),end:+(end-.35).toFixed(2),duration:+(end-start).toFixed(2)});start=null;}
+      }
+      pauses=found.slice(0,500);writeJson(files.pauses,pauses);
+      job={status:'done',message:`Encontré ${pauses.length} ${pauses.length===1?'pausa':'pausas'} para revisar. No se cortan hasta que las selecciones.`,progress:'',percent:100};
+    }catch(e){job={status: job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0};}
+  })();
+  return {started:true};
+}
+async function proposeShorts() {
+  if (!project?.videoPath || !transcript.length) throw Error('Abre y transcribe un video primero.');
+  if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  const duration=await durationOf(project.videoPath);
+  const candidates=suggestShorts(transcript,duration,16,{min:30,max:60});
+  if (!candidates.length) throw Error('La transcripción no tiene suficientes momentos para Shorts.');
+  const hooksById=new Map(shorts.map(s=>[s.id,s.hook||'']));
+  const correctionsById=new Map(shorts.map(s=>[s.id,s.captionCorrections||[]]));
+  const settingsById=new Map(shorts.map(s=>[s.id,{framingMode:s.framingMode||'auto',cropCenter:s.cropCenter??.5,zoomEnabled:s.zoomEnabled!==false,captionStyle:s.captionStyle||'verde'}]));
+  job={status:'running',message:'Evaluando escenas con un modelo local…',progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+    try {
+      const model=process.env.EDITOR_IRL_MODEL||'gemma3:4b';
+      const tags=await fetch('http://127.0.0.1:11434/api/tags',{signal:AbortSignal.timeout(3000)}).then(r=>r.json());
+      if (!tags.models?.some(m=>m.name===model)) throw Error('Modelo local no disponible');
+      const words=tokenizeTranscript(transcript);
+      const evaluated=[];
+      for (let i=0;i<candidates.length;i++) {
+        if(job.cancelRequested) throw Error('__CANCELLED__');
+        const candidate=candidates[i];
+        const excerpt=words.filter(w=>w.start>=candidate.start&&w.start<candidate.end).map(w=>w.text.trim()).join(' ');
+        let criteria=null, gancho='';
+        try { const r=await assessCandidate(model,excerpt); criteria=r.criteria; gancho=r.gancho; } catch(err) { /* una escena mala no tumba el lote */ }
+        if (criteria) { const summary=summarizeAssessment(criteria); evaluated.push({...candidate,criteria,editorialScore:summary.score,reason:summary.reason,gancho,method:'modelo local'}); }
+        else { evaluated.push({...candidate,editorialScore:candidate.score,reason:'por ritmo (la IA no evaluó esta)',gancho:'',method:'ritmo'}); }
+        job.percent=Math.round((i+1)/candidates.length*100);
+        job.progress=`${i+1}/${candidates.length} escenas evaluadas`;
+      }
+      evaluated.sort((a,b)=>b.editorialScore-a.editorialScore||b.score-a.score);
+      const picks=[];
+      for (const item of evaluated) {
+        if (picks.every(p=>Math.abs(p.start-item.start)>=90)) picks.push(item);
+        if (picks.length===5) break;
+      }
+      shorts=picks.map((s,i)=>({...s,hook:hooksById.get(s.id)||s.gancho||'',captionCorrections:correctionsById.get(s.id)||[],...settingsById.get(s.id),framingMode:settingsById.get(s.id)?.framingMode||'auto',zoomEnabled:settingsById.get(s.id)?.zoomEnabled!==false,captionStyle:settingsById.get(s.id)?.captionStyle||'verde',rank:i+1}));
+      writeJson(files.shorts,shorts);
+      job={status:'done',message:`${shorts.length} propuestas evaluadas con ${model}. Revisa cada escena antes de publicarla.`,progress:'',percent:100};
+    } catch(e) {
+      if(job.cancelRequested){job={status:'cancelled',message:'Proceso cancelado por el usuario.',progress:'',percent:0};return;}
+      shorts=candidates.slice(0,5).map((s,i)=>({...s,hook:hooksById.get(s.id)||'',captionCorrections:correctionsById.get(s.id)||[],...settingsById.get(s.id),framingMode:settingsById.get(s.id)?.framingMode||'auto',zoomEnabled:settingsById.get(s.id)?.zoomEnabled!==false,captionStyle:settingsById.get(s.id)?.captionStyle||'verde',rank:i+1,method:'ritmo'}));
+      writeJson(files.shorts,shorts);
+      job={status:'done',message:`${shorts.length} propuestas por ritmo. Modelo local no disponible: ${e.message}`,progress:'',percent:100};
+    }
+  })();
+  return {started:true};
+}
+async function renderOneShort(clip,bin) {
+  const assFile=path.join(DATA,`captions_${clip.id}.ass`);
+  await fsp.writeFile(assFile,makeAss(transcript,{...clip,brandHandle:config.brandHandle ?? channelStyle.brandHandle,brandMark:config.brandMark ?? channelStyle.brandMark}),'utf8');
+  const output=path.join(EXPORTS,`short_${clip.rank}_${Date.now()}.mp4`);
+  const temporary=path.join(DATA,`short_${crypto.randomUUID()}.mp4`);
+  const {width,height}=videoDimensions(project.videoPath);
+  let framing=null;
+  if(clip.framingMode!=='blur') {
+    job.message=`Analizando encuadre del Short ${clip.rank}…`;
+    framing=await framingForClip(clip,bin,width,height);
+  }
+  const captions=`ass=data/captions_${clip.id}.ass`;
+  let filter;
+  if(framing) {
+    const zoom=clip.zoomEnabled===false?'1':zoomExpression(tokenizeTranscript(transcript),clip.start,clip.end);
+    const pan=`zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=30`;
+    if(framing.portrait) filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,${pan},${captions}[v]`;
+    else filter=`[0:v]fps=30,setpts=PTS-STARTPTS,crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan},${captions}[v]`;
+  } else {
+    job.message=`Usando fondo desenfocado en Short ${clip.rank}…`;
+    const frontHeight=Math.max(2,Math.round((720*height/width)/2)*2);
+    const zoom=clip.zoomEnabled===false?'1':zoomExpression(tokenizeTranscript(transcript),clip.start,clip.end);
+    filter=`[0:v]fps=30,setpts=PTS-STARTPTS,split=2[bg][fg];[bg]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=15:2[back];[fg]scale=720:-2,zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x${frontHeight}:fps=30[front];[back][front]overlay=(W-w)/2:(H-h)/2,${captions}[v]`;
+  }
+  job.message=`Creando Short ${clip.rank}…`; job.percent=0;
+  // Silenciar groserías que caigan dentro de este Short (audio por filter_complex, sin tocar imagen)
+  const dur=clip.end-clip.start, pad=0.15;
+  const groserias=findMatches(transcript,dictionary).filter(m=>m.end>clip.start&&m.start<clip.end);
+  let fullFilter=filter, audioMap=['-map','0:a:0'];
+  if(groserias.length) {
+    const enable=groserias.map(m=>`between(t,${Math.max(0,m.start-clip.start-pad).toFixed(3)},${Math.min(dur,m.end-clip.start+pad).toFixed(3)})`).join('+');
+    fullFilter=`${filter};[0:a]volume=enable='${enable}':volume=0[a]`;
+    audioMap=['-map','[a]'];
+  }
+  try {
+    await run(bin,['-y','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r','30','-c:v','libx264','-pix_fmt','yuv420p','-preset','fast','-crf','20','-c:a','aac','-b:a','160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
+    await fsp.rename(temporary,output);
+  } catch(e) {await fsp.unlink(temporary).catch(()=>{});throw e;}
+  return output;
+}
+async function renderShort(id) {
+  if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  if (!project?.videoPath) throw Error('Abre un video primero.');
+  const clip=shorts.find(s=>s.id===id);
+  if (!clip) throw Error('No encuentro esa propuesta de Short.');
+  const bin=readiness().ffmpeg;
+  if (!bin) throw Error('Configura FFmpeg antes de crear el Short.');
+  job={status:'running',message:`Creando Short ${clip.rank} con subtítulos…`,progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+    try {
+      const output=await renderOneShort(clip,bin);
+      job={status:'done',message:`Short listo: ${output}`,progress:'',percent:100,output};
+    }catch(e){job={status: job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0};}
+  })();
+  return {started:true};
+}
+async function renderAllShorts() {
+  if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  if (!project?.videoPath || !shorts.length) throw Error('Primero genera propuestas de Shorts.');
+  const bin=readiness().ffmpeg;
+  if (!bin) throw Error('Configura FFmpeg antes de crear los Shorts.');
+  job={status:'running',message:'Creando 5 Shorts…',progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+    const outputs=[];
+    try {
+      for(const clip of shorts) {
+        if(job.cancelRequested) throw Error('Proceso cancelado por el usuario.');
+        job.message=`Creando Short ${clip.rank} de ${shorts.length}…`;
+        outputs.push(await renderOneShort(clip,bin));
+      }
+      job={status:'done',message:`Listos ${outputs.length} Shorts en exports.`,progress:'',percent:100,outputs};
+    }catch(e){job={status: job.cancelRequested?'cancelled':'error',message:`Se crearon ${outputs.length} Shorts. ${e.message}`,progress:'',percent:0,outputs};}
+  })();
+  return {started:true};
+}
+function sendVideo(req,res) {
+  if (!project?.videoPath || !fs.existsSync(project.videoPath)) return error(res,'No hay video abierto.',404);
+  const videoPath=project.previewPath && fs.existsSync(project.previewPath) ? project.previewPath : project.videoPath;
+  return serveMedia(req,res,videoPath);
+}
+function serveMedia(req,res,videoPath) {
+  const stat = fs.statSync(videoPath), size=stat.size, range=req.headers.range;
+  const ext=path.extname(videoPath).toLowerCase();
+  const type=ext==='.webm'?'video/webm':ext==='.mov'?'video/quicktime':'video/mp4';
+  if (range) {
+    const m=range.match(/bytes=(\d+)-(\d*)/); if (!m) return error(res,'Rango inválido',416);
+    const start=Number(m[1]), end=m[2]?Math.min(Number(m[2]),size-1):Math.min(start+4*1024*1024,size-1);
+    if (start>=size || end<start) return error(res,'Rango inválido',416);
+    res.writeHead(206,{'content-type':type,'accept-ranges':'bytes','content-range':`bytes ${start}-${end}/${size}`,'content-length':end-start+1});
+    fs.createReadStream(videoPath,{start,end}).pipe(res);
+  } else { res.writeHead(200,{'content-type':type,'accept-ranges':'bytes','content-length':size}); fs.createReadStream(videoPath).pipe(res); }
+}
+async function reviewClip(at, requestedLength) {
+  const bin=readiness().ffmpeg;
+  if (!project?.videoPath) throw Error('Abre un video primero.');
+  if (!bin) throw Error('Configura FFmpeg para revisar los cortes.');
+  const seconds=Number(at);
+  if (!Number.isFinite(seconds) || seconds<0) throw Error('Tiempo inválido.');
+  const duration=await durationOf(project.videoPath);
+  if (seconds>duration) throw Error('El tiempo está fuera del video.');
+  const full=Number(requestedLength);
+  if (requestedLength!==undefined && (!Number.isFinite(full)||full<3||full>90)) throw Error('El clip de revisión debe durar entre 3 y 90 segundos.');
+  const start=requestedLength===undefined?Math.max(0,seconds-2):seconds;
+  const length=Math.min(requestedLength===undefined?8:full,duration-start);
+  const key=`review_${Math.round(seconds*100)}_${Math.round(length*100)}.mp4`;
+  const output=path.join(DATA,key);
+  if (!fs.existsSync(output)) await run(bin,['-y','-ss',String(start),'-t',String(length),'-i',project.videoPath,'-map','0:v:0','-map','0:a:0','-vf','scale=960:-2','-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
+  return { url:'/api/review-video?key='+encodeURIComponent(key), seek:seconds-start };
+}
+async function reviewCut(id) {
+  const bin=readiness().ffmpeg;
+  if(!bin||!project?.videoPath) throw Error('Abre un video y configura FFmpeg.');
+  const match=findMatches(transcript,dictionary).find(m=>m.id===id);
+  const manual=manualCuts.find(c=>c.id===id);
+  if(!match&&!manual) throw Error('No encuentro ese corte.');
+  const duration=await durationOf(project.videoPath);
+  const cut=match?adjustedCuts([match],[id],duration,tokenizeTranscript(transcript),adjustments)[0]:{start:manual.start,end:manual.end};
+  if(!cut) throw Error('Tiempo de corte inválido.');
+  const from=Math.max(0,cut.start-3),to=Math.min(duration,cut.end+3);
+  const hash=crypto.createHash('sha1').update(`${project.videoPath}|${id}|${cut.start}|${cut.end}`).digest('hex').slice(0,16);
+  const key=`review_cut_${hash}.mp4`,output=path.join(DATA,key);
+  if(!fs.existsSync(output)) {
+    const keep=[{start:0,end:cut.start-from},{start:cut.end-from,end:to-from}].filter(s=>s.end-s.start>.1);
+    const filters=[];
+    keep.forEach((s,i)=>{const len=s.end-s.start,fade=Math.min(.012,len/3);filters.push(`[0:v]trim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);filters.push(`[0:a]atrim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(len-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);});
+    filters.push(keep.map((_,i)=>`[v${i}][a${i}]`).join('')+`concat=n=${keep.length}:v=1:a=1[joined][a]`);
+    filters.push('[joined]scale=960:-2[v]');
+    const script=path.join(DATA,`filter_${hash}.txt`);await fsp.writeFile(script,filters.join(';\n'),'utf8');
+    await run(bin,['-y','-ss',String(from),'-t',String(to-from),'-i',project.videoPath,'-/filter_complex',script,'-map','[v]','-map','[a]','-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
+  }
+  return {url:'/api/review-video?key='+encodeURIComponent(key),cut};
+}
+async function preview() {
+  const bin=readiness().ffmpeg;
+  if (!project?.videoPath) throw Error('Abre un video primero.');
+  if (!bin) throw Error('Configura FFmpeg para crear la vista previa.');
+  if (job.status==='running') throw Error('Ya hay un proceso en curso.');
+  const input=project.videoPath;
+  const total=await durationOf(input).catch(()=>0);
+  const output=path.join(DATA,'preview_'+Date.now()+'.mp4');
+  job={status:'running',message:'Creando vista previa ligera…',progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+    try {
+      await run(bin,['-y','-i',input,'-map','0:v:0','-map','0:a:0','-vf','scale=960:-2','-c:v','libx264','-preset','ultrafast','-crf','34','-c:a','aac','-b:a','64k','-movflags','+faststart',output],progress(total,'Vista previa'));
+      if (project?.videoPath===input) { project.previewPath=output; writeJson(files.project,project); }
+      job={status:'done',message:'Vista previa lista.',progress:'',percent:100};
+    } catch(e) {job={status: job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0};}
+  })();
+}
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css' };
+const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
+const server=http.createServer(async (req,res) => {
+  try {
+    // Seguridad: solo aceptar peticiones dirigidas a esta PC (evita DNS-rebinding desde webs maliciosas).
+    const hostHdr=(req.headers.host||'').toLowerCase();
+    if (![`127.0.0.1:${PORT}`,`localhost:${PORT}`,`[::1]:${PORT}`].includes(hostHdr)) return error(res,'Host no permitido.',403);
+    const url=new URL(req.url,`http://127.0.0.1:${PORT}`);
+    if (req.method==='GET' && url.pathname==='/api/state') return respond(res,200,state());
+    if (req.method==='GET' && url.pathname==='/api/video') return sendVideo(req,res);
+    if (req.method==='GET' && url.pathname==='/api/export-file') {
+      const name=String(url.searchParams.get('name')||'');
+      if (!/^[\p{L}\p{N}._-]+\.mp4$/u.test(name)) return error(res,'Archivo inválido.',400);
+      const file=path.join(EXPORTS,name);
+      if (!fs.existsSync(file)) return error(res,'Archivo no encontrado.',404);
+      return serveMedia(req,res,file);
+    }
+    if (req.method==='GET' && url.pathname==='/api/review-video') {
+      const key=String(url.searchParams.get('key')||'');
+      if (!/^review_(?:\d+(?:_\d+)?|cut_[a-f0-9]{16})\.mp4$/.test(key)) return error(res,'Fragmento inválido.',400);
+      const file=path.join(DATA,key);
+      if (!fs.existsSync(file)) return error(res,'Fragmento no encontrado.',404);
+      return serveMedia(req,res,file);
+    }
+    if (req.method==='POST' && url.pathname==='/api/config') {
+      const body=await jsonBody(req); config={ffmpeg:String(body.ffmpeg||''),ffprobe:String(body.ffprobe||''),whisper:String(body.whisper||''),model:String(body.model||''),brandHandle:String(body.brandHandle||'').slice(0,60),brandMark:String(body.brandMark||'').slice(0,8)}; writeJson(files.config,config); return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/dictionary') {
+      const body=await jsonBody(req);
+      if (!Array.isArray(body.entries) || body.entries.length>500) throw Error('Diccionario inválido o demasiado grande.');
+      dictionary=body.entries.map(e => ({term:String(e.term||'').trim().slice(0,100),enabled:Boolean(e.enabled),note:String(e.note||'').slice(0,150)})).filter(e=>e.term);
+      writeJson(files.dictionary,dictionary);selection=null;writeJson(files.selection,selection);return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/project/open') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual antes de cambiar de video.');
+      const body=await jsonBody(req), videoPath=path.resolve(String(body.path||''));
+      if (!fs.existsSync(videoPath) || !fs.statSync(videoPath).isFile()) throw Error('No encuentro ese archivo de video.');
+      if (!['.mp4','.mov','.mkv','.webm','.avi','.m4v','.mpg','.mpeg'].includes(path.extname(videoPath).toLowerCase())) throw Error('Formato de video no admitido.');
+      project={videoPath,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
+      return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/project/upload') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual antes de cambiar de video.');
+      const original=String(url.searchParams.get('name')||'video.mp4'); const safe=path.basename(original).replace(/[^\p{L}\p{N}._-]+/gu,'_');
+      if (!['.mp4','.mov','.mkv','.webm','.avi','.m4v','.mpg','.mpeg'].includes(path.extname(safe).toLowerCase())) throw Error('Formato de video no admitido.');
+      const target=path.join(DATA,`${Date.now()}_${safe}`), stream=fs.createWriteStream(target);
+      await new Promise((resolve,reject)=>{req.pipe(stream);req.on('error',reject);stream.on('error',reject);stream.on('finish',resolve);});
+      project={videoPath:target,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
+      return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/transcript/import') {
+      const body=await jsonBody(req), file=path.resolve(String(body.path||''));
+      if (!fs.existsSync(file)) throw Error('No encuentro ese archivo de transcripción.');
+      await importTranscript(file); return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/transcript/upload') {
+      const name=String(url.searchParams.get('name')||'transcript.srt');
+      if (!['.srt','.vtt','.json'].includes(path.extname(name).toLowerCase())) throw Error('Usa SRT, VTT o JSON.');
+      const target=path.join(DATA,`import_${Date.now()}${path.extname(name).toLowerCase()}`), stream=fs.createWriteStream(target);
+      await new Promise((resolve,reject)=>{req.pipe(stream);req.on('error',reject);stream.on('error',reject);stream.on('finish',resolve);});
+      await importTranscript(target); return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/pick-video') {
+      const picked=await nativeDialog('open');
+      if(!picked) return respond(res,200,{cancelled:true});
+      return respond(res,200,{path:picked});
+    }
+    if (req.method==='POST' && url.pathname==='/api/save-as') {
+      const body=await jsonBody(req), name=path.basename(String(body.name||''));
+      if(!/^[\p{L}\p{N}._ -]+\.mp4$/u.test(name)) throw Error('Nombre de archivo inválido.');
+      const src=path.join(EXPORTS,name);
+      if(!fs.existsSync(src)) throw Error('No encuentro ese archivo en exports.');
+      const dest=await nativeDialog('save', name);
+      if(!dest) return respond(res,200,{cancelled:true});
+      await fsp.copyFile(src, dest);
+      return respond(res,200,{saved:true, path:dest, name:path.basename(dest)});
+    }
+    if (req.method==='POST' && url.pathname==='/api/transcribe') { await transcribe(); return respond(res,202,state()); }
+    if (req.method==='POST' && url.pathname==='/api/update/check') return respond(res,200,await checkUpdate());
+    if (req.method==='POST' && url.pathname==='/api/update/apply') return respond(res,200,await applyUpdate());
+    if (req.method==='POST' && url.pathname==='/api/job/cancel') {
+      if (job.status!=='running') return respond(res,200,{cancelled:false,message:'No hay ningún proceso en curso.'});
+      job.cancelRequested=true; job.message='Cancelando…';
+      if (activeProc) { try { activeProc.kill(); } catch {} }
+      return respond(res,200,{cancelled:true});
+    }
+    if (req.method==='POST' && url.pathname==='/api/pauses/analyze') return respond(res,202,await analyzePauses());
+    if (req.method==='POST' && url.pathname==='/api/preview') { await preview(); return respond(res,202,state()); }
+    if (req.method==='POST' && url.pathname==='/api/review-clip') { const body=await jsonBody(req); return respond(res,200,await reviewClip(body.at,body.length)); }
+    if (req.method==='POST' && url.pathname==='/api/cuts/adjust') {
+      if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      const body=await jsonBody(req),id=String(body.id||''),match=findMatches(transcript,dictionary).find(m=>m.id===id);
+      if(!match) throw Error('No encuentro esa coincidencia.');
+      if(body.reset===true) delete adjustments[id];
+      else {const start=Number(body.start),end=Number(body.end);if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||start<match.start-1||end>match.end+1) throw Error('Ajusta el corte dentro de un segundo alrededor de la palabra.');adjustments[id]={start:+start.toFixed(3),end:+end.toFixed(3)};}
+      writeJson(files.adjustments,adjustments);return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/cuts/preview') {const body=await jsonBody(req);return respond(res,200,await reviewCut(String(body.id||'')));}
+    if (req.method==='POST' && url.pathname==='/api/cuts/manual') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      if (!project?.videoPath) throw Error('Abre un video primero.');
+      const body=await jsonBody(req),start=Number(body.start),end=Number(body.end),duration=await durationOf(project.videoPath);
+      if (!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>duration||end-start<.04||end-start>30) throw Error('El corte manual debe durar entre 0.04 y 30 segundos y estar dentro del video.');
+      if (manualCuts.length>=500) throw Error('Límite de 500 cortes manuales.');
+      const cut={id:'manual_'+crypto.randomUUID(),start:+start.toFixed(3),end:+end.toFixed(3),label:String(body.label||'Corte manual').trim().slice(0,80)||'Corte manual'};
+      manualCuts.push(cut);writeJson(files.manualCuts,manualCuts);return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/cuts/manual/delete') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      const body=await jsonBody(req),id=String(body.id||'');
+      if (!manualCuts.some(c=>c.id===id)) throw Error('No encuentro ese corte manual.');
+      manualCuts=manualCuts.filter(c=>c.id!==id);writeJson(files.manualCuts,manualCuts);return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/cuts/selection') {
+      const body=await jsonBody(req);
+      if (!Array.isArray(body.selectedIds)||!Array.isArray(body.selectedPauseIds)||body.selectedIds.length>5000||body.selectedPauseIds.length>500) throw Error('Selección inválida.');
+      const matchIds=new Set(findMatches(transcript,dictionary).map(m=>m.id)),pauseIds=new Set(pauses.map(p=>p.id));
+      selection={selectedIds:[...new Set(body.selectedIds)].filter(id=>matchIds.has(id)),selectedPauseIds:[...new Set(body.selectedPauseIds)].filter(id=>pauseIds.has(id))};
+      writeJson(files.selection,selection);return respond(res,200,{saved:true});
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/suggest') return respond(res,202,await proposeShorts());
+    if (req.method==='POST' && url.pathname==='/api/shorts/manual') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      if (!project?.videoPath) throw Error('Abre un video primero.');
+      if (!transcript.length) throw Error('Transcribe el video primero para que el Short lleve subtítulos.');
+      const body=await jsonBody(req);
+      const start=Number(body.start), end=Number(body.end);
+      const duration=await durationOf(project.videoPath);
+      if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>duration||end-start<10||end-start>100) throw Error('El momento debe durar entre 10 y 100 segundos y estar dentro del video.');
+      if(shorts.length>=30) throw Error('Ya hay muchos Shorts en la lista. Borra algunos antes de agregar más.');
+      const words=tokenizeTranscript(transcript);
+      const opening=words.filter(w=>w.start>=start&&w.start<Math.min(end,start+10)).slice(0,20).map(w=>w.text.trim()).join(' ').replace(/\s+/g,' ').trim();
+      const id='m'+Math.round(start*10)+'_'+Math.round(end*10);
+      const clip={id,start:+start.toFixed(2),end:+end.toFixed(2),opening:opening||'(momento elegido por ti)',score:0,editorialScore:0,reason:'Momento elegido por ti',method:'manual',hook:String(body.hook||'').trim().slice(0,40),captionCorrections:[],framingMode:'auto',cropCenter:.5,zoomEnabled:true,captionStyle:'verde'};
+      shorts=[clip,...shorts.filter(s=>s.id!==id)].slice(0,30).map((s,i)=>({...s,rank:i+1}));
+      writeJson(files.shorts,shorts);
+      return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/metadata') {
+      const body=await jsonBody(req), clip=shorts.find(s=>s.id===String(body.id||''));
+      if (!clip) throw Error('No encuentro esa propuesta de Short.');
+      if (!transcript.length) throw Error('Transcribe el video primero.');
+      const excerpt=tokenizeTranscript(transcript).filter(w=>w.start>=clip.start&&w.start<clip.end).map(w=>w.text.trim()).join(' ');
+      const model=process.env.EDITOR_IRL_MODEL||'gemma3:4b';
+      const meta=await writePackage(model,excerpt);
+      clip.meta=meta; writeJson(files.shorts,shorts);
+      return respond(res,200,{meta});
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/hook') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      const body=await jsonBody(req), clip=shorts.find(s=>s.id===String(body.id||''));
+      if (!clip) throw Error('No encuentro esa propuesta de Short.');
+      clip.hook=String(body.hook||'').trim().slice(0,40);
+      writeJson(files.shorts,shorts);
+      return respond(res,200,{short:clip});
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/settings') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      const body=await jsonBody(req),clip=shorts.find(s=>s.id===String(body.id||''));
+      if(!clip) throw Error('No encuentro esa propuesta de Short.');
+      if(!['auto','manual','blur'].includes(body.framingMode)) throw Error('Encuadre inválido.');
+      const center=Number(body.cropCenter);
+      if(!Number.isFinite(center)||center<0||center>1) throw Error('Posición de encuadre inválida.');
+      clip.framingMode=body.framingMode;clip.cropCenter=center;clip.zoomEnabled=Boolean(body.zoomEnabled);
+      if(body.captionStyle && CAPTION_STYLES[body.captionStyle]) clip.captionStyle=body.captionStyle;
+      writeJson(files.shorts,shorts);return respond(res,200,{short:clip});
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/timing') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      const body=await jsonBody(req),clip=shorts.find(s=>s.id===String(body.id||''));
+      if(!clip) throw Error('No encuentro esa propuesta de Short.');
+      const start=Number(body.start),end=Number(body.end),duration=await durationOf(project.videoPath);
+      if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>duration||end-start<10||end-start>100) throw Error('El Short debe durar entre 10 y 100 segundos dentro del video.');
+      clip.start=+start.toFixed(2);clip.end=+end.toFixed(2);
+      clip.opening=tokenizeTranscript(transcript).filter(w=>w.start>=start&&w.start<Math.min(end,start+10)).slice(0,20).map(w=>w.text.trim()).join(' ');
+      writeJson(files.shorts,shorts);return respond(res,200,{short:clip});
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/captions') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      const body=await jsonBody(req), clip=shorts.find(s=>s.id===String(body.id||''));
+      if (!clip) throw Error('No encuentro esa propuesta de Short.');
+      if (!Array.isArray(body.corrections)||body.corrections.length>20) throw Error('Puedes guardar hasta 20 correcciones por Short.');
+      const words=tokenizeTranscript(transcript).filter(w=>w.start>=clip.start&&w.start<clip.end);
+      const haystack=` ${words.map(w=>w.norm).join(' ')} `;
+      const cleaned=body.corrections.map(c=>({from:String(c.from||'').trim().slice(0,100),to:String(c.to||'').trim().slice(0,100)}));
+      for(const correction of cleaned) {
+        if (!correction.from||!correction.to) throw Error('Escribe el texto detectado y su corrección.');
+        if (!haystack.includes(` ${normalize(correction.from)} `)) throw Error(`No encuentro “${correction.from}” en la transcripción de este Short.`);
+      }
+      clip.captionCorrections=cleaned;
+      writeJson(files.shorts,shorts);
+      return respond(res,200,{short:clip});
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/render') { const body=await jsonBody(req); return respond(res,202,await renderShort(String(body.id||''))); }
+    if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
+    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',!!body.compress); return respond(res,202,result); }
+    if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
+    return error(res,'No encontrado.',404);
+  } catch(e) { return error(res,e); }
+});
+server.listen(PORT,'127.0.0.1',()=>console.log(`Editor IRL: http://127.0.0.1:${PORT}`));
