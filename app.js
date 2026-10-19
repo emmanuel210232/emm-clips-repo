@@ -74,10 +74,12 @@ function addShortControls(row,s) {
   const zoomLabel=document.createElement('label');zoomLabel.className='inlineCheck';zoomLabel.append(zoom,document.createTextNode(' Zooms suaves'));
   const styleSel=document.createElement('select');for(const cs of (state.captionStyles||[])){const o=document.createElement('option');o.value=cs.id;o.textContent=cs.label;styleSel.append(o);}styleSel.value=s.captionStyle||'verde';
   const styleLabel=document.createElement('label');styleLabel.textContent='Subtítulos';styleLabel.append(styleSel);
+  const fmtSel=document.createElement('select');for(const [val,lbl] of [['vertical','Vertical 9:16 (Shorts)'],['square','Cuadrado 1:1'],['horizontal','Horizontal 16:9']]){const o=document.createElement('option');o.value=val;o.textContent=lbl;fmtSel.append(o);}fmtSel.value=s.format||'vertical';
+  const fmtLabel=document.createElement('label');fmtLabel.textContent='Formato';fmtLabel.append(fmtSel);
   const save=document.createElement('button');save.className='secondary';save.textContent='Guardar estilo';
-  const update=()=>{centerLabel.hidden=mode.value!=='manual';zoomLabel.hidden=mode.value==='blur'};mode.onchange=update;update();
-  save.onclick=safe(async()=>{await api('/api/shorts/settings',{id:s.id,framingMode:mode.value,cropCenter:Number(center.value)/100,zoomEnabled:zoom.checked,captionStyle:styleSel.value});notice('Estilo guardado. Vuelve a crear el Short para verlo.');});
-  framing.append(mode,styleLabel,centerLabel,zoomLabel,save);
+  const update=()=>{const vert=fmtSel.value==='vertical';mode.disabled=!vert;centerLabel.hidden=(mode.value!=='manual'||!vert);zoomLabel.hidden=mode.value==='blur'};mode.onchange=update;fmtSel.onchange=update;update();
+  save.onclick=safe(async()=>{await api('/api/shorts/settings',{id:s.id,framingMode:mode.value,cropCenter:Number(center.value)/100,zoomEnabled:zoom.checked,captionStyle:styleSel.value,format:fmtSel.value});notice('Formato y estilo guardados. Vuelve a crear el Short para verlo.');});
+  framing.append(mode,fmtLabel,styleLabel,centerLabel,zoomLabel,save);
   const hint=document.createElement('p');hint.textContent='Auto sigue zonas de piel visibles. Si pierde al sujeto, usa Manual o Fondo desenfocado. El recorte vertical se ve en el MP4 terminado.';
   details.append(summary,timing,framing,hint);row.insertBefore(details,row.querySelector('.shortActions'));
 }

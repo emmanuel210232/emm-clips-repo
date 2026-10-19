@@ -7,7 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
 const { normalize, findMatches, buildCuts, keptIntervals, adjustedCuts, parseSrt, parseWhisperJson, tokenizeTranscript } = require('./lib/core');
-const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES } = require('./lib/shorts');
+const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS } = require('./lib/shorts');
 const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/editorial');
 const { detectSubjectX, smoothTrack, cropExpression, zoomExpression } = require('./lib/framing');
 const channelStyle = require('./channel_style.json');
@@ -84,8 +84,8 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.0.0';
-const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips/main/';
+const APP_VERSION = '1.0.1';
+const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
 async function fetchText(url){const r=await fetch(url,{signal:AbortSignal.timeout(20000),cache:'no-store'});if(!r.ok)throw Error('No se pudo descargar ('+r.status+')');return r.text();}
@@ -289,33 +289,40 @@ async function proposeShorts() {
   return {started:true};
 }
 async function renderOneShort(clip,bin) {
+  const dur=clip.end-clip.start, pad=0.15;
+  const groserias=findMatches(transcript,dictionary).filter(m=>m.end>clip.start&&m.start<clip.end);
+  const censorRanges=groserias.map(m=>({start:m.start,end:m.end}));
   const assFile=path.join(DATA,`captions_${clip.id}.ass`);
-  await fsp.writeFile(assFile,makeAss(transcript,{...clip,brandHandle:config.brandHandle ?? channelStyle.brandHandle,brandMark:config.brandMark ?? channelStyle.brandMark}),'utf8');
+  await fsp.writeFile(assFile,makeAss(transcript,{...clip,censorRanges,brandHandle:config.brandHandle ?? channelStyle.brandHandle,brandMark:config.brandMark ?? channelStyle.brandMark}),'utf8');
   const output=path.join(EXPORTS,`short_${clip.rank}_${Date.now()}.mp4`);
   const temporary=path.join(DATA,`short_${crypto.randomUUID()}.mp4`);
+  const [OW,OH]=FORMATS[clip.format]||FORMATS.vertical;
   const {width,height}=videoDimensions(project.videoPath);
-  let framing=null;
-  if(clip.framingMode!=='blur') {
-    job.message=`Analizando encuadre del Short ${clip.rank}…`;
-    framing=await framingForClip(clip,bin,width,height);
-  }
   const captions=`ass=data/captions_${clip.id}.ass`;
+  const zoom=clip.zoomEnabled===false?'1':zoomExpression(tokenizeTranscript(transcript),clip.start,clip.end);
   let filter;
-  if(framing) {
-    const zoom=clip.zoomEnabled===false?'1':zoomExpression(tokenizeTranscript(transcript),clip.start,clip.end);
-    const pan=`zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x1280:fps=30`;
-    if(framing.portrait) filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,${pan},${captions}[v]`;
-    else filter=`[0:v]fps=30,setpts=PTS-STARTPTS,crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan},${captions}[v]`;
+  if(clip.format && clip.format!=='vertical') {
+    // Cuadrado (1:1) u horizontal (16:9): escalar para cubrir + recorte centrado (sin reencuadre de cara).
+    job.message=`Creando Short ${clip.rank} (${clip.format})…`;
+    filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${OW}x${OH}:fps=30,${captions}[v]`;
   } else {
-    job.message=`Usando fondo desenfocado en Short ${clip.rank}…`;
-    const frontHeight=Math.max(2,Math.round((720*height/width)/2)*2);
-    const zoom=clip.zoomEnabled===false?'1':zoomExpression(tokenizeTranscript(transcript),clip.start,clip.end);
-    filter=`[0:v]fps=30,setpts=PTS-STARTPTS,split=2[bg][fg];[bg]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=15:2[back];[fg]scale=720:-2,zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=720x${frontHeight}:fps=30[front];[back][front]overlay=(W-w)/2:(H-h)/2,${captions}[v]`;
+    let framing=null;
+    if(clip.framingMode!=='blur') {
+      job.message=`Analizando encuadre del Short ${clip.rank}…`;
+      framing=await framingForClip(clip,bin,width,height);
+    }
+    if(framing) {
+      const pan=`zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${OW}x${OH}:fps=30`;
+      if(framing.portrait) filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},${pan},${captions}[v]`;
+      else filter=`[0:v]fps=30,setpts=PTS-STARTPTS,crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan},${captions}[v]`;
+    } else {
+      job.message=`Usando fondo desenfocado en Short ${clip.rank}…`;
+      const frontHeight=Math.max(2,Math.round((OW*height/width)/2)*2);
+      filter=`[0:v]fps=30,setpts=PTS-STARTPTS,split=2[bg][fg];[bg]scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},boxblur=15:2[back];[fg]scale=${OW}:-2,zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${OW}x${frontHeight}:fps=30[front];[back][front]overlay=(W-w)/2:(H-h)/2,${captions}[v]`;
+    }
   }
   job.message=`Creando Short ${clip.rank}…`; job.percent=0;
   // Silenciar groserías que caigan dentro de este Short (audio por filter_complex, sin tocar imagen)
-  const dur=clip.end-clip.start, pad=0.15;
-  const groserias=findMatches(transcript,dictionary).filter(m=>m.end>clip.start&&m.start<clip.end);
   let fullFilter=filter, audioMap=['-map','0:a:0'];
   if(groserias.length) {
     const enable=groserias.map(m=>`between(t,${Math.max(0,m.start-clip.start-pad).toFixed(3)},${Math.min(dur,m.end-clip.start+pad).toFixed(3)})`).join('+');
@@ -570,7 +577,7 @@ const server=http.createServer(async (req,res) => {
       const words=tokenizeTranscript(transcript);
       const opening=words.filter(w=>w.start>=start&&w.start<Math.min(end,start+10)).slice(0,20).map(w=>w.text.trim()).join(' ').replace(/\s+/g,' ').trim();
       const id='m'+Math.round(start*10)+'_'+Math.round(end*10);
-      const clip={id,start:+start.toFixed(2),end:+end.toFixed(2),opening:opening||'(momento elegido por ti)',score:0,editorialScore:0,reason:'Momento elegido por ti',method:'manual',hook:String(body.hook||'').trim().slice(0,40),captionCorrections:[],framingMode:'auto',cropCenter:.5,zoomEnabled:true,captionStyle:'verde'};
+      const clip={id,start:+start.toFixed(2),end:+end.toFixed(2),opening:opening||'(momento elegido por ti)',score:0,editorialScore:0,reason:'Momento elegido por ti',method:'manual',hook:String(body.hook||'').trim().slice(0,40),captionCorrections:[],framingMode:'auto',cropCenter:.5,zoomEnabled:true,captionStyle:'verde',format:'vertical'};
       shorts=[clip,...shorts.filter(s=>s.id!==id)].slice(0,30).map((s,i)=>({...s,rank:i+1}));
       writeJson(files.shorts,shorts);
       return respond(res,200,state());
@@ -602,6 +609,7 @@ const server=http.createServer(async (req,res) => {
       if(!Number.isFinite(center)||center<0||center>1) throw Error('Posición de encuadre inválida.');
       clip.framingMode=body.framingMode;clip.cropCenter=center;clip.zoomEnabled=Boolean(body.zoomEnabled);
       if(body.captionStyle && CAPTION_STYLES[body.captionStyle]) clip.captionStyle=body.captionStyle;
+      if(body.format && FORMATS[body.format]) clip.format=body.format;
       writeJson(files.shorts,shorts);return respond(res,200,{short:clip});
     }
     if (req.method==='POST' && url.pathname==='/api/shorts/timing') {
