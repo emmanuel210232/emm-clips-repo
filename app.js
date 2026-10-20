@@ -104,6 +104,26 @@ function addMetaEditor(row,s){
   if(s.meta)renderMeta(s.meta);
   details.append(summary,gen,out);row.insertBefore(details,row.querySelector('.shortActions'));
 }
+let tlZoom=1;
+function tlDuration(){const v=$('video');if(v&&v.duration&&isFinite(v.duration))return v.duration;const t=state?.transcript;return t&&t.length?Number(t[t.length-1].end)||0:0;}
+function positionHead(){const head=$('tlHead');if(!head)return;const inner=head.parentElement;const v=$('video');const dur=tlDuration();if(!dur||!inner)return;const t=(v?.currentTime||0)+(playerSourceOffset||0);head.style.left=(Math.max(0,Math.min(1,t/dur))*inner.offsetWidth)+'px';}
+function buildTimeline(){
+  const bar=$('timeline'); if(!bar) return;
+  const dur=tlDuration();
+  const fp=`${(state.matches||[]).length}|${(state.pauses||[]).length}|${Math.round(dur)}|${tlZoom}`;
+  if(bar.dataset.fp===fp && bar.childElementCount){positionHead();return;}
+  bar.dataset.fp=fp; bar.replaceChildren();
+  if(!dur){bar.innerHTML='<div class="tl-empty">La línea de tiempo aparece al cargar el video.</div>';return;}
+  const inner=document.createElement('div');inner.className='timelineInner';
+  const px=Math.round(Math.max(bar.clientWidth||600, dur*1.1*tlZoom));
+  inner.style.width=px+'px';
+  const X=t=>Math.max(0,Math.min(px,t/dur*px));
+  for(const p of (state.pauses||[])){const el=document.createElement('div');el.className='tl-pause';el.style.left=X(p.start)+'px';el.style.width=Math.max(2,X(p.end)-X(p.start))+'px';el.title=`Pausa ${p.duration}s`;inner.append(el);}
+  for(const m of (state.matches||[])){const el=document.createElement('div');el.className='tl-gros';el.style.left=X(m.start)+'px';el.title=m.term;inner.append(el);}
+  const head=document.createElement('div');head.className='tl-head';head.id='tlHead';inner.append(head);
+  inner.onclick=e=>{const r=inner.getBoundingClientRect();const t=(e.clientX-r.left)/px*dur;const v=$('video');if(v){try{v.currentTime=Math.max(0,t-(playerSourceOffset||0));v.play().catch(()=>{});}catch{}}};
+  bar.append(inner); positionHead();
+}
 function buildTranscript(){
   const tv=$('transcriptView'); if(!tv) return;
   const fp=(state.transcript?.length||0)+'|'+(state.matches?.length||0);
@@ -136,6 +156,7 @@ function render() {
   $('termCount').textContent=`${state.dictionary.filter(d=>d.enabled).length} activas`;
   $('matchCount').textContent=`${state.matches.length} coincidencias`;
   buildTranscript();
+  buildTimeline();
   const fp=state.matches.map(m=>m.id).join('|');
   if(fp!==matchFingerprint){selected=state.selection?new Set(state.selection.selectedIds):new Set(state.matches.filter(m=>m.note!=='Revisar contexto'&&!m.approximate).map(m=>m.id));matchFingerprint=fp;}
   const terms=$('terms');terms.replaceChildren();
@@ -179,6 +200,9 @@ $('transcribe').onclick=safe(async()=>{await api('/api/transcribe',{});notice('T
 $('analyzePauses').onclick=safe(async()=>{selectedPauses=new Set();await api('/api/pauses/analyze',{});notice('Analizando silencios del audio.');});
 $('makePreview').onclick=safe(async()=>{await api('/api/preview',{});notice('Creando vista previa. Puedes esperar a que termine mientras la app sigue abierta.');});
 $('grabFrame').onclick=safe(async()=>{let at;try{at=sourcePlayerTime();}catch(e){throw Error('Mueve el reproductor al momento que quieras (video original o un fragmento sin cortar).');}const r=await api('/api/frame',{at});notice('📸 Frame guardado: '+r.name+'. En el paso 4 → Archivos creados puedes abrirlo o Guardar como.');});
+$('tlZoomIn').onclick=()=>{tlZoom=Math.min(20,tlZoom*1.6);buildTimeline();};
+$('tlZoomOut').onclick=()=>{tlZoom=Math.max(1,tlZoom/1.6);buildTimeline();};
+$('video').addEventListener('timeupdate',positionHead);
 $('getDf').onclick=async()=>{const b=$('getDf');try{b.disabled=true;b.textContent='Descargando… (25 MB)';await api('/api/download-df',{});notice('✅ Voz Estudio activada. Elígela en “Mejorar voz”.');await refresh();}catch(e){notice('No se pudo activar: '+e.message,true);}finally{b.disabled=false;b.textContent='⬇️ Activar voz Estudio (25 MB)';}};
 $('takeManualStart').onclick=()=>{try{$('manualStart').value=sourcePlayerTime().toFixed(2);}catch(e){notice(e.message,true);}};
 $('takeManualEnd').onclick=()=>{try{$('manualEnd').value=sourcePlayerTime().toFixed(2);}catch(e){notice(e.message,true);}};
@@ -197,7 +221,7 @@ $('export').onclick=safe(async()=>{await selectionSave;const mode=(document.quer
 $('cancelJob').onclick=safe(async()=>{await api('/api/job/cancel',{});notice('Cancelando el proceso…');});
 $('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};
 // Asistente por pasos (wizard)
-function goStep(n){n=Math.max(1,Math.min(4,Number(n)||1));document.querySelectorAll('.step').forEach(s=>{s.hidden=Number(s.dataset.step)!==n;});document.querySelectorAll('.wstep').forEach(b=>{const bn=Number(b.dataset.step);b.classList.toggle('active',bn===n);b.classList.toggle('done',bn<n);});try{localStorage.setItem('eirl_step',String(n));}catch{}window.scrollTo({top:0,behavior:'smooth'});}
+function goStep(n){n=Math.max(1,Math.min(4,Number(n)||1));document.querySelectorAll('.step').forEach(s=>{s.hidden=Number(s.dataset.step)!==n;});document.querySelectorAll('.wstep').forEach(b=>{const bn=Number(b.dataset.step);b.classList.toggle('active',bn===n);b.classList.toggle('done',bn<n);});try{localStorage.setItem('eirl_step',String(n));}catch{}window.scrollTo({top:0,behavior:'smooth'});if(n===1){const tl=document.getElementById('timeline');if(tl)tl.dataset.fp='';setTimeout(()=>{try{buildTimeline();}catch{}},90);}}
 document.querySelectorAll('.wstep').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.step)));
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.go)));
 (function(){let s=1;try{s=Number(localStorage.getItem('eirl_step'))||1;}catch{}goStep(s);})();

@@ -40,6 +40,10 @@
         <div class="previewAction"><button id="makePreview" class="secondary">Crear vista previa MP4</button><span class="muted">Útil para MPG y formatos que el navegador no reproduce.</span></div>
         <div class="player"><video id="video" controls preload="metadata"></video><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
         <div class="row" style="margin-top:10px"><button id="grabFrame" class="secondary">📸 Exportar frame (para miniatura)</button><span class="muted">Pausa en el momento que quieras y pícalo. Sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
+        <div class="timelineWrap">
+          <div class="tl-controls"><strong>Línea de tiempo</strong><span class="tl-legend"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías · clic para saltar</span><span style="flex:1"></span><button id="tlZoomOut" class="secondary compact" type="button" aria-label="Alejar">−</button><button id="tlZoomIn" class="secondary compact" type="button" aria-label="Acercar">+</button></div>
+          <div id="timeline" class="timelineBar"></div>
+        </div>
       </div>
       <div class="stepNav"><span></span><button type="button" class="primary next" data-go="2">Siguiente: Transcribir →</button></div>
     </section>

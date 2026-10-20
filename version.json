@@ -1,5 +1,5 @@
 {
-  "version": "1.0.3",
-  "notes": "Voz nivel Estudio con IA (DeepFilterNet), animaciones de entrada/salida, pulido de la interfaz y mejoras varias.",
+  "version": "1.0.4",
+  "notes": "Línea de tiempo visual con las pausas y groserías marcadas (con zoom y clic para saltar).",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
