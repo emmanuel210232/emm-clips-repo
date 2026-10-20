@@ -177,3 +177,16 @@ body{font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,san
 .audioToggle small{font-size:11.5px;color:#7b8a7e}
 .audioToggle.disabled{opacity:.55}
 .audioToggle.disabled b::after{content:' · no instalada';font-weight:400;color:#b08900}
+
+/* ===== Animación del clip (fade in/out) + vista previa ===== */
+.player{position:relative}
+.animOverlay{position:absolute;inset:0;background:#000;opacity:0;display:none;pointer-events:none;z-index:4}
+.animPanel{margin:10px 0 2px;padding:12px 14px;border:1px solid #e3eadf;border-radius:12px;background:#fbfdfa}
+.animHead{font-weight:700;font-size:14px;color:#1f3326;margin-bottom:8px}
+.animHead small{font-weight:400;color:#8a968b}
+.animRow{align-items:center;gap:9px}
+.animRow label{font-size:13px;color:#2f5c3f;display:flex;align-items:center;gap:6px}
+.animRow select,.animRow input{font-family:inherit;font-size:13px;padding:5px 8px;border:1px solid #cfe0cb;border-radius:7px;color:#2f5c3f;background:#fff}
+.animBrand{margin-top:9px}
+.animBrand summary{cursor:pointer;font-size:12.5px;color:#748076}
+.animBrand select{width:100%;font-family:inherit;padding:6px 8px;border:1px solid #cfe0cb;border-radius:7px;color:#2f5c3f;background:#fff}

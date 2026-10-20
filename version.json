@@ -1,5 +1,5 @@
 {
-  "version": "1.0.7",
-  "notes": "Cortes en la línea de tiempo (Modo corte: arrastra o marca con una tecla y quita tramos, el video se une solo), panel de audio con opciones (reducir ruido, nivelar, normalizar, voz Estudio IA), más animaciones de intro/outro (fundido, deslizar, subir, destello) y el explorador de Windows ahora abre al frente.",
+  "version": "1.0.8",
+  "notes": "Animaciones del clip estilo CapCut (fade in / fade out, en negro o blanco) con VISTA PREVIA en el Paso 1 — pruébalas sobre tu video antes de exportar. La animación, el intro y el outro ahora se eligen junto al reproductor en el Paso 1.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

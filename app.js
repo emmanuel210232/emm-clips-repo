@@ -186,6 +186,42 @@ function buildTimeline(){
   bar.append(inner); positionHead(); updateTlTime(); refreshOverlays();
 }
 function frameStep(d){const v=$('video');if(!v)return;try{v.pause();v.currentTime=Math.max(0,(v.currentTime||0)+d);}catch{}positionHead();updateTlTime();}
+// Vista previa de la animación del clip (simula el fade con un overlay sobre el reproductor).
+// Usa la Web Animations API (más fiable que requestAnimationFrame, que se pausa si la pestaña no se ve).
+let animHandle=null, animTick=null, animTimer=null;
+function animColor(v){return v==='blanco'?'#ffffff':'#000000';}
+function animDur(){return Math.max(0.3,Math.min(3,Number($('clipDur')?.value)||0.8));}
+function stopAnimPreview(){const v=$('video'),ov=$('animOverlay');if(animHandle){try{animHandle.cancel();}catch{}animHandle=null;}if(animTimer){clearTimeout(animTimer);animTimer=null;}if(animTick&&v){v.removeEventListener('timeupdate',animTick);animTick=null;}if(ov){ov.style.opacity='0';ov.style.display='none';}}
+function runOverlayFade(ov,from,to,d,onDone){
+  ov.style.display='block';ov.style.opacity=String(to);
+  animHandle=ov.animate([{opacity:from},{opacity:to}],{duration:d*1000,easing:'linear',fill:'forwards'});
+  animHandle.onfinish=()=>{animHandle=null;if(onDone)onDone();};
+  return animHandle;
+}
+function previewAnim(kind){
+  const v=$('video'),ov=$('animOverlay');if(!v||!ov)return;
+  if(!v.getAttribute('src')){notice('Abre un video primero para previsualizar.',true);return;}
+  stopAnimPreview();
+  const d=animDur();
+  if(kind==='in'){
+    const sel=$('clipIn').value;if(sel==='none'){notice('Elige una animación de entrada primero. (Entrada: Ninguna)');return;}
+    ov.style.background=animColor(sel);
+    try{v.currentTime=0;}catch{}
+    v.play().catch(()=>{});
+    runOverlayFade(ov,1,0,d,()=>{animTimer=setTimeout(()=>{try{v.pause();}catch{}ov.style.display='none';},700);});
+    notice('▶ Previsualizando entrada (fade in). Así se verá el inicio del video.');
+  } else {
+    const sel=$('clipOut').value;if(sel==='none'){notice('Elige una animación de salida primero. (Salida: Ninguna)');return;}
+    const total=tlDuration();if(!total){notice('El video aún no tiene duración.',true);return;}
+    const st=Math.max(0,total-d);
+    ov.style.background=animColor(sel);ov.style.opacity='0';ov.style.display='block';
+    try{v.currentTime=Math.max(0,st-1.2);}catch{}
+    v.play().catch(()=>{});
+    animTick=()=>{const t=(v.currentTime||0)+(playerSourceOffset||0);if(t>=st){v.removeEventListener('timeupdate',animTick);animTick=null;runOverlayFade(ov,0,1,d,()=>{animTimer=setTimeout(()=>{try{v.pause();}catch{}ov.style.display='none';ov.style.opacity='0';},400);});}};
+    v.addEventListener('timeupdate',animTick);
+    notice('▶ Previsualizando salida (fade out). Reproduciendo hacia el final…');
+  }
+}
 function buildTranscript(){
   const tv=$('transcriptView'); if(!tv) return;
   const fp=(state.transcript?.length||0)+'|'+(state.matches?.length||0);
@@ -244,6 +280,7 @@ function render() {
   const ready=state.readiness;$('engineStatus').textContent=`Versión ${state.version||'?'} · FFmpeg: ${ready.ffmpeg?'listo':'falta'} · FFprobe: ${ready.ffprobe?'listo':'falta'} · Whisper: ${ready.whisper?(ready.whisperGpu?'GPU ⚡':'CPU'):'falta'} · Modelo: ${ready.model?ready.model.split(/[\\/]/).at(-1):'falta'}`;
   const qsel=$('exportQuality');if(qsel && !qsel.dataset.filled && (state.qualities||[]).length){for(const q of state.qualities){const o=document.createElement('option');o.value=q.id;o.textContent=q.label;qsel.append(o);}qsel.dataset.filled='1';}
   ['introTpl','outroTpl'].forEach(id=>{const sel=$(id);if(sel && !sel.dataset.filled && (state.brandTemplates||[]).length){for(const t of state.brandTemplates){const o=document.createElement('option');o.value=t.id;o.textContent=t.label;sel.append(o);}sel.value='none';sel.dataset.filled='1';}});
+  ['clipIn','clipOut'].forEach(id=>{const sel=$(id);if(sel && !sel.dataset.filled){for(const [v,l] of [['none','Ninguna'],['negro','Fade negro'],['blanco','Fade blanco']]){const o=document.createElement('option');o.value=v;o.textContent=l;sel.append(o);}sel.value='none';sel.dataset.filled='1';}});
   const av=$('auVoice'),avWrap=$('auVoiceWrap'),gd=$('getDf');
   if(av){av.disabled=!state.dfReady;if(!state.dfReady)av.checked=false;}
   if(avWrap)avWrap.classList.toggle('disabled',!state.dfReady);
@@ -313,6 +350,10 @@ window.addEventListener('keydown',e=>{
 });
 $('getDf').onclick=async()=>{const b=$('getDf');try{b.disabled=true;b.textContent='Descargando… (25 MB)';await api('/api/download-df',{});notice('✅ Voz Estudio activada. Marca “Realzar voz · Estudio” en el panel de audio.');await refresh();const av=$('auVoice');if(av)av.checked=true;}catch(e){notice('No se pudo activar: '+e.message,true);}finally{b.disabled=false;b.textContent='⬇️ Activar voz Estudio (25 MB)';}};
 $('auOff').onclick=()=>{['auDenoise','auCompress','auNormalize','auVoice'].forEach(id=>{const el=$(id);if(el)el.checked=false;});notice('Audio sin procesar: saldrá igual que el original (con las groserías silenciadas).');};
+$('animPreviewIn').onclick=()=>previewAnim('in');
+$('animPreviewOut').onclick=()=>previewAnim('out');
+// Si la pestaña se oculta a media previa, limpia el overlay (las animaciones se pausan al ocultar).
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopAnimPreview();});
 $('takeManualStart').onclick=()=>{try{$('manualStart').value=sourcePlayerTime().toFixed(2);}catch(e){notice(e.message,true);}};
 $('takeManualEnd').onclick=()=>{try{$('manualEnd').value=sourcePlayerTime().toFixed(2);}catch(e){notice(e.message,true);}};
 $('addManualCut').onclick=safe(async()=>{await api('/api/cuts/manual',{start:Number($('manualStart').value),end:Number($('manualEnd').value),label:$('manualLabel').value});$('manualLabel').value='';notice('Corte manual agregado. Escucha el salto para revisar el resultado.');});
@@ -326,7 +367,7 @@ $('saveTerms').onclick=safe(async()=>{await api('/api/dictionary',{entries:state
 $('saveConfig').onclick=safe(async()=>{await api('/api/config',{ffmpeg:$('ffmpegPath').value,ffprobe:$('ffprobePath').value,whisper:$('whisperPath').value,model:$('modelPath').value,brandHandle:$('brandHandle').value,brandMark:$('brandMark').value});notice('Configuración guardada.');});
 $('selectAll').onclick=()=>{selected=new Set(state.matches.map(m=>m.id));persistSelection();render();};
 $('selectNone').onclick=()=>{selected.clear();persistSelection();render();};
-$('export').onclick=safe(async()=>{await selectionSave;const mode=(document.querySelector('input[name="censorMode"]:checked')||{}).value==='cut'?'cut':'mute';const ids=[...selected];const pauseIds=[...selectedPauses];if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas o agrega un corte manual.');const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none'});notice(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`);});
+$('export').onclick=safe(async()=>{await selectionSave;const mode=(document.querySelector('input[name="censorMode"]:checked')||{}).value==='cut'?'cut':'mute';const ids=[...selected];const pauseIds=[...selectedPauses];if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas o agrega un corte manual.');const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});notice(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`);});
 $('cancelJob').onclick=safe(async()=>{await api('/api/job/cancel',{});notice('Cancelando el proceso…');});
 $('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};
 // Asistente por pasos (wizard)
