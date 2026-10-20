@@ -1,5 +1,5 @@
 {
-  "version": "1.0.2",
-  "notes": "Mejora de voz (denoise + nivelado), exportar frame HQ para miniaturas, calidad 1080p/60fps, panel de transcripción y animaciones de intro/outro.",
+  "version": "1.0.3",
+  "notes": "Voz nivel Estudio con IA (DeepFilterNet), animaciones de entrada/salida, pulido de la interfaz y mejoras varias.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
