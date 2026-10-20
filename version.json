@@ -1,5 +1,5 @@
 {
-  "version": "1.0.6",
-  "notes": "Línea de tiempo con miniaturas (filmstrip frame por frame) y onda de audio, preview más grande y scrubbing más fluido — estilo editor.",
+  "version": "1.0.7",
+  "notes": "Cortes en la línea de tiempo (Modo corte: arrastra o marca con una tecla y quita tramos, el video se une solo), panel de audio con opciones (reducir ruido, nivelar, normalizar, voz Estudio IA), más animaciones de intro/outro (fundido, deslizar, subir, destello) y el explorador de Windows ahora abre al frente.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

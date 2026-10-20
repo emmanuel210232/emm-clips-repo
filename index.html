@@ -58,8 +58,19 @@
             <button id="tlZoomOut" class="tl-btn" type="button" title="Alejar">−</button>
             <button id="tlZoomIn" class="tl-btn" type="button" title="Acercar">+</button>
           </div>
-          <div class="tl-legend2"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías · arrastra sobre la barra para buscar</div>
+          <div class="tl-legend2"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías <i class="lg-cut"></i>se quita · arrastra para buscar</div>
+          <div class="tl-cutbar">
+            <button id="tlCutMode" class="tl-btn" type="button" title="Actívalo y arrastra sobre la barra para seleccionar un tramo">✂️ Modo corte</button>
+            <button id="tlMark" class="tl-btn" type="button" title="Marca inicio/fin del tramo en la posición actual del reproductor">⬇️ Marcar aquí (S)</button>
+            <button id="tlDelSel" class="tl-btn danger" type="button" title="Quita el tramo seleccionado del video (tecla Supr)" disabled>🗑️ Quitar tramo</button>
+            <button id="tlClearSel" class="tl-btn" type="button" title="Borra la selección actual">✖</button>
+            <span style="flex:1"></span>
+            <label class="tl-keylbl">Tecla de corte <select id="tlKeyMark" class="tl-key" title="Tecla del teclado para marcar el corte"><option value="s">S</option><option value="c">C</option><option value="b">B</option><option value="m">M</option><option value="x">X</option></select></label>
+            <span id="tlCutInfo" class="tl-cutinfo"></span>
+            <button id="tlGoCut" class="tl-btn primaryMini" type="button" title="Ir a Exportar quitando los tramos marcados" hidden>Exportar recortado →</button>
+          </div>
           <div id="timeline" class="timelineBar"></div>
+          <p class="hint" style="margin:8px 2px 0">✂️ <b>Para cortar:</b> activa <b>Modo corte</b> y arrastra sobre la barra (o reproduce y pulsa tu <b>tecla de corte</b> para marcar inicio y fin). Luego <b>Quitar tramo</b> lo pinta de rojo. Al <b>Exportar recortado</b> esos tramos desaparecen y el video se une solo.</p>
         </div>
       </div>
       <div class="stepNav"><span></span><button type="button" class="primary next" data-go="2">Siguiente: Transcribir →</button></div>
@@ -124,9 +135,15 @@
           <label class="inlineCheck"><input type="radio" name="censorMode" value="mute" checked> <span><strong>Silenciar</strong> — calla la palabra pero deja el video continuo, sin saltos (recomendado para IRL). Rápido: no reprocesa el video.</span></label>
           <label class="inlineCheck"><input type="radio" name="censorMode" value="cut"> <span><strong>Cortar</strong> — quita ese tiempo del video (también elimina pausas seleccionadas). Puede notarse un brinco.</span></label>
         </div>
-        <label class="field" for="enhanceLevel">🎙️ Mejorar voz</label>
-        <div class="row wrap"><select id="enhanceLevel" style="flex:1 1 200px"></select><button id="getDf" type="button" class="secondary" hidden>⬇️ Activar voz Estudio (25 MB)</button></div>
-        <p class="hint">“Estándar” limpia ruido y nivela el volumen (rápido). “Estudio” usa IA (DeepFilterNet) para calidad superior de voz.</p>
+        <label class="field">🎙️ Audio <small style="font-weight:400;color:#8a968b">— marca lo que quieras aplicar</small></label>
+        <div class="audioPanel">
+          <label class="audioToggle"><input type="checkbox" id="auDenoise" checked><span><b>Reducir ruido</b><small>Quita zumbido y ruido de fondo</small></span></label>
+          <label class="audioToggle"><input type="checkbox" id="auCompress" checked><span><b>Nivelar picos</b><small>Compresor: la voz suena más pareja</small></span></label>
+          <label class="audioToggle"><input type="checkbox" id="auNormalize" checked><span><b>Normalizar volumen</b><small>Volumen parejo para YouTube (−16 LUFS)</small></span></label>
+          <label class="audioToggle" id="auVoiceWrap"><input type="checkbox" id="auVoice"><span><b>Realzar voz · Estudio (IA)</b><small>DeepFilterNet · calidad superior</small></span></label>
+        </div>
+        <div class="row wrap" style="margin-top:8px"><button id="getDf" type="button" class="secondary" hidden>⬇️ Activar voz Estudio (25 MB)</button><button id="auOff" type="button" class="secondary compact">Dejar audio sin tocar</button></div>
+        <p class="hint">“Realzar voz · Estudio” usa IA local (DeepFilterNet) para calidad de estudio; si no está instalada aparece el botón para activarla (25 MB). Si no marcas nada, el audio sale igual que el original (solo con las groserías silenciadas).</p>
         <label class="field" for="exportQuality">Calidad de exportación</label>
         <select id="exportQuality"></select>
         <p class="hint">“Original” conserva el video tal cual (rápido, máxima fidelidad). 1080p/60fps reencoda (el 60fps real solo ayuda si el directo ya es 60fps).</p>

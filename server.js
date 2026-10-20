@@ -78,15 +78,18 @@ function nativeDialog(kind, defaultName='') {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') return resolve('');
     const safeDefault=String(defaultName).replace(/'/g,"''");
+    // Formulario dueño invisible y TopMost: fuerza a que el explorador salga ENCIMA de todo
+    // (si no, Windows lo abre detrás del navegador porque node corre oculto).
+    const owner = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $o=New-Object System.Windows.Forms.Form; $o.StartPosition='CenterScreen'; $o.Size=New-Object System.Drawing.Size(1,1); $o.Opacity=0; $o.ShowInTaskbar=$false; $o.TopMost=$true; $o.Show(); $o.Activate(); [System.Windows.Forms.Application]::DoEvents();`;
     const ps = kind==='save'
-      ? `Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.SaveFileDialog; $f.Filter='Video MP4|*.mp4|Todos los archivos|*.*'; $f.FileName='${safeDefault}'; $f.Title='Guardar video como'; $f.OverwritePrompt=$true; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}`
-      : `Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.OpenFileDialog; $f.Filter='Videos|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v;*.mpg;*.mpeg|Todos los archivos|*.*'; $f.Title='Elige el video del directo'; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}`;
+      ? `${owner} $f=New-Object System.Windows.Forms.SaveFileDialog; $f.Filter='Video MP4|*.mp4|Todos los archivos|*.*'; $f.FileName='${safeDefault}'; $f.Title='Guardar video como'; $f.OverwritePrompt=$true; $r=$f.ShowDialog($o); $o.Close(); if($r -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}`
+      : `${owner} $f=New-Object System.Windows.Forms.OpenFileDialog; $f.Filter='Videos|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v;*.mpg;*.mpeg|Todos los archivos|*.*'; $f.Title='Elige el video del directo'; $r=$f.ShowDialog($o); $o.Close(); if($r -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}`;
     const child=spawn('powershell.exe',['-NoProfile','-STA','-Command',ps],{windowsHide:true});
     let out=''; child.stdout.on('data',b=>out+=b.toString()); child.on('error',()=>resolve('')); child.on('close',()=>resolve(out.trim()));
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.0.6';
+const APP_VERSION = '1.0.7';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -167,6 +170,23 @@ async function transcribe() {
 }
 // Cadena de mejora de voz (denoise + compresor + nivelado tipo estudio). Local, sin modelos externos.
 const AUDIO_ENHANCE = "highpass=f=90,afftdn=nr=12,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11";
+// Construye la cadena de audio a partir de la configuración elegida.
+// enhance puede ser: 'none' | 'std' | 'studio' | true  (compatibilidad),
+// o un objeto {denoise, compress, normalize, voice} desde el panel de audio.
+function buildAudioFilter(enhance){
+  if(enhance==='none'||enhance===false||enhance==null) return {chain:'',studio:false};
+  if(enhance==='std'||enhance===true) return {chain:AUDIO_ENHANCE,studio:false};
+  if(enhance==='studio') return {chain:'',studio:dfReady()}; // DeepFilterNet nivela por su cuenta
+  if(typeof enhance==='object'){
+    const studio = !!enhance.voice && dfReady();
+    const parts=[];
+    if(enhance.denoise){ parts.push('highpass=f=90','afftdn=nr=12'); }
+    if(enhance.compress){ parts.push('acompressor=threshold=-18dB:ratio=3:attack=5:release=120'); }
+    if(enhance.normalize && !studio){ parts.push('loudnorm=I=-16:TP=-1.5:LRA=11'); } // studio ya nivela
+    return {chain:parts.join(','),studio};
+  }
+  return {chain:'',studio:false};
+}
 // Presets de calidad de exportación.
 const QUALITY = {
   original: { label:'Original (rápido, sin recomprimir)', copy:true },
@@ -176,19 +196,38 @@ const QUALITY = {
 };
 function qualityLabels(){ return Object.entries(QUALITY).map(([id,q])=>({id,label:q.label})); }
 // Plantillas de intro/outro (fondo + color de texto; animación fade). Propias, no de CapCut.
+// Plantillas de intro/outro: cada una combina un LOOK (colores) con un MOVIMIENTO del texto.
+// El clip siempre funde a/desde negro en los bordes → transición suave con el video.
 const BRAND_TPL = {
-  none:  { label:'Sin animación' },
-  negro: { label:'Negro + verde', bg:'black', fg:'0x18FC53' },
-  verde: { label:'Verde Kick', bg:'0x18FC53', fg:'black' },
-  blanco:{ label:'Blanco limpio', bg:'white', fg:'0x1f6b33' },
+  none:       { label:'Sin animación' },
+  fundNegro:  { label:'Fundido · negro + verde', bg:'black',    fg:'0x18FC53', motion:'fade' },
+  fundVerde:  { label:'Fundido · verde Kick',     bg:'0x18FC53', fg:'black',    motion:'fade' },
+  fundBlanco: { label:'Fundido · blanco limpio',  bg:'white',    fg:'0x1f6b33', motion:'fade' },
+  deslizNegro:{ label:'Deslizar · negro + verde', bg:'black',    fg:'0x18FC53', motion:'slide' },
+  deslizVerde:{ label:'Deslizar · verde Kick',    bg:'0x18FC53', fg:'black',    motion:'slide' },
+  subeNegro:  { label:'Subir · negro + verde',    bg:'black',    fg:'0x18FC53', motion:'rise' },
+  destelloKick:{label:'Destello · verde Kick',    bg:'0x18FC53', fg:'black',    motion:'flash' },
 };
 function brandTemplates(){ return Object.entries(BRAND_TPL).map(([id,t])=>({id,label:t.label})); }
 function videoFps(p){ const bin=readiness().ffprobe; const out=spawnSync(bin,['-v','error','-select_streams','v:0','-show_entries','stream=avg_frame_rate','-of','default=nw=1:nk=1',p],{encoding:'utf8',windowsHide:true}); const m=String(out.stdout).trim().match(/(\d+)\/(\d+)/); const f=m&&+m[2]?Math.round(+m[1]/+m[2]):30; return (f>=1&&f<=120)?f:30; }
 async function makeBrandClip(bin,isOutro,template,W,H,fps,handle,out){
-  const t=BRAND_TPL[template]||BRAND_TPL.negro, dur=2.5, fontsize=Math.round(H/11);
+  const t=BRAND_TPL[template]||BRAND_TPL.fundNegro, dur=2.5, fontsize=Math.round(H/11);
   const text=String(handle||'@TuCanal').replace(/[':\\%]/g,'').slice(0,40)||'@TuCanal';
-  const alpha=isOutro?`if(lt(t,0.4),t/0.4,if(gt(t,${dur-0.5}),(${dur}-t)/0.5,1))`:`if(lt(t,0.5),t/0.5,if(gt(t,${dur-0.4}),(${dur}-t)/0.4,1))`;
-  const vf=`drawtext=fontfile='C\\:/Windows/Fonts/ariblk.ttf':text='${text}':fontcolor=${t.fg}:fontsize=${fontsize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${alpha}'`;
+  const motion=t.motion||'fade';
+  const inD=0.6, outD=0.6;
+  const prog=`min(1,t/${inD})`;                       // 0→1 durante la entrada
+  const outP=`max(0,(t-(${dur}-${outD}))/${outD})`;   // 0→1 durante la salida
+  let x='(w-text_w)/2', y='(h-text_h)/2', alpha='1';
+  if(motion==='slide'){
+    x = isOutro ? `(w-text_w)/2 + ((w+text_w)/2)*${outP}` : `-text_w + ((w+text_w)/2)*${prog}`;
+  } else if(motion==='rise'){
+    y = isOutro ? `(h-text_h)/2 + (h/2)*${outP}` : `(h-text_h)/2 + (h/2)*(1-${prog})`;
+  } else if(motion==='flash'){
+    alpha = `if(lt(t,0.35),0.25+0.75*abs(sin(t*28)),1)`;
+  }
+  // x/y/alpha van entre comillas: pueden contener comas (min(1,t)…) que ffmpeg leería como separador de filtros.
+  const dt=`drawtext=fontfile='C\\:/Windows/Fonts/ariblk.ttf':text='${text}':fontcolor=${t.fg}:fontsize=${fontsize}:x='${x}':y='${y}':alpha='${alpha}'`;
+  const vf=`${dt},fade=t=in:st=0:d=0.3:color=black,fade=t=out:st=${(dur-0.3).toFixed(2)}:d=0.3:color=black`;
   await run(bin,['-y','-f','lavfi','-i',`color=c=${t.bg}:s=${W}x${H}:d=${dur}:r=${fps}`,'-f','lavfi','-i','anullsrc=r=48000:cl=stereo','-t',String(dur),'-vf',vf,'-c:v','libx264','-pix_fmt','yuv420p','-r',String(fps),'-c:a','aac','-ar','48000','-shortest',out]);
 }
 // DeepFilterNet (voz nivel estudio, IA local). Binario opcional en tools/.
@@ -233,8 +272,8 @@ async function finalizeExport(bin,temporary,output,intro,outro,studio){
 }
 async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none') {
   const q = QUALITY[quality] || QUALITY.original;
-  const stdEnhance = enhance==='std' || enhance===true;
-  const studioOn = enhance==='studio' && dfReady();
+  const {chain:audioChain, studio:studioOn} = buildAudioFilter(enhance);
+  const stdEnhance = !!audioChain;
   const bins = readiness();
   if (!project?.videoPath) throw Error('Abre un video primero.');
   if (!bins.ffmpeg || !bins.ffprobe) throw Error('Configura FFmpeg y ffprobe antes de exportar.');
@@ -257,7 +296,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     job = { status:'running', message:q.copy?`Silenciando ${ranges.length} ${ranges.length===1?'grosería':'groserías'}…`:`Silenciando y exportando (${q.label})…`, progress:'', percent:0, cancelRequested:false };
     (async () => {
       try {
-        const af = `volume=enable='${enable}':volume=0`+(stdEnhance?`,${AUDIO_ENHANCE}`:'');
+        const af = `volume=enable='${enable}':volume=0`+(audioChain?`,${audioChain}`:'');
         await run(bins.ffmpeg, ['-y','-i',project.videoPath,'-map','0:v:0','-map','0:a:0',...videoArgs,'-af',af,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(duration,q.copy?'Silenciando':'Exportando'));
         await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn);
         job = { status:'done', message:`Video con groserías silenciadas: ${output}`, progress:'', percent:100, output };
@@ -279,7 +318,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   });
   filter.push(keep.map((_,i) => `[v${i}][a${i}]`).join('') + `concat=n=${keep.length}:v=1:a=1[v][a]`);
   const aLabel = stdEnhance ? '[aout]' : '[a]';
-  if (stdEnhance) filter.push(`[a]${AUDIO_ENHANCE}[aout]`);
+  if (stdEnhance) filter.push(`[a]${audioChain}[aout]`);
   let vLabel='[v]';
   if(!q.copy && (q.scale||q.fps)){const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(',');filter.push(`[v]${vf}[vout]`);vLabel='[vout]';}
   const cutCrf=String(q.crf||19);
@@ -690,7 +729,7 @@ const server=http.createServer(async (req,res) => {
       if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
       if (!project?.videoPath) throw Error('Abre un video primero.');
       const body=await jsonBody(req),start=Number(body.start),end=Number(body.end),duration=await durationOf(project.videoPath);
-      if (!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>duration||end-start<.04||end-start>30) throw Error('El corte manual debe durar entre 0.04 y 30 segundos y estar dentro del video.');
+      if (!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>duration+0.5||end-start<.04||end-start>1800) throw Error('El corte debe durar entre 0.04 segundos y 30 minutos y estar dentro del video.');
       if (manualCuts.length>=500) throw Error('Límite de 500 cortes manuales.');
       const cut={id:'manual_'+crypto.randomUUID(),start:+start.toFixed(3),end:+end.toFixed(3),label:String(body.label||'Corte manual').trim().slice(0,80)||'Corte manual'};
       manualCuts.push(cut);writeJson(files.manualCuts,manualCuts);return respond(res,200,state());
@@ -784,7 +823,7 @@ const server=http.createServer(async (req,res) => {
     }
     if (req.method==='POST' && url.pathname==='/api/shorts/render') { const body=await jsonBody(req); return respond(res,202,await renderShort(String(body.id||''))); }
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
-    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),String(body.enhance||'std'),String(body.intro||'none'),String(body.outro||'none')); return respond(res,202,result); }
+    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none')); return respond(res,202,result); }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);
   } catch(e) { return error(res,e); }
