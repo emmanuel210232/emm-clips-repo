@@ -191,6 +191,15 @@ body{font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,san
 .animBrand summary{cursor:pointer;font-size:12.5px;color:#748076}
 .animBrand select{width:100%;font-family:inherit;padding:6px 8px;border:1px solid #cfe0cb;border-radius:7px;color:#2f5c3f;background:#fff}
 
+/* ===== Editor en dos columnas (estilo CapCut): video+timeline | propiedades ===== */
+.editorGrid{display:grid;grid-template-columns:minmax(0,1fr) 322px;gap:16px;align-items:start;margin-top:16px}
+.editorMain{min-width:0}
+.editorSide{min-width:0;position:sticky;top:16px}
+.editorSide .animPanel{margin:0}
+.editorMain .player{margin-top:0}
+.editorMain .timelineWrap{margin-top:14px}
+@media(max-width:1000px){.editorGrid{grid-template-columns:1fr}.editorSide{position:static}}
+
 /* ============================================================
    TEMA OSCURO (estilo CapCut) — se activa con [data-theme="dark"]
    ============================================================ */

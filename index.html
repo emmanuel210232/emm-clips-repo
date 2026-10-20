@@ -42,22 +42,10 @@
           <input id="videoFile" type="file" accept="video/*,.mkv,.avi,.mpg,.mpeg">
         </details>
         <div class="previewAction"><button id="makePreview" class="secondary">Crear vista previa MP4</button><span class="muted">Útil para MPG y formatos que el navegador no reproduce.</span></div>
+        <div class="editorGrid">
+        <div class="editorMain">
         <div class="player"><video id="video" controls preload="metadata"></video><div id="animOverlay" class="animOverlay"></div><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
         <div class="row" style="margin-top:10px"><button id="grabFrame" class="secondary">📸 Exportar frame (para miniatura)</button><span class="muted">Pausa en el momento que quieras y pícalo. Sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
-        <div class="animPanel">
-          <div class="animHead">🎬 Animación del clip <small>— fade in / fade out, como CapCut. Previsualiza antes de exportar.</small></div>
-          <div class="row wrap animRow">
-            <label>Entrada <select id="clipIn"></select></label>
-            <button id="animPreviewIn" type="button" class="secondary compact">▶ Ver entrada</button>
-            <label>Salida <select id="clipOut"></select></label>
-            <button id="animPreviewOut" type="button" class="secondary compact">▶ Ver salida</button>
-            <label>Duración <input id="clipDur" type="number" min="0.3" max="3" step="0.1" value="0.8" style="width:64px"> s</label>
-          </div>
-          <details class="animBrand"><summary>Intro / outro con tu @usuario (opcional)</summary>
-            <div class="row wrap"><label style="flex:1">Intro <select id="introTpl"></select></label><label style="flex:1">Outro <select id="outroTpl"></select></label></div>
-            <p class="hint">Agrega una tarjeta corta (2.5s) con tu @usuario al inicio/final. Si eliges alguna, el video se reencoda.</p>
-          </details>
-        </div>
         <div class="timelineWrap">
           <div class="tl-controls">
             <span id="tlTime" class="tl-time">0:00:00 / 0:00:00</span>
@@ -86,6 +74,25 @@
           <div id="timeline" class="timelineBar"></div>
           <p class="hint" style="margin:8px 2px 0">✂️ <b>Para cortar:</b> activa <b>Modo corte</b> y arrastra sobre la barra (o reproduce y pulsa tu <b>tecla de corte</b> para marcar inicio y fin). Luego <b>Quitar tramo</b> lo pinta de rojo. Al <b>Exportar recortado</b> esos tramos desaparecen y el video se une solo.</p>
         </div>
+        </div><!-- /editorMain -->
+        <aside class="editorSide">
+          <div class="animPanel">
+            <div class="animHead">🎬 Animación del clip <small>— fade in / fade out, como CapCut. Previsualiza antes de exportar.</small></div>
+            <div class="row wrap animRow">
+              <label>Entrada <select id="clipIn"></select></label>
+              <button id="animPreviewIn" type="button" class="secondary compact">▶ Ver entrada</button>
+              <label>Salida <select id="clipOut"></select></label>
+              <button id="animPreviewOut" type="button" class="secondary compact">▶ Ver salida</button>
+              <label>Duración <input id="clipDur" type="number" min="0.3" max="3" step="0.1" value="0.8" style="width:64px"> s</label>
+            </div>
+            <details class="animBrand"><summary>Intro / outro con tu @usuario (opcional)</summary>
+              <div class="row wrap"><label style="flex:1">Intro <select id="introTpl"></select></label><label style="flex:1">Outro <select id="outroTpl"></select></label></div>
+              <p class="hint">Agrega una tarjeta corta (2.5s) con tu @usuario al inicio/final. Si eliges alguna, el video se reencoda.</p>
+            </details>
+          </div>
+          <p class="hint" style="margin-top:12px">💡 Lo que ajustes aquí (animación, intro/outro) se aplica al <b>Exportar</b> en el Paso 4.</p>
+        </aside>
+        </div><!-- /editorGrid -->
       </div>
       <div class="stepNav"><span></span><button type="button" class="primary next" data-go="2">Siguiente: Transcribir →</button></div>
     </section>

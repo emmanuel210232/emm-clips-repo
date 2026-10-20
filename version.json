@@ -1,5 +1,5 @@
 {
-  "version": "1.0.9",
-  "notes": "Tema OSCURO estilo CapCut (por defecto) con botón ☀️/🌙 arriba a la derecha para cambiar a claro. Toda la interfaz —tarjetas, línea de tiempo, paneles, listas— ahora se ve como un editor profesional.",
+  "version": "1.1.0",
+  "notes": "Al abrir un video ya aparece listo (como CapCut): se reproduce solo aunque sea .mpg/.mkv (se prepara al vuelo sin perder calidad) y la línea de tiempo se llena sola con miniaturas y onda. Editor en dos columnas (video a la izquierda, propiedades a la derecha). Y se protegió la calidad: el export siempre usa el original y, si un formato no permite copiarlo, se reencoda sin pérdida visible.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

@@ -11,6 +11,7 @@ let lastVideo = '';
 let lastSourceVideo = '';
 let lastJob = '';
 let matchFingerprint = '';
+let autoPrepKey = ''; // evita volver a auto-preparar el mismo video
 let selectionHydrated = false;
 let selectionSave = Promise.resolve();
 let playerSourceOffset = 0;
@@ -255,11 +256,17 @@ function render() {
   const videoKey=(p?.videoPath||'')+'|'+(p?.previewPath||'');
   if(p?.videoPath!==lastSourceVideo){lastSourceVideo=p?.videoPath||'';selected=new Set();selectedPauses=new Set();matchFingerprint='';selectionHydrated=false;}
   if(!selectionHydrated){selectedPauses=new Set(state.selection?.selectedPauseIds||[]);selectionHydrated=true;}
-  if(videoKey!==lastVideo){lastVideo=videoKey;playerSourceOffset=0;playerIsCutPreview=false;const unsupported=p&&!p.previewPath&&/\.(mpg|mpeg|mkv|avi)$/i.test(p.videoPath||'');if(unsupported){$('video').removeAttribute('src');$('playerEmpty').textContent='Este formato necesita un fragmento de revisión o una vista previa MP4 para reproducirse aquí.';}else{$('video').src=p?'/api/video?d='+Date.now():'';$('playerEmpty').textContent='Aquí podrás revisar el video y saltar a cada coincidencia.';}$('video').parentElement.classList.toggle('ready',!!p&&!unsupported);$('videoPath').value=p?.videoPath||'';}
+  if(videoKey!==lastVideo){lastVideo=videoKey;playerSourceOffset=0;playerIsCutPreview=false;const unsupported=p&&!p.previewPath&&/\.(mpg|mpeg|mkv|avi)$/i.test(p.videoPath||'');if(unsupported){$('video').removeAttribute('src');$('playerEmpty').textContent='Preparando la vista previa de este formato… aparecerá en unos momentos.';}else{$('video').src=p?'/api/video?d='+Date.now():'';$('playerEmpty').textContent='Aquí podrás revisar el video y saltar a cada coincidencia.';}$('video').parentElement.classList.toggle('ready',!!p&&!unsupported);$('videoPath').value=p?.videoPath||'';}
   $('termCount').textContent=`${state.dictionary.filter(d=>d.enabled).length} activas`;
   $('matchCount').textContent=`${state.matches.length} coincidencias`;
   buildTranscript();
   buildTimeline();
+  // Auto-preparar el video al abrirlo (como CapCut): vista previa si el formato no se ve + miniaturas + onda.
+  if(p && state.job.status!=='running'){
+    const needPrev=!p.previewPath && /\.(mpg|mpeg|mkv|avi)$/i.test(p.videoPath||'');
+    const needStrip=!state.filmstrip;
+    if((needPrev||needStrip) && autoPrepKey!==p.videoPath){ autoPrepKey=p.videoPath; api('/api/project/prepare',{}).then(refresh).catch(()=>{}); }
+  }
   const fp=state.matches.map(m=>m.id).join('|');
   if(fp!==matchFingerprint){selected=state.selection?new Set(state.selection.selectedIds):new Set(state.matches.filter(m=>m.note!=='Revisar contexto'&&!m.approximate).map(m=>m.id));matchFingerprint=fp;}
   const terms=$('terms');terms.replaceChildren();
