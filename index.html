@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Emm Clips</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -30,6 +33,7 @@
     <section class="step" data-step="1">
       <h2 class="stepTitle">Paso 1 · Abre el video del directo</h2>
       <p class="stepLead">Elige el archivo del directo que ya recortaste. No se copia, así que da igual que pese varios GB.</p>
+      <div class="row" style="margin-bottom:12px"><button id="newProject" class="secondary">🆕 Nuevo proyecto</button><span id="projStatus" class="muted"></span></div>
       <div class="card"><div class="cardhead"><div><span class="number">1</span><h2>Video original</h2></div><span id="videoStatus" class="status">Sin video</span></div>
         <div class="row"><button id="pickVideo" class="primary big">📂 Elegir video del directo…</button><span class="muted">Se abre el explorador de Windows.</span></div>
         <details class="advOpen"><summary>Otras formas de abrir</summary>
@@ -41,7 +45,19 @@
         <div class="player"><video id="video" controls preload="metadata"></video><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
         <div class="row" style="margin-top:10px"><button id="grabFrame" class="secondary">📸 Exportar frame (para miniatura)</button><span class="muted">Pausa en el momento que quieras y pícalo. Sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
         <div class="timelineWrap">
-          <div class="tl-controls"><strong>Línea de tiempo</strong><span class="tl-legend"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías · clic para saltar</span><span style="flex:1"></span><button id="tlZoomOut" class="secondary compact" type="button" aria-label="Alejar">−</button><button id="tlZoomIn" class="secondary compact" type="button" aria-label="Acercar">+</button></div>
+          <div class="tl-controls">
+            <span id="tlTime" class="tl-time">0:00:00 / 0:00:00</span>
+            <span style="flex:1"></span>
+            <button id="tlBack1s" class="tl-btn" type="button" title="−1 segundo">⏮</button>
+            <button id="tlBackF" class="tl-btn" type="button" title="−1 frame">◀</button>
+            <button id="tlPlay" class="tl-btn" type="button" title="Reproducir / Pausa">⏯</button>
+            <button id="tlFwdF" class="tl-btn" type="button" title="+1 frame">▶</button>
+            <button id="tlFwd1s" class="tl-btn" type="button" title="+1 segundo">⏭</button>
+            <span style="width:12px"></span>
+            <button id="tlZoomOut" class="tl-btn" type="button" title="Alejar">−</button>
+            <button id="tlZoomIn" class="tl-btn" type="button" title="Acercar">+</button>
+          </div>
+          <div class="tl-legend2"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías · arrastra sobre la barra para buscar</div>
           <div id="timeline" class="timelineBar"></div>
         </div>
       </div>

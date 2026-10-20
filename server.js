@@ -84,7 +84,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.0.4';
+const APP_VERSION = '1.0.5';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -553,6 +553,12 @@ const server=http.createServer(async (req,res) => {
       if (!Array.isArray(body.entries) || body.entries.length>500) throw Error('Diccionario inválido o demasiado grande.');
       dictionary=body.entries.map(e => ({term:String(e.term||'').trim().slice(0,100),enabled:Boolean(e.enabled),note:String(e.note||'').slice(0,150)})).filter(e=>e.term);
       writeJson(files.dictionary,dictionary);selection=null;writeJson(files.selection,selection);return respond(res,200,state());
+    }
+    if (req.method==='POST' && url.pathname==='/api/project/clear') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      project=null; transcript=[]; shorts=[]; adjustments={}; pauses=[]; manualCuts=[]; selection=null;
+      writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts); writeJson(files.adjustments,adjustments); writeJson(files.pauses,pauses); writeJson(files.manualCuts,manualCuts); writeJson(files.selection,selection);
+      return respond(res,200,state());
     }
     if (req.method==='POST' && url.pathname==='/api/project/open') {
       if (job.status==='running') throw Error('Espera a que termine el proceso actual antes de cambiar de video.');

@@ -104,26 +104,34 @@ function addMetaEditor(row,s){
   if(s.meta)renderMeta(s.meta);
   details.append(summary,gen,out);row.insertBefore(details,row.querySelector('.shortActions'));
 }
-let tlZoom=1;
+let tlZoom=1, tlDrag=false;
 function tlDuration(){const v=$('video');if(v&&v.duration&&isFinite(v.duration))return v.duration;const t=state?.transcript;return t&&t.length?Number(t[t.length-1].end)||0:0;}
 function positionHead(){const head=$('tlHead');if(!head)return;const inner=head.parentElement;const v=$('video');const dur=tlDuration();if(!dur||!inner)return;const t=(v?.currentTime||0)+(playerSourceOffset||0);head.style.left=(Math.max(0,Math.min(1,t/dur))*inner.offsetWidth)+'px';}
+function tlSeekFromX(clientX){const head=$('tlHead');const inner=head&&head.parentElement;if(!inner)return;const dur=tlDuration();if(!dur)return;const r=inner.getBoundingClientRect();const x=Math.max(0,Math.min(inner.offsetWidth,clientX-r.left));const t=x/inner.offsetWidth*dur;const v=$('video');if(v){try{v.currentTime=Math.max(0,t-(playerSourceOffset||0));}catch{}}positionHead();updateTlTime();}
+function updateTlTime(){const v=$('video'),el=$('tlTime');if(!el)return;const dur=tlDuration();const t=(v?.currentTime||0)+(playerSourceOffset||0);el.textContent=fmt(t)+' / '+fmt(dur);}
 function buildTimeline(){
   const bar=$('timeline'); if(!bar) return;
   const dur=tlDuration();
   const fp=`${(state.matches||[]).length}|${(state.pauses||[]).length}|${Math.round(dur)}|${tlZoom}`;
   if(bar.dataset.fp===fp && bar.childElementCount){positionHead();return;}
   bar.dataset.fp=fp; bar.replaceChildren();
-  if(!dur){bar.innerHTML='<div class="tl-empty">La línea de tiempo aparece al cargar el video.</div>';return;}
+  if(!dur){bar.innerHTML='<div class="tl-empty">Abre un video para ver la línea de tiempo.</div>';updateTlTime();return;}
   const inner=document.createElement('div');inner.className='timelineInner';
-  const px=Math.round(Math.max(bar.clientWidth||600, dur*1.1*tlZoom));
+  const px=Math.round(Math.max(bar.clientWidth||600, dur*2.2*tlZoom));
   inner.style.width=px+'px';
   const X=t=>Math.max(0,Math.min(px,t/dur*px));
+  // Regla de tiempo (ticks con etiqueta)
+  const ruler=document.createElement('div');ruler.className='tl-ruler';
+  const approx=dur/(px/90);
+  const nice=[1,2,5,10,15,30,60,120,300,600,900].find(n=>n>=approx)||1200;
+  for(let t=0;t<=dur+0.1;t+=nice){const tick=document.createElement('div');tick.className='tl-tick';tick.style.left=X(t)+'px';const lab=document.createElement('span');lab.textContent=fmt(t).replace(/^0:/,'');tick.append(lab);ruler.append(tick);}
+  inner.append(ruler);
   for(const p of (state.pauses||[])){const el=document.createElement('div');el.className='tl-pause';el.style.left=X(p.start)+'px';el.style.width=Math.max(2,X(p.end)-X(p.start))+'px';el.title=`Pausa ${p.duration}s`;inner.append(el);}
   for(const m of (state.matches||[])){const el=document.createElement('div');el.className='tl-gros';el.style.left=X(m.start)+'px';el.title=m.term;inner.append(el);}
   const head=document.createElement('div');head.className='tl-head';head.id='tlHead';inner.append(head);
-  inner.onclick=e=>{const r=inner.getBoundingClientRect();const t=(e.clientX-r.left)/px*dur;const v=$('video');if(v){try{v.currentTime=Math.max(0,t-(playerSourceOffset||0));v.play().catch(()=>{});}catch{}}};
-  bar.append(inner); positionHead();
+  bar.append(inner); positionHead(); updateTlTime();
 }
+function frameStep(d){const v=$('video');if(!v)return;try{v.pause();v.currentTime=Math.max(0,(v.currentTime||0)+d);}catch{}positionHead();updateTlTime();}
 function buildTranscript(){
   const tv=$('transcriptView'); if(!tv) return;
   const fp=(state.transcript?.length||0)+'|'+(state.matches?.length||0);
@@ -149,6 +157,7 @@ function buildTranscript(){
 function render() {
   const p=state.project;
   $('videoStatus').textContent=p? p.videoPath.split(/[\\/]/).at(-1):'Sin video';
+  {const ps=$('projStatus');if(ps)ps.textContent=p?('Proyecto actual: '+p.videoPath.split(/[\\/]/).at(-1)):'Sin proyecto abierto.';}
   const videoKey=(p?.videoPath||'')+'|'+(p?.previewPath||'');
   if(p?.videoPath!==lastSourceVideo){lastSourceVideo=p?.videoPath||'';selected=new Set();selectedPauses=new Set();matchFingerprint='';selectionHydrated=false;}
   if(!selectionHydrated){selectedPauses=new Set(state.selection?.selectedPauseIds||[]);selectionHydrated=true;}
@@ -192,6 +201,7 @@ function render() {
   $('transcribe').disabled=!p||j.status==='running';$('analyzePauses').disabled=!p||j.status==='running';$('export').disabled=!p||j.status==='running';$('makePreview').disabled=!p||j.status==='running';$('suggestShorts').disabled=!p||!state.transcript.length||j.status==='running';$('renderAllShorts').disabled=!state.shorts.length||j.status==='running';
 }
 function safe(handler){return async()=>{try{await handler();await refresh();}catch(e){notice(e.message,true)}}}
+$('newProject').onclick=safe(async()=>{if(!confirm('¿Empezar un proyecto nuevo? Se quita el video y los clips actuales (los archivos ya exportados se conservan).'))return;await api('/api/project/clear',{});goStep(1);notice('Nuevo proyecto. Abre un video para empezar.');});
 $('pickVideo').onclick=safe(async()=>{notice('Elige el video en el explorador de Windows…');const r=await api('/api/pick-video',{});if(r.cancelled){notice('Abrir cancelado.');return;}$('videoPath').value=r.path;await api('/api/project/open',{path:r.path});notice('Video abierto. Ahora pulsa “Transcribir video”.');});
 $('openVideo').onclick=safe(async()=>{await api('/api/project/open',{path:$('videoPath').value});notice('Video abierto. Ya puedes transcribirlo.');});
 $('videoFile').onchange=safe(async()=>{const f=$('videoFile').files[0];if(!f)return;notice('Copiando video a la app…');await upload('/api/project/upload',f);notice('Video listo.');});
@@ -200,9 +210,15 @@ $('transcribe').onclick=safe(async()=>{await api('/api/transcribe',{});notice('T
 $('analyzePauses').onclick=safe(async()=>{selectedPauses=new Set();await api('/api/pauses/analyze',{});notice('Analizando silencios del audio.');});
 $('makePreview').onclick=safe(async()=>{await api('/api/preview',{});notice('Creando vista previa. Puedes esperar a que termine mientras la app sigue abierta.');});
 $('grabFrame').onclick=safe(async()=>{let at;try{at=sourcePlayerTime();}catch(e){throw Error('Mueve el reproductor al momento que quieras (video original o un fragmento sin cortar).');}const r=await api('/api/frame',{at});notice('📸 Frame guardado: '+r.name+'. En el paso 4 → Archivos creados puedes abrirlo o Guardar como.');});
-$('tlZoomIn').onclick=()=>{tlZoom=Math.min(20,tlZoom*1.6);buildTimeline();};
+$('tlZoomIn').onclick=()=>{tlZoom=Math.min(40,tlZoom*1.6);buildTimeline();};
 $('tlZoomOut').onclick=()=>{tlZoom=Math.max(1,tlZoom/1.6);buildTimeline();};
-$('video').addEventListener('timeupdate',positionHead);
+$('tlBackF').onclick=()=>frameStep(-1/30);
+$('tlFwdF').onclick=()=>frameStep(1/30);
+$('tlBack1s').onclick=()=>frameStep(-1);
+$('tlFwd1s').onclick=()=>frameStep(1);
+$('tlPlay').onclick=()=>{const v=$('video');if(!v)return;v.paused?v.play().catch(()=>{}):v.pause();};
+(function(){const bar=$('timeline');if(!bar)return;bar.addEventListener('mousedown',e=>{if(e.target.closest('.tl-tick'))return;tlDrag=true;tlSeekFromX(e.clientX);e.preventDefault();});window.addEventListener('mousemove',e=>{if(tlDrag)tlSeekFromX(e.clientX);});window.addEventListener('mouseup',()=>{tlDrag=false;});})();
+$('video').addEventListener('timeupdate',()=>{positionHead();updateTlTime();});
 $('getDf').onclick=async()=>{const b=$('getDf');try{b.disabled=true;b.textContent='Descargando… (25 MB)';await api('/api/download-df',{});notice('✅ Voz Estudio activada. Elígela en “Mejorar voz”.');await refresh();}catch(e){notice('No se pudo activar: '+e.message,true);}finally{b.disabled=false;b.textContent='⬇️ Activar voz Estudio (25 MB)';}};
 $('takeManualStart').onclick=()=>{try{$('manualStart').value=sourcePlayerTime().toFixed(2);}catch(e){notice(e.message,true);}};
 $('takeManualEnd').onclick=()=>{try{$('manualEnd').value=sourcePlayerTime().toFixed(2);}catch(e){notice(e.message,true);}};
@@ -224,6 +240,6 @@ $('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate
 function goStep(n){n=Math.max(1,Math.min(4,Number(n)||1));document.querySelectorAll('.step').forEach(s=>{s.hidden=Number(s.dataset.step)!==n;});document.querySelectorAll('.wstep').forEach(b=>{const bn=Number(b.dataset.step);b.classList.toggle('active',bn===n);b.classList.toggle('done',bn<n);});try{localStorage.setItem('eirl_step',String(n));}catch{}window.scrollTo({top:0,behavior:'smooth'});if(n===1){const tl=document.getElementById('timeline');if(tl)tl.dataset.fp='';setTimeout(()=>{try{buildTimeline();}catch{}},90);}}
 document.querySelectorAll('.wstep').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.step)));
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.go)));
-(function(){let s=1;try{s=Number(localStorage.getItem('eirl_step'))||1;}catch{}goStep(s);})();
+goStep(1); // siempre empezar en el paso 1 (como CapCut), no en el último
 refresh().catch(e=>notice(e.message,true));
 setInterval(()=>{if(state?.job.status==='running')refresh().catch(()=>{});},1000);

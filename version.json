@@ -1,5 +1,5 @@
 {
-  "version": "1.0.4",
-  "notes": "Línea de tiempo visual con las pausas y groserías marcadas (con zoom y clic para saltar).",
+  "version": "1.0.5",
+  "notes": "Línea de tiempo tipo CapCut (regla, arrastrar para buscar, frame por frame), proyecto que abre desde el inicio con botón Nuevo proyecto, interfaz más pulida y arranque directo más rápido.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
