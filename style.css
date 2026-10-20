@@ -134,3 +134,17 @@ body{font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,san
 .wizard .wstep.active .wnum{box-shadow:0 2px 8px rgba(58,143,79,.35)}
 .readyBar{border-radius:11px}
 .btn,.tl-btn{font-family:inherit}
+
+/* Filmstrip + onda en la línea de tiempo */
+.timelineBar{height:88px}
+.tl-strip{position:absolute;top:21px;left:0;height:44px;width:100%;display:flex;overflow:hidden;background:#0b0f0c}
+.tl-strip img{height:44px;flex:1 1 0;min-width:0;object-fit:cover;pointer-events:none;display:block}
+.tl-wave{position:absolute;top:65px;left:0;width:100%;height:21px;object-fit:fill;pointer-events:none;background:#0b1510;opacity:.92}
+.timelineInner .tl-pause{top:21px;height:65px;background:rgba(58,143,79,.3);border-color:#3a8f4f}
+.timelineInner .tl-gros{top:21px;height:65px}
+.timelineBar:has(.tl-strip) .tl-ruler{background:rgba(255,255,255,.02)}
+
+/* Preview más grande (editor) */
+.player{min-height:360px;background:#000;border:1px solid #1c3022}
+.player video{max-height:min(62vh,620px)}
+.step[data-step="1"] .card{padding:18px}

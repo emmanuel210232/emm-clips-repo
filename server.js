@@ -33,6 +33,8 @@ let manualCuts = readJson(files.manualCuts, []);
 let selection = readJson(files.selection, null);
 let job = { status: 'idle', message: '', progress: '', percent: 0 };
 let activeProc = null; // proceso ffmpeg/whisper en curso (para poder cancelar)
+let filmstrip = null; // {count, interval, wave} de la línea de tiempo del video actual
+try { if (project) { const sd=path.join(DATA,'strip'); if (fs.existsSync(sd)) { const c=fs.readdirSync(sd).filter(f=>f.endsWith('.jpg')).length; if (c>0) filmstrip={count:c, wave:fs.existsSync(path.join(DATA,'wave.png'))}; } } } catch {}
 
 function parseProgressSeconds(s) {
   // ffmpeg imprime time=00:01:23.45 ; whisper-cli imprime [00:01:23.000 --> ...]
@@ -65,7 +67,7 @@ function resolveWhisper() {
 }
 function readiness() { const preferred=path.join(ROOT,'tools','ggml-large-v3-turbo-q5_0.bin'), fallback=path.join(ROOT,'tools','ggml-small.bin'); const whisper=resolveWhisper(); return { ffmpeg: executable(config.ffmpeg, 'ffmpeg'), ffprobe: executable(config.ffprobe, 'ffprobe'), whisper, whisperGpu: whisper.includes('tools-gpu'), model: config.model && fs.existsSync(config.model) ? config.model : fs.existsSync(preferred) ? preferred : fs.existsSync(fallback) ? fallback : '' }; }
 function listExports() { return fs.readdirSync(EXPORTS).filter(name=>/\.(mp4|png|jpe?g)$/i.test(name)).map(name=>({name,modified:fs.statSync(path.join(EXPORTS,name)).mtimeMs})).sort((a,b)=>b.modified-a.modified).slice(0,24); }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), dfReady: dfReady(), version: APP_VERSION, job }; }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), dfReady: dfReady(), filmstrip, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -84,7 +86,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.0.5';
+const APP_VERSION = '1.0.6';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -556,7 +558,7 @@ const server=http.createServer(async (req,res) => {
     }
     if (req.method==='POST' && url.pathname==='/api/project/clear') {
       if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
-      project=null; transcript=[]; shorts=[]; adjustments={}; pauses=[]; manualCuts=[]; selection=null;
+      project=null; transcript=[]; shorts=[]; adjustments={}; pauses=[]; manualCuts=[]; selection=null; filmstrip=null;
       writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts); writeJson(files.adjustments,adjustments); writeJson(files.pauses,pauses); writeJson(files.manualCuts,manualCuts); writeJson(files.selection,selection);
       return respond(res,200,state());
     }
@@ -565,7 +567,7 @@ const server=http.createServer(async (req,res) => {
       const body=await jsonBody(req), videoPath=path.resolve(String(body.path||''));
       if (!fs.existsSync(videoPath) || !fs.statSync(videoPath).isFile()) throw Error('No encuentro ese archivo de video.');
       if (!['.mp4','.mov','.mkv','.webm','.avi','.m4v','.mpg','.mpeg'].includes(path.extname(videoPath).toLowerCase())) throw Error('Formato de video no admitido.');
-      project={videoPath,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
+      project={videoPath,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null;writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
       return respond(res,200,state());
     }
     if (req.method==='POST' && url.pathname==='/api/project/upload') {
@@ -574,7 +576,7 @@ const server=http.createServer(async (req,res) => {
       if (!['.mp4','.mov','.mkv','.webm','.avi','.m4v','.mpg','.mpeg'].includes(path.extname(safe).toLowerCase())) throw Error('Formato de video no admitido.');
       const target=path.join(DATA,`${Date.now()}_${safe}`), stream=fs.createWriteStream(target);
       await new Promise((resolve,reject)=>{req.pipe(stream);req.on('error',reject);stream.on('error',reject);stream.on('finish',resolve);});
-      project={videoPath:target,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
+      project={videoPath:target,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null;writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
       return respond(res,200,state());
     }
     if (req.method==='POST' && url.pathname==='/api/transcript/import') {
@@ -617,6 +619,43 @@ const server=http.createServer(async (req,res) => {
       const fast=Math.max(0,at-2), fine=Math.min(2,at-fast);
       await run(bin,['-y','-ss',String(fast),'-i',project.videoPath,'-ss',String(fine),'-frames:v','1',out]);
       return respond(res,200,{name, at});
+    }
+    if (req.method==='POST' && url.pathname==='/api/filmstrip') {
+      const bin=readiness().ffmpeg;
+      if(!bin||!project?.videoPath) throw Error('Abre un video primero.');
+      if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      const dur=await durationOf(project.videoPath);
+      const n=Math.max(24,Math.min(120,Math.round(dur/15)));
+      const interval=dur/n;
+      const stripDir=path.join(DATA,'strip');
+      job={status:'running',message:'Generando miniaturas de la línea de tiempo…',progress:'',percent:0,cancelRequested:false};
+      (async()=>{
+        try{
+          await fsp.rm(stripDir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(stripDir,{recursive:true});
+          for(let i=0;i<n;i++){
+            if(job.cancelRequested) throw Error('Proceso cancelado por el usuario.');
+            const t=((i+0.5)*interval).toFixed(2);
+            await run(bin,['-y','-ss',String(t),'-i',project.videoPath,'-frames:v','1','-vf','scale=160:-2','-q:v','6',path.join(stripDir,`t${String(i+1).padStart(4,'0')}.jpg`)]);
+            job.percent=Math.round((i+1)/n*92);
+          }
+          job.message='Generando onda de audio…';
+          await run(bin,['-y','-i',project.videoPath,'-filter_complex','showwavespic=s=1800x58:colors=0x18FC53','-frames:v','1',path.join(DATA,'wave.png')]).catch(()=>{});
+          filmstrip={count:n, interval:+interval.toFixed(3), wave:fs.existsSync(path.join(DATA,'wave.png'))};
+          job={status:'done',message:`Miniaturas listas (${n}).`,progress:'',percent:100};
+        }catch(e){ job={status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0}; }
+      })();
+      return respond(res,202,{started:true});
+    }
+    if (req.method==='GET' && url.pathname==='/api/strip') {
+      const i=parseInt(url.searchParams.get('i')||'0',10);
+      if(!Number.isInteger(i)||i<1||i>99999) return error(res,'Índice inválido.',400);
+      const f=path.join(DATA,'strip',`t${String(i).padStart(4,'0')}.jpg`);
+      if(!fs.existsSync(f)) return error(res,'No encontrado.',404);
+      return serveMedia(req,res,f);
+    }
+    if (req.method==='GET' && url.pathname==='/api/wave') {
+      const f=path.join(DATA,'wave.png'); if(!fs.existsSync(f)) return error(res,'No encontrado.',404);
+      return serveMedia(req,res,f);
     }
     if (req.method==='POST' && url.pathname==='/api/transcribe') { await transcribe(); return respond(res,202,state()); }
     if (req.method==='POST' && url.pathname==='/api/download-df') {

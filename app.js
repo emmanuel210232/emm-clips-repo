@@ -107,12 +107,12 @@ function addMetaEditor(row,s){
 let tlZoom=1, tlDrag=false;
 function tlDuration(){const v=$('video');if(v&&v.duration&&isFinite(v.duration))return v.duration;const t=state?.transcript;return t&&t.length?Number(t[t.length-1].end)||0:0;}
 function positionHead(){const head=$('tlHead');if(!head)return;const inner=head.parentElement;const v=$('video');const dur=tlDuration();if(!dur||!inner)return;const t=(v?.currentTime||0)+(playerSourceOffset||0);head.style.left=(Math.max(0,Math.min(1,t/dur))*inner.offsetWidth)+'px';}
-function tlSeekFromX(clientX){const head=$('tlHead');const inner=head&&head.parentElement;if(!inner)return;const dur=tlDuration();if(!dur)return;const r=inner.getBoundingClientRect();const x=Math.max(0,Math.min(inner.offsetWidth,clientX-r.left));const t=x/inner.offsetWidth*dur;const v=$('video');if(v){try{v.currentTime=Math.max(0,t-(playerSourceOffset||0));}catch{}}positionHead();updateTlTime();}
+function tlSeekFromX(clientX){const head=$('tlHead');const inner=head&&head.parentElement;if(!inner)return;const dur=tlDuration();if(!dur)return;const r=inner.getBoundingClientRect();const x=Math.max(0,Math.min(inner.offsetWidth,clientX-r.left));const t=x/inner.offsetWidth*dur;const v=$('video');if(v){const tt=Math.max(0,t-(playerSourceOffset||0));try{if(tlDrag){v.pause();if(v.fastSeek){v.fastSeek(tt);}else{v.currentTime=tt;}}else{v.currentTime=tt;}}catch{}}positionHead();updateTlTime();}
 function updateTlTime(){const v=$('video'),el=$('tlTime');if(!el)return;const dur=tlDuration();const t=(v?.currentTime||0)+(playerSourceOffset||0);el.textContent=fmt(t)+' / '+fmt(dur);}
 function buildTimeline(){
   const bar=$('timeline'); if(!bar) return;
   const dur=tlDuration();
-  const fp=`${(state.matches||[]).length}|${(state.pauses||[]).length}|${Math.round(dur)}|${tlZoom}`;
+  const fp=`${(state.matches||[]).length}|${(state.pauses||[]).length}|${Math.round(dur)}|${tlZoom}|${state.filmstrip?state.filmstrip.count:0}`;
   if(bar.dataset.fp===fp && bar.childElementCount){positionHead();return;}
   bar.dataset.fp=fp; bar.replaceChildren();
   if(!dur){bar.innerHTML='<div class="tl-empty">Abre un video para ver la línea de tiempo.</div>';updateTlTime();return;}
@@ -126,6 +126,12 @@ function buildTimeline(){
   const nice=[1,2,5,10,15,30,60,120,300,600,900].find(n=>n>=approx)||1200;
   for(let t=0;t<=dur+0.1;t+=nice){const tick=document.createElement('div');tick.className='tl-tick';tick.style.left=X(t)+'px';const lab=document.createElement('span');lab.textContent=fmt(t).replace(/^0:/,'');tick.append(lab);ruler.append(tick);}
   inner.append(ruler);
+  if(state.filmstrip && state.filmstrip.count){
+    const strip=document.createElement('div');strip.className='tl-strip';
+    for(let k=1;k<=state.filmstrip.count;k++){const img=document.createElement('img');img.loading='lazy';img.draggable=false;img.src='/api/strip?i='+k;strip.append(img);}
+    inner.append(strip);
+    if(state.filmstrip.wave){const w=document.createElement('img');w.className='tl-wave';w.draggable=false;w.src='/api/wave?v='+state.filmstrip.count;inner.append(w);}
+  }
   for(const p of (state.pauses||[])){const el=document.createElement('div');el.className='tl-pause';el.style.left=X(p.start)+'px';el.style.width=Math.max(2,X(p.end)-X(p.start))+'px';el.title=`Pausa ${p.duration}s`;inner.append(el);}
   for(const m of (state.matches||[])){const el=document.createElement('div');el.className='tl-gros';el.style.left=X(m.start)+'px';el.title=m.term;inner.append(el);}
   const head=document.createElement('div');head.className='tl-head';head.id='tlHead';inner.append(head);
@@ -217,6 +223,7 @@ $('tlFwdF').onclick=()=>frameStep(1/30);
 $('tlBack1s').onclick=()=>frameStep(-1);
 $('tlFwd1s').onclick=()=>frameStep(1);
 $('tlPlay').onclick=()=>{const v=$('video');if(!v)return;v.paused?v.play().catch(()=>{}):v.pause();};
+$('tlLoadStrip').onclick=safe(async()=>{if(!state.project)throw Error('Abre un video primero.');await api('/api/filmstrip',{});notice('Generando miniaturas y onda de audio… (puedes cancelar arriba)');});
 (function(){const bar=$('timeline');if(!bar)return;bar.addEventListener('mousedown',e=>{if(e.target.closest('.tl-tick'))return;tlDrag=true;tlSeekFromX(e.clientX);e.preventDefault();});window.addEventListener('mousemove',e=>{if(tlDrag)tlSeekFromX(e.clientX);});window.addEventListener('mouseup',()=>{tlDrag=false;});})();
 $('video').addEventListener('timeupdate',()=>{positionHead();updateTlTime();});
 $('getDf').onclick=async()=>{const b=$('getDf');try{b.disabled=true;b.textContent='Descargando… (25 MB)';await api('/api/download-df',{});notice('✅ Voz Estudio activada. Elígela en “Mejorar voz”.');await refresh();}catch(e){notice('No se pudo activar: '+e.message,true);}finally{b.disabled=false;b.textContent='⬇️ Activar voz Estudio (25 MB)';}};
