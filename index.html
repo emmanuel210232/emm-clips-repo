@@ -39,6 +39,7 @@
         </details>
         <div class="previewAction"><button id="makePreview" class="secondary">Crear vista previa MP4</button><span class="muted">Útil para MPG y formatos que el navegador no reproduce.</span></div>
         <div class="player"><video id="video" controls preload="metadata"></video><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
+        <div class="row" style="margin-top:10px"><button id="grabFrame" class="secondary">📸 Exportar frame (para miniatura)</button><span class="muted">Pausa en el momento que quieras y pícalo. Sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
       </div>
       <div class="stepNav"><span></span><button type="button" class="primary next" data-go="2">Siguiente: Transcribir →</button></div>
     </section>
@@ -58,6 +59,9 @@
           <div id="manualCuts" class="matches"></div>
         </details>
       </div>
+      <details class="card" open><summary class="cardSummary">📝 Transcripción completa <small style="font-weight:400;color:#8a968b">— las groserías van subrayadas; clic en una palabra salta el video</small></summary>
+        <div id="transcriptView" class="transcriptView">Transcribe el video para ver aquí todo el texto.</div>
+      </details>
       <div class="card"><div class="cardhead"><div><span class="number">B</span><h2>Diccionario de groserías</h2></div><span id="termCount" class="status"></span></div>
         <p class="hint">Puedes agregar palabras y frases mexicanas. Solo se detectan palabras completas. Desactiva las que quieras revisar sin cortarlas.</p>
         <div class="row"><input id="newTerm" type="text" placeholder="Palabra o frase; separa varias con comas"><button id="addTerm" class="primary compact">Agregar</button></div>
@@ -99,7 +103,13 @@
           <label class="inlineCheck"><input type="radio" name="censorMode" value="mute" checked> <span><strong>Silenciar</strong> — calla la palabra pero deja el video continuo, sin saltos (recomendado para IRL). Rápido: no reprocesa el video.</span></label>
           <label class="inlineCheck"><input type="radio" name="censorMode" value="cut"> <span><strong>Cortar</strong> — quita ese tiempo del video (también elimina pausas seleccionadas). Puede notarse un brinco.</span></label>
         </div>
-        <label class="inlineCheck" style="margin:2px 0 10px"><input type="checkbox" id="compressExport"> <span><strong>Comprimir para subir más rápido</strong> — archivo mucho más liviano (reencodea; tarda un poco más). Útil si el video pesa varios GB.</span></label>
+        <label class="inlineCheck" style="margin:2px 0 6px"><input type="checkbox" id="enhanceVoice" checked> <span><strong>🎙️ Mejorar voz</strong> — limpia ruido de fondo, empareja y sube el volumen (tipo estudio). Recomendado.</span></label>
+        <label class="field" for="exportQuality">Calidad de exportación</label>
+        <select id="exportQuality"></select>
+        <p class="hint">“Original” conserva el video tal cual (rápido, máxima fidelidad). 1080p/60fps reencoda (el 60fps real solo ayuda si el directo ya es 60fps).</p>
+        <label class="field">Animación de entrada / salida (opcional)</label>
+        <div class="row wrap"><label style="flex:1">Intro <select id="introTpl"></select></label><label style="flex:1">Outro <select id="outroTpl"></select></label></div>
+        <p class="hint">Agrega una animación corta (2.5s) con tu @usuario al inicio/final. Si eliges alguna, el video se reencoda.</p>
         <div class="row"><button id="export" class="primary">Exportar MP4</button><span id="exportInfo" class="muted"></span></div>
         <div id="exportedFiles" class="exportedFiles"></div>
       </div>

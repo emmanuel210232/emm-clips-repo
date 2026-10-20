@@ -59,3 +59,10 @@
 .stepNav .next{font-size:15px;padding:12px 20px}
 .cardSummary{cursor:pointer;font-weight:750;color:#315c3f;font-size:15px}
 details.card>summary.cardSummary{list-style:revert}
+
+/* Panel de transcripción (estilo Descript) */
+.transcriptView{max-height:340px;overflow-y:auto;line-height:1.9;font-size:14.5px;color:#2f3a2c;background:#fbfcf8;border:1px solid #e6ece1;border-radius:9px;padding:12px 14px;margin-top:10px}
+.transcriptView .tword{cursor:pointer;border-radius:4px;padding:0 1px}
+.transcriptView .tword:hover{background:#dff0d8}
+.transcriptView .tword.tcut{color:#b4242a;text-decoration:underline wavy #e07a7a;font-weight:600}
+.transcriptView .tword.tcut:hover{background:#fbe3e3}

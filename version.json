@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1",
-  "notes": "Censura de groserías también en los subtítulos de los Shorts + multi-formato (9:16, 1:1, 16:9).",
+  "version": "1.0.2",
+  "notes": "Mejora de voz (denoise + nivelado), exportar frame HQ para miniaturas, calidad 1080p/60fps, panel de transcripción y animaciones de intro/outro.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
