@@ -1,5 +1,9 @@
 'use strict';
 const $ = id => document.getElementById(id);
+// Tema (oscuro estilo CapCut por defecto; se puede cambiar y recuerda la elección).
+(function(){let t;try{t=localStorage.getItem('eirl_theme');}catch{}document.documentElement.dataset.theme=(t==='light'?'light':'dark');})();
+function applyThemeIcon(){const b=$('themeToggle');if(b)b.textContent=document.documentElement.dataset.theme==='dark'?'☀️':'🌙';}
+function toggleTheme(){const cur=document.documentElement.dataset.theme==='dark'?'dark':'light';const next=cur==='dark'?'light':'dark';document.documentElement.dataset.theme=next;try{localStorage.setItem('eirl_theme',next);}catch{}applyThemeIcon();}
 let state = null;
 let selected = new Set();
 let selectedPauses = new Set();
@@ -352,6 +356,7 @@ $('getDf').onclick=async()=>{const b=$('getDf');try{b.disabled=true;b.textConten
 $('auOff').onclick=()=>{['auDenoise','auCompress','auNormalize','auVoice'].forEach(id=>{const el=$(id);if(el)el.checked=false;});notice('Audio sin procesar: saldrá igual que el original (con las groserías silenciadas).');};
 $('animPreviewIn').onclick=()=>previewAnim('in');
 $('animPreviewOut').onclick=()=>previewAnim('out');
+$('themeToggle').onclick=toggleTheme; applyThemeIcon();
 // Si la pestaña se oculta a media previa, limpia el overlay (las animaciones se pausan al ocultar).
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopAnimPreview();});
 $('takeManualStart').onclick=()=>{try{$('manualStart').value=sourcePlayerTime().toFixed(2);}catch(e){notice(e.message,true);}};

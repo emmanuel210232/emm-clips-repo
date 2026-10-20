@@ -190,3 +190,83 @@ body{font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,san
 .animBrand{margin-top:9px}
 .animBrand summary{cursor:pointer;font-size:12.5px;color:#748076}
 .animBrand select{width:100%;font-family:inherit;padding:6px 8px;border:1px solid #cfe0cb;border-radius:7px;color:#2f5c3f;background:#fff}
+
+/* ============================================================
+   TEMA OSCURO (estilo CapCut) — se activa con [data-theme="dark"]
+   ============================================================ */
+:root[data-theme="dark"]{--d-bg:#15181c;--d-surf:#1f242a;--d-surf2:#272d34;--d-surf3:#2f363e;--d-bd:#353d45;--d-bd2:#2b3138;--d-tx:#e8ebe8;--d-tx2:#a9b3ac;--d-tx3:#8a948d;--d-acc:#53fc18;--d-grn:#3aa85a;--d-grn2:#2f8f4a}
+:root[data-theme="dark"]{color:#e8ebe8;background:#15181c}
+[data-theme="dark"] body{background:#15181c;color:#e8ebe8}
+[data-theme="dark"] main{color:#e8ebe8}
+/* Tarjetas y superficies */
+[data-theme="dark"] .card{background:#1f242a;border-color:#333b43;box-shadow:0 8px 28px rgba(0,0,0,.35)}
+[data-theme="dark"] .card:hover{box-shadow:0 10px 30px rgba(0,0,0,.45)}
+[data-theme="dark"] .manualEditor,[data-theme="dark"] .metaEditor,[data-theme="dark"] .captionEditor,[data-theme="dark"] .shortControls,[data-theme="dark"] .animPanel,[data-theme="dark"] .audioToggle,[data-theme="dark"] .metaBlock,[data-theme="dark"] .censorMode .inlineCheck{background:#262c33;border-color:#333b43}
+[data-theme="dark"] .audioToggle:hover{background:#2d343c;border-color:#3f4a52}
+[data-theme="dark"] .audioToggle:has(input:checked){background:#20361f;border-color:#3aa85a}
+[data-theme="dark"] .censorMode .inlineCheck:has(input:checked){background:#20361f;border-color:#3aa85a}
+/* Texto */
+[data-theme="dark"] h1,[data-theme="dark"] h2,[data-theme="dark"] .stepTitle,[data-theme="dark"] .matchTitle,[data-theme="dark"] .shortTop,[data-theme="dark"] .termText strong,[data-theme="dark"] .metaText,[data-theme="dark"] .animHead,[data-theme="dark"] .audioToggle b{color:#eef1ee}
+[data-theme="dark"] .stepLead,[data-theme="dark"] .hint,[data-theme="dark"] .muted,[data-theme="dark"] .matchContext,[data-theme="dark"] .matchTime,[data-theme="dark"] .or,[data-theme="dark"] .termText small,[data-theme="dark"] .shortItem small,[data-theme="dark"] .shortItem p,[data-theme="dark"] .animHead small,[data-theme="dark"] .audioToggle small,[data-theme="dark"] .engineStatus,[data-theme="dark"] .exportedFiles strong{color:#a9b3ac}
+/* Entradas */
+[data-theme="dark"] input[type=text],[data-theme="dark"] input[type=number],[data-theme="dark"] select,[data-theme="dark"] textarea,[data-theme="dark"] .animRow select,[data-theme="dark"] .animRow input,[data-theme="dark"] .animBrand select,[data-theme="dark"] .tl-key,[data-theme="dark"] .cutFields input,[data-theme="dark"] .shortControlRow input,[data-theme="dark"] .shortControlRow select,[data-theme="dark"] .manualEditor input[type=number]{background:#2d343c;border-color:#3c454e;color:#e8ebe8}
+[data-theme="dark"] input::placeholder{color:#7a847d}
+[data-theme="dark"] input[type=text]:focus{border-color:#53fc18;box-shadow:0 0 0 3px rgba(83,252,24,.18)}
+/* Botones */
+[data-theme="dark"] .primary{background:#2f8f4a;color:#fff}
+[data-theme="dark"] .primary:hover{background:#36a357}
+[data-theme="dark"] .secondary,[data-theme="dark"] .fileButton{background:#2d343c;color:#d7e3d7;border-color:#3c454e}
+[data-theme="dark"] .secondary:hover,[data-theme="dark"] .fileButton:hover{background:#363f48}
+[data-theme="dark"] .play,[data-theme="dark"] .copyBtn{background:#22361f;color:#8fe39a;border-color:#2f5a35}
+[data-theme="dark"] .tl-btn{background:#2d343c;border-color:#3c454e;color:#cfe3cf}
+[data-theme="dark"] .tl-btn:hover{background:#363f48}
+[data-theme="dark"] .tl-btn.active,[data-theme="dark"] .tl-cutbar .tl-btn.active{background:#2f8f4a;border-color:#2f8f4a;color:#fff}
+[data-theme="dark"] .tl-btn.primaryMini{background:#2f8f4a;border-color:#2f8f4a;color:#fff}
+/* Chips, números, estados */
+[data-theme="dark"] .status,[data-theme="dark"] .number,[data-theme="dark"] .shortScore,[data-theme="dark"] .metaLabel{background:#273227;color:#9fd8a6}
+[data-theme="dark"] .badge{color:#bdf7a3}
+[data-theme="dark"] code{background:#2a3139;color:#cfe3cf}
+/* Listas */
+[data-theme="dark"] .matches,[data-theme="dark"] .shorts,[data-theme="dark"] .transcriptView{background:#1b2025;border-color:#333b43}
+[data-theme="dark"] .matches.empty,[data-theme="dark"] .shorts.empty,[data-theme="dark"] .tl-empty,[data-theme="dark"] #playerEmpty{color:#8a948d}
+[data-theme="dark"] .match{border-color:#2a3138}
+[data-theme="dark"] .shortItem{border-color:#2a3138}
+[data-theme="dark"] .term{border-color:#2a3138}
+[data-theme="dark"] .terms{border-color:#2a3138}
+[data-theme="dark"] .transcriptView{color:#d7ddd5}
+[data-theme="dark"] .transcriptView .tword:hover{background:#2c3a2a}
+[data-theme="dark"] .exportedFiles a{color:#7fe08f}
+[data-theme="dark"] .exportRow{border-color:#2a3138}
+/* Wizard */
+[data-theme="dark"] .wizard{background:#1f242a;border-color:#333b43}
+[data-theme="dark"] .wizard .wstep{color:#a9b3ac}
+[data-theme="dark"] .wizard .wstep .wnum{background:#2d343c;color:#a9b3ac}
+[data-theme="dark"] .wizard .wstep.active{background:#20361f;color:#cfeccd}
+[data-theme="dark"] .wizard .wstep.active .wnum{background:#2f8f4a;color:#fff}
+[data-theme="dark"] .wizard .wstep.done .wnum{background:#2f5a35;color:#cfeccd}
+[data-theme="dark"] .wizard .wstep:not(:last-child)::after{background:#333b43}
+[data-theme="dark"] .stepNav,[data-theme="dark"] .advOpen{border-color:#2d343c}
+[data-theme="dark"] .cardSummary,[data-theme="dark"] .manualEditor summary,[data-theme="dark"] .settings summary{color:#9fd8a6}
+/* Avisos y barras */
+[data-theme="dark"] .notice{background:#20361f;color:#bfe9bf}
+[data-theme="dark"] .notice.error{background:#3a241e;color:#f0b7a0}
+[data-theme="dark"] .readyBar.ok{background:#1d2e1c;border-color:#2f5a35;color:#9fd8a6}
+[data-theme="dark"] .readyBar.warn{background:#352a18;border-color:#6a5420;color:#e3c583}
+[data-theme="dark"] .jobBar{background:#1f242a;border-color:#333b43;border-left-color:#3aa85a}
+[data-theme="dark"] .jobLabel,[data-theme="dark"] .jobPct{color:#9fd8a6}
+[data-theme="dark"] .jobTrack{background:#2a3138}
+[data-theme="dark"] .cancelBtn{background:#3a241e;color:#f0a090;border-color:#6a3a30}
+/* Timeline */
+[data-theme="dark"] .timelineBar{background:#12161a;border-color:#2d343c}
+[data-theme="dark"] .tl-ruler{border-color:#2d343c}
+[data-theme="dark"] .tl-tick{border-color:#3a434b}
+[data-theme="dark"] .tl-tick span{color:#8a948d}
+[data-theme="dark"] .tl-time{color:#9fd8a6}
+[data-theme="dark"] .tl-legend2,[data-theme="dark"] .tl-cutinfo,[data-theme="dark"] .tl-keylbl,[data-theme="dark"] .animBrand summary{color:#a9b3ac}
+[data-theme="dark"] .tl-cutbar .tl-btn.danger{color:#ff8a7e;border-color:#6a3a30}
+/* Header: ya es oscuro, solo ajuste del divisor */
+[data-theme="dark"] .advOpen{border-top-color:#2d343c}
+/* Botón de tema */
+.themeToggle{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#f8f8ed;border-radius:100px;width:38px;height:38px;font-size:17px;cursor:pointer;display:grid;place-items:center;padding:0;line-height:1}
+.themeToggle:hover{background:rgba(255,255,255,.18)}
+.topbarRight{display:flex;align-items:center;gap:12px}

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.8",
-  "notes": "Animaciones del clip estilo CapCut (fade in / fade out, en negro o blanco) con VISTA PREVIA en el Paso 1 — pruébalas sobre tu video antes de exportar. La animación, el intro y el outro ahora se eligen junto al reproductor en el Paso 1.",
+  "version": "1.0.9",
+  "notes": "Tema OSCURO estilo CapCut (por defecto) con botón ☀️/🌙 arriba a la derecha para cambiar a claro. Toda la interfaz —tarjetas, línea de tiempo, paneles, listas— ahora se ve como un editor profesional.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
