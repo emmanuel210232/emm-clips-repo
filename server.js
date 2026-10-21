@@ -67,7 +67,7 @@ function resolveWhisper() {
 }
 function readiness() { const preferred=path.join(ROOT,'tools','ggml-large-v3-turbo-q5_0.bin'), fallback=path.join(ROOT,'tools','ggml-small.bin'); const whisper=resolveWhisper(); return { ffmpeg: executable(config.ffmpeg, 'ffmpeg'), ffprobe: executable(config.ffprobe, 'ffprobe'), whisper, whisperGpu: whisper.includes('tools-gpu'), model: config.model && fs.existsSync(config.model) ? config.model : fs.existsSync(preferred) ? preferred : fs.existsSync(fallback) ? fallback : '' }; }
 function listExports() { return fs.readdirSync(EXPORTS).filter(name=>/\.(mp4|png|jpe?g)$/i.test(name)).map(name=>({name,modified:fs.statSync(path.join(EXPORTS,name)).mtimeMs})).sort((a,b)=>b.modified-a.modified).slice(0,24); }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), dfReady: dfReady(), filmstrip, version: APP_VERSION, job }; }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -89,7 +89,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -248,19 +248,38 @@ async function studioEnhance(bin,inVideo,outVideo){
   await fsp.rm(outDir,{recursive:true,force:true}).catch(()=>{});
 }
 // Animación del clip (fade in/out sencillo, estilo CapCut) sobre el inicio/final del video.
+// Catálogo de EFECTOS de entrada/salida del clip, usando las transiciones integradas de ffmpeg (xfade contra negro/blanco).
+// Sin descargas: ffmpeg ya trae ~58 transiciones.
+const CLIP_FX = {
+  none:{},
+  negro:{tr:'fade',color:'black'}, blanco:{tr:'fadewhite',color:'white'}, // compatibilidad con valores viejos
+  fundNegro:{tr:'fade',color:'black'}, fundBlanco:{tr:'fadewhite',color:'white'},
+  disolver:{tr:'dissolve',color:'black'},
+  deslizaIzq:{tr:'slideleft',color:'black'}, deslizaDer:{tr:'slideright',color:'black'},
+  deslizaArriba:{tr:'slideup',color:'black'}, deslizaAbajo:{tr:'slidedown',color:'black'},
+  barrido:{tr:'wiperight',color:'black'}, circulo:{tr:'circleopen',color:'black'},
+  pixeles:{tr:'pixelize',color:'black'}, zoom:{tr:'zoomin',color:'black'},
+  radial:{tr:'radial',color:'black'}, cubrir:{tr:'coverright',color:'black'},
+  desenfoque:{tr:'hblur',color:'black'}, persiana:{tr:'wipeup',color:'black'},
+};
+function clipFxLabels(){ return [
+  ['none','Ninguno'],['fundNegro','Fundido negro'],['fundBlanco','Fundido blanco'],['disolver','Disolver'],
+  ['deslizaIzq','Deslizar ←'],['deslizaDer','Deslizar →'],['deslizaArriba','Deslizar ↑'],['deslizaAbajo','Deslizar ↓'],
+  ['barrido','Barrido'],['persiana','Persiana'],['circulo','Círculo'],['pixeles','Pixeles'],
+  ['zoom','Zoom'],['radial','Radial'],['cubrir','Cubrir'],['desenfoque','Desenfoque'],
+]; }
 async function applyClipAnim(bin,inFile,outFile,clipIn,clipOut,dur){
   const total=await durationOf(inFile).catch(()=>0);
   const d=Math.max(0.3,Math.min(3,Number(dur)||0.8));
-  const col=k=>k==='blanco'?'white':'black';
-  const vfs=[],afs=[];
-  if(clipIn&&clipIn!=='none'){ vfs.push(`fade=t=in:st=0:d=${d}:color=${col(clipIn)}`); afs.push(`afade=t=in:st=0:d=${d}`); }
-  if(clipOut&&clipOut!=='none'&&total>d){ const st=Math.max(0,total-d); vfs.push(`fade=t=out:st=${st.toFixed(3)}:d=${d}:color=${col(clipOut)}`); afs.push(`afade=t=out:st=${st.toFixed(3)}:d=${d}`); }
-  if(!vfs.length&&!afs.length){ await fsp.rename(inFile,outFile); return; }
-  const args=['-y','-i',inFile];
-  if(vfs.length) args.push('-vf',vfs.join(','));
-  if(afs.length) args.push('-af',afs.join(','));
-  args.push(...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',outFile);
-  await run(bin,args,progress(total||0,'Animación'));
+  const inFx=CLIP_FX[clipIn]||{}, outFx=CLIP_FX[clipOut]||{};
+  const hasIn=!!inFx.tr, hasOut=!!outFx.tr && total>d*2;
+  if(!hasIn&&!hasOut){ await fsp.rename(inFile,outFile); return; }
+  const {width,height}=videoDimensions(inFile); const fps=videoFps(inFile);
+  const inputs=['-i',inFile]; const parts=[`[0:v]settb=AVTB,fps=${fps},format=yuv420p,setsar=1[m]`];
+  let vlabel='[m]', idx=1;
+  if(hasIn){ inputs.push('-f','lavfi','-t',String(d),'-i',`color=c=${inFx.color}:s=${width}x${height}:r=${fps}`); parts.push(`[${idx}:v]settb=AVTB,fps=${fps},format=yuv420p,setsar=1[bi]`); parts.push(`[bi]${vlabel}xfade=transition=${inFx.tr}:duration=${d}:offset=0[vi]`); vlabel='[vi]'; idx++; }
+  if(hasOut){ inputs.push('-f','lavfi','-t',String(d),'-i',`color=c=${outFx.color}:s=${width}x${height}:r=${fps}`); parts.push(`[${idx}:v]settb=AVTB,fps=${fps},format=yuv420p,setsar=1[bo]`); parts.push(`${vlabel}[bo]xfade=transition=${outFx.tr}:duration=${d}:offset=${(total-d).toFixed(3)}[vo]`); vlabel='[vo]'; idx++; }
+  await run(bin,['-y',...inputs,'-filter_complex',parts.join(';'),'-map',vlabel,'-map','0:a?',...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',outFile],progress(total||0,'Efecto'));
 }
 async function finalizeExport(bin,temporary,output,intro,outro,studio,clipIn='none',clipOut='none',clipDur=0.8){
   let main=temporary;

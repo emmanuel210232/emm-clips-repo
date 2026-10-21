@@ -223,7 +223,7 @@ function frameStep(d){const v=$('video');if(!v)return;try{v.pause();v.currentTim
 // Vista previa de la animación del clip (simula el fade con un overlay sobre el reproductor).
 // Usa la Web Animations API (más fiable que requestAnimationFrame, que se pausa si la pestaña no se ve).
 let animHandle=null, animTick=null, animTimer=null;
-function animColor(v){return v==='blanco'?'#ffffff':'#000000';}
+function animColor(v){return (v&&v.toLowerCase().includes('blanc'))?'#ffffff':'#000000';}
 function animDur(){return Math.max(0.3,Math.min(3,Number($('clipDur')?.value)||0.8));}
 function stopAnimPreview(){const v=$('video'),ov=$('animOverlay');if(animHandle){try{animHandle.cancel();}catch{}animHandle=null;}if(animTimer){clearTimeout(animTimer);animTimer=null;}if(animTick&&v){v.removeEventListener('timeupdate',animTick);animTick=null;}if(ov){ov.style.opacity='0';ov.style.display='none';}}
 function runOverlayFade(ov,from,to,d,onDone){
@@ -321,7 +321,7 @@ function render() {
   const ready=state.readiness;$('engineStatus').textContent=`Versión ${state.version||'?'} · FFmpeg: ${ready.ffmpeg?'listo':'falta'} · FFprobe: ${ready.ffprobe?'listo':'falta'} · Whisper: ${ready.whisper?(ready.whisperGpu?'GPU ⚡':'CPU'):'falta'} · Modelo: ${ready.model?ready.model.split(/[\\/]/).at(-1):'falta'}`;
   const qsel=$('exportQuality');if(qsel && !qsel.dataset.filled && (state.qualities||[]).length){for(const q of state.qualities){const o=document.createElement('option');o.value=q.id;o.textContent=q.label;qsel.append(o);}qsel.dataset.filled='1';}
   ['introTpl','outroTpl'].forEach(id=>{const sel=$(id);if(sel && !sel.dataset.filled && (state.brandTemplates||[]).length){for(const t of state.brandTemplates){const o=document.createElement('option');o.value=t.id;o.textContent=t.label;sel.append(o);}sel.value='none';sel.dataset.filled='1';}});
-  ['clipIn','clipOut'].forEach(id=>{const sel=$(id);if(sel && !sel.dataset.filled){for(const [v,l] of [['none','Ninguna'],['negro','Fade negro'],['blanco','Fade blanco']]){const o=document.createElement('option');o.value=v;o.textContent=l;sel.append(o);}sel.value='none';sel.dataset.filled='1';}});
+  ['clipIn','clipOut'].forEach(id=>{const sel=$(id);if(sel && !sel.dataset.filled && (state.clipFx||[]).length){for(const [v,l] of state.clipFx){const o=document.createElement('option');o.value=v;o.textContent=l;sel.append(o);}sel.value='none';sel.dataset.filled='1';}});
   const av=$('auVoice'),avWrap=$('auVoiceWrap'),gd=$('getDf');
   if(av){av.disabled=!state.dfReady;if(!state.dfReady)av.checked=false;}
   if(avWrap)avWrap.classList.toggle('disabled',!state.dfReady);
