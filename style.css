@@ -315,6 +315,10 @@ body{font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,san
 .tl-controls{gap:12px;padding:2px 0 8px}
 
 /* ===== Panel de revisión de contenido sensible (IA) ===== */
+.silenceRow{margin-top:10px;gap:10px;align-items:center;font-size:13px;color:#4a5a4e}
+.silenceRow select{font-family:inherit;padding:5px 8px;border:1px solid #cfe0cb;border-radius:7px;background:#fff;color:#2f5c3f}
+[data-theme="dark"] .silenceRow{color:#a9b3ac}
+[data-theme="dark"] .silenceRow select{background:#2d343c;border-color:#3c454e;color:#e8ebe8}
 .scanCats{gap:14px}
 .inlineCheck.mini{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:#4a5a4e;cursor:pointer;border:1px solid #e1e8dc;border-radius:8px;padding:7px 11px;background:#fbfcf8}
 .inlineCheck.mini:has(input:checked){border-color:#5a9367;background:#f1f7ef}

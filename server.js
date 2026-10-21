@@ -32,6 +32,7 @@ let pauses = readJson(files.pauses, []);
 let manualCuts = readJson(files.manualCuts, []);
 let selection = readJson(files.selection, null);
 let sensitiveScan = readJson(files.sensitive, null);
+let silenceScan = null; // resultado transitorio de "quitar silencios"
 let job = { status: 'idle', message: '', progress: '', percent: 0 };
 let activeProc = null; // proceso ffmpeg/whisper en curso (para poder cancelar)
 let filmstrip = null; // {count, interval, wave} de la línea de tiempo del video actual
@@ -68,7 +69,7 @@ function resolveWhisper() {
 }
 function readiness() { const preferred=path.join(ROOT,'tools','ggml-large-v3-turbo-q5_0.bin'), fallback=path.join(ROOT,'tools','ggml-small.bin'); const whisper=resolveWhisper(); return { ffmpeg: executable(config.ffmpeg, 'ffmpeg'), ffprobe: executable(config.ffprobe, 'ffprobe'), whisper, whisperGpu: whisper.includes('tools-gpu'), model: config.model && fs.existsSync(config.model) ? config.model : fs.existsSync(preferred) ? preferred : fs.existsSync(fallback) ? fallback : '' }; }
 function listExports() { return fs.readdirSync(EXPORTS).filter(name=>/\.(mp4|png|jpe?g)$/i.test(name)).map(name=>({name,modified:fs.statSync(path.join(EXPORTS,name)).mtimeMs})).sort((a,b)=>b.modified-a.modified).slice(0,24); }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, version: APP_VERSION, job }; }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -90,7 +91,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -315,7 +316,7 @@ async function finalizeExport(bin,temporary,output,intro,outro,studio,clipIn='no
   await run(bin,['-y',...inputs,'-filter_complex',parts.join(';'),'-map','[v]','-map','[a]',...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',output]);
   for(const c of clips) await fsp.unlink(c).catch(()=>{});
 }
-async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null) {
+async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false) {
   const q = QUALITY[quality] || QUALITY.original;
   const {chain:audioChain, studio:studioOn} = buildAudioFilter(enhance);
   const stdEnhance = !!audioChain;
@@ -372,16 +373,38 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   }
   const keptTotal = keep.reduce((a,k)=>a+(k.end-k.start),0);
   const filter = [];
-  keep.forEach((k,i) => {
-    filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
-    const length=k.end-k.start,fade=Math.min(.012,length/3);
-    filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
-  });
-  filter.push(keep.map((_,i) => `[v${i}][a${i}]`).join('') + `concat=n=${keep.length}:v=1:a=1[v][a]`);
-  const aLabel = stdEnhance ? '[aout]' : '[a]';
-  if (stdEnhance) filter.push(`[a]${audioChain}[aout]`);
-  let vLabel='[v]';
-  if(!q.copy && (q.scale||q.fps)){const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(',');filter.push(`[v]${vf}[vout]`);vLabel='[vout]';}
+  let vLabel, aLabel;
+  const canSmooth = smooth && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
+  if (canSmooth) {
+    // Crossfade corto entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
+    const fpsOut = q.fps || videoFps(project.videoPath);
+    const Dxf=0.14;
+    keep.forEach((k,i)=>{
+      filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS,settb=AVTB,fps=${fpsOut},format=yuv420p,setsar=1[v${i}]`);
+      filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
+    });
+    let vp='[v0]', ap='[a0]', L=keep[0].end-keep[0].start;
+    for(let i=1;i<keep.length;i++){
+      const d=Math.min(Dxf,(keep[i].end-keep[i].start)/2,(keep[i-1].end-keep[i-1].start)/2,L/2);
+      filter.push(`${vp}[v${i}]xfade=transition=fade:duration=${d.toFixed(3)}:offset=${(L-d).toFixed(3)}[vx${i}]`);
+      filter.push(`${ap}[a${i}]acrossfade=d=${d.toFixed(3)}[ax${i}]`);
+      vp=`[vx${i}]`; ap=`[ax${i}]`; L=L+(keep[i].end-keep[i].start)-d;
+    }
+    vLabel=vp; aLabel=ap;
+    if(stdEnhance){ filter.push(`${ap}${audioChain}[aout]`); aLabel='[aout]'; }
+    if(q.scale){ filter.push(`${vLabel}${q.scale}[vout]`); vLabel='[vout]'; }
+  } else {
+    keep.forEach((k,i) => {
+      filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
+      const length=k.end-k.start,fade=Math.min(.03,length/3);
+      filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
+    });
+    filter.push(keep.map((_,i) => `[v${i}][a${i}]`).join('') + `concat=n=${keep.length}:v=1:a=1[v][a]`);
+    aLabel = stdEnhance ? '[aout]' : '[a]';
+    if (stdEnhance) filter.push(`[a]${audioChain}[aout]`);
+    vLabel='[v]';
+    if(!q.copy && (q.scale||q.fps)){const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(',');filter.push(`[v]${vf}[vout]`);vLabel='[vout]';}
+  }
   const cutCrf=String(q.crf||18);
   const script = path.join(DATA,'filter.txt');
   await fsp.writeFile(script, filter.join(';\n'), 'utf8');
@@ -421,6 +444,39 @@ async function analyzePauses() {
   })();
   return {started:true};
 }
+// Detecta silencios y calcula los PEDAZOS A CONSERVAR (como "quitar silencios" de CapCut).
+function detectSilences(opts){
+  const bin=readiness().ffmpeg;
+  if(!project?.videoPath||!bin) throw Error('Abre un video primero.');
+  if(job.status==='running') throw Error('Ya hay un proceso en curso.');
+  const noise=Math.max(10,Math.min(60,Number(opts.noise)||30)); // dB bajo cero
+  const minSil=Math.max(0.25,Math.min(5,Number(opts.minSil)||0.6)); // silencio mínimo para cortar
+  const pad=Math.max(0,Math.min(0.5,opts.pad==null?0.12:Number(opts.pad))); // margen que se conserva a cada lado
+  job={status:'running',message:'Buscando silencios en el audio…',progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+    try{
+      const total=await durationOf(project.videoPath).catch(()=>0);
+      let log=''; const report=progress(total,'Silencios');
+      await run(bin,['-hide_banner','-i',project.videoPath,'-vn','-af',`silencedetect=noise=-${noise}dB:d=${minSil}`,'-f','null','NUL'],s=>{log=(log+s).slice(-4000000);report(s);});
+      // tramos de silencio (encogidos por el margen pad)
+      const sil=[]; let start=null;
+      for(const line of log.split(/\r?\n/)){
+        const a=line.match(/silence_start:\s*(-?[\d.]+)/), b=line.match(/silence_end:\s*([\d.]+)/);
+        if(a) start=Math.max(0,Number(a[1]));
+        if(b&&start!==null){ const end=Number(b[1]); const s=start+pad, e=end-pad; if(e-s>0.12) sil.push({start:+s.toFixed(3),end:+e.toFixed(3)}); start=null; }
+      }
+      // conservar = complemento de los silencios dentro de [0,total]
+      const keep=[]; let cur=0;
+      for(const s of sil){ if(s.start>cur+0.1) keep.push({start:+cur.toFixed(3),end:+s.start.toFixed(3)}); cur=Math.max(cur,s.end); }
+      if(total>cur+0.1) keep.push({start:+cur.toFixed(3),end:+total.toFixed(3)});
+      const keptSec=keep.reduce((a,k)=>a+(k.end-k.start),0);
+      silenceScan={keep,removed:sil.length,total:+total.toFixed(2),kept:+keptSec.toFixed(2),saved:+(total-keptSec).toFixed(2),noise,minSil,pad,scannedAt:Date.now()};
+      job={status:'done',message:sil.length?`Encontré ${sil.length} silencio(s). El video pasaría de ${fmtSec(total)} a ${fmtSec(keptSec)}.`:'No encontré silencios que quitar con esa sensibilidad.',progress:'',percent:100,silence:true};
+    }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
+  })();
+  return {started:true};
+}
+function fmtSec(s){s=Math.max(0,Math.round(s));return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
 async function proposeShorts() {
   if (!project?.videoPath || !transcript.length) throw Error('Abre y transcribe un video primero.');
   if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
@@ -855,6 +911,9 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/scan-sensitive') {
       const body=await jsonBody(req); scanSensitive(body||{}); return respond(res,202,{started:true});
     }
+    if (req.method==='POST' && url.pathname==='/api/silences') {
+      const body=await jsonBody(req); detectSilences(body||{}); return respond(res,202,{started:true});
+    }
     if (req.method==='POST' && url.pathname==='/api/scan-sensitive/clear') {
       sensitiveScan=null; try{fs.unlinkSync(files.sensitive);}catch{} return respond(res,200,state());
     }
@@ -1026,7 +1085,7 @@ const server=http.createServer(async (req,res) => {
     }
     if (req.method==='POST' && url.pathname==='/api/shorts/render') { const body=await jsonBody(req); return respond(res,202,await renderShort(String(body.id||''))); }
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
-    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null); return respond(res,202,result); }
+    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth); return respond(res,202,result); }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);
   } catch(e) { return error(res,e); }

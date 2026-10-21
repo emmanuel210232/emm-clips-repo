@@ -12,6 +12,7 @@ let lastSourceVideo = '';
 let lastJob = '';
 let matchFingerprint = '';
 let autoPrepKey = ''; // evita volver a auto-preparar el mismo video
+let silenceApplied = 0; // evita re-aplicar el mismo escaneo de silencios
 let selectionHydrated = false;
 let selectionSave = Promise.resolve();
 let playerSourceOffset = 0;
@@ -327,6 +328,16 @@ function render() {
   $('termCount').textContent=`${state.dictionary.filter(d=>d.enabled).length} activas`;
   $('matchCount').textContent=`${state.matches.length} coincidencias`;
   buildTranscript();
+  // Al terminar "Quitar silencios", aplica los pedazos a conservar como clips (una vez).
+  if(p && state.silenceScan && state.silenceScan.scannedAt && state.silenceScan.scannedAt!==silenceApplied && state.job.status==='done' && (Date.now()-state.silenceScan.scannedAt<90000)){
+    silenceApplied=state.silenceScan.scannedAt;
+    const keep=(state.silenceScan.keep||[]).map(c=>({start:+c.start,end:+c.end}));
+    if(keep.length){ ensureClips(); pushUndo(); clips=keep; saveClips(); syncRemoved();
+      const sc=state.silenceScan;
+      const si=$('silInfo'); if(si) si.textContent=`−${Math.round(sc.saved)}s · ${sc.removed} silencios`;
+      notice(`🤫 Quité ${sc.removed} silencio(s): el video pasó de ${Math.floor(sc.total/60)}:${String(Math.round(sc.total%60)).padStart(2,'0')} a ${Math.floor(sc.kept/60)}:${String(Math.round(sc.kept%60)).padStart(2,'0')}. Revisa y exporta (deja "Suavizar cortes" para que no se note). Ctrl+Z para deshacer.`);
+    }
+  }
   buildTimeline();
   buildScanResults();
   // Auto-preparar el video al abrirlo (como CapCut): vista previa si el formato no se ve + miniaturas + onda.
@@ -458,6 +469,13 @@ $('auOff').onclick=()=>{['auDenoise','auCompress','auNormalize','auVoice'].forEa
 $('animPreviewIn').onclick=()=>previewAnim('in');
 $('animPreviewOut').onclick=()=>previewAnim('out');
 $('themeToggle').onclick=toggleTheme; applyThemeIcon();
+$('rmSilence').onclick=safe(async()=>{
+  if(!state.project)throw Error('Abre un video primero.');
+  const sens=$('silSens').value;
+  const p=sens==='suave'?{noise:35,minSil:1.0}:sens==='fuerte'?{noise:26,minSil:0.4}:{noise:30,minSil:0.6};
+  await api('/api/silences',{...p,pad:0.12});
+  notice('🤫 Buscando silencios en el audio… (puedes cancelar arriba). Al terminar los quito y uno el video.');
+});
 $('scanRun').onclick=safe(async()=>{
   if(!state.project)throw Error('Abre un video primero.');
   const cats=[];if($('scBeso').checked)cats.push('beso');if($('scDesnudez').checked)cats.push('desnudez');if($('scPelea').checked)cats.push('pelea');if($('scDrogas').checked)cats.push('drogas');
@@ -489,7 +507,8 @@ $('export').onclick=safe(async()=>{await selectionSave;
   if(edited){ mode='cut'; segments=clips.map(c=>({start:+c.start.toFixed(3),end:+c.end.toFixed(3)})); }
   else { if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas, o edita clips en la línea del tiempo (Paso 1).'); }
   const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};
-  const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});
+  const smooth=edited && !!$('silSmooth')?.checked;
+  const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,smooth,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});
   notice(edited?`Exportando tu edición (${segments.length} clip${segments.length>1?'s':''}). El archivo aparecerá en exports.`:(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`));});
 $('cancelJob').onclick=safe(async()=>{await api('/api/job/cancel',{});notice('Cancelando el proceso…');});
 $('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};

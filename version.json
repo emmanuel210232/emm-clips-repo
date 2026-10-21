@@ -1,5 +1,5 @@
 {
-  "version": "1.5.0",
-  "notes": "Revisión de contenido sensible con IA LOCAL (gemma3, necesita Ollama abierto): la IA mira el video y MARCA posibles besos/intimidad, desnudez, peleas o drogas con su minuto y miniatura, para que TÚ revises y decides. No corta solo. Un clic en 'Marcar para cortar' lo quita del video. Elige qué buscar y la sensibilidad. (Está en el Paso 1 → 'Revisar contenido sensible'.)",
+  "version": "1.6.0",
+  "notes": "Quitar silencios automático (como CapCut): un botón detecta las pausas y las quita, uniendo el video. Elige sensibilidad (suave/normal/fuerte). Con 'Suavizar cortes' agrega un crossfade cortito en cada unión para que NO se noten los brincos. Todo queda como clips editables y lo exportas cuando quieras (Ctrl+Z para deshacer).",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
