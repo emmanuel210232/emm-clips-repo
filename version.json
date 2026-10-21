@@ -1,5 +1,5 @@
 {
-  "version": "1.6.0",
-  "notes": "Quitar silencios automático (como CapCut): un botón detecta las pausas y las quita, uniendo el video. Elige sensibilidad (suave/normal/fuerte). Con 'Suavizar cortes' agrega un crossfade cortito en cada unión para que NO se noten los brincos. Todo queda como clips editables y lo exportas cuando quieras (Ctrl+Z para deshacer).",
+  "version": "1.6.1",
+  "notes": "Quitar silencios ahora agarra también los silencios CORTOS: la sensibilidad muestra el mínimo (Suave 1 s · Normal 0.6 s · Fuerte 0.35 s · Máxima 0.25 s). Entre más fuerte, más apretado y ágil queda el video.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

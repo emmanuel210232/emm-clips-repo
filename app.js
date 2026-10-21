@@ -472,7 +472,7 @@ $('themeToggle').onclick=toggleTheme; applyThemeIcon();
 $('rmSilence').onclick=safe(async()=>{
   if(!state.project)throw Error('Abre un video primero.');
   const sens=$('silSens').value;
-  const p=sens==='suave'?{noise:35,minSil:1.0}:sens==='fuerte'?{noise:26,minSil:0.4}:{noise:30,minSil:0.6};
+  const p=sens==='suave'?{noise:35,minSil:1.0}:sens==='fuerte'?{noise:27,minSil:0.35}:sens==='max'?{noise:24,minSil:0.25}:{noise:30,minSil:0.6};
   await api('/api/silences',{...p,pad:0.12});
   notice('🤫 Buscando silencios en el audio… (puedes cancelar arriba). Al terminar los quito y uno el video.');
 });
