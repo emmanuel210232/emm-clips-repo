@@ -1,5 +1,5 @@
 {
-  "version": "1.4.0",
-  "notes": "Editor no-lineal completo tipo CapCut: ARRASTRA un clip para moverlo/reordenar ([ y ] también), ARRASTRA sus bordes para recortarlo (trim), D divide, Supr borra (ripple), Ctrl+Z deshace. Al exportar queda justo lo que armaste, en ese orden y con esos recortes. Más el paquete de 15 efectos de entrada/salida.",
+  "version": "1.5.0",
+  "notes": "Revisión de contenido sensible con IA LOCAL (gemma3, necesita Ollama abierto): la IA mira el video y MARCA posibles besos/intimidad, desnudez, peleas o drogas con su minuto y miniatura, para que TÚ revises y decides. No corta solo. Un clic en 'Marcar para cortar' lo quita del video. Elige qué buscar y la sensibilidad. (Está en el Paso 1 → 'Revisar contenido sensible'.)",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

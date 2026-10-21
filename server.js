@@ -16,7 +16,7 @@ const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
 const EXPORTS = path.join(ROOT, 'exports');
 const PORT = Number(process.env.EDITOR_IRL_PORT || 4177);
-const files = { project: path.join(DATA, 'project.json'), config: path.join(DATA, 'config.json'), transcript: path.join(DATA, 'transcript.json'), shorts: path.join(DATA, 'shorts.json'), adjustments:path.join(DATA,'cut_adjustments.json'), pauses:path.join(DATA,'pauses.json'), manualCuts:path.join(DATA,'manual_cuts.json'), selection:path.join(DATA,'selection.json'), dictionary: path.join(ROOT, 'dictionary.json') };
+const files = { project: path.join(DATA, 'project.json'), config: path.join(DATA, 'config.json'), transcript: path.join(DATA, 'transcript.json'), shorts: path.join(DATA, 'shorts.json'), adjustments:path.join(DATA,'cut_adjustments.json'), pauses:path.join(DATA,'pauses.json'), manualCuts:path.join(DATA,'manual_cuts.json'), selection:path.join(DATA,'selection.json'), sensitive:path.join(DATA,'sensitive.json'), dictionary: path.join(ROOT, 'dictionary.json') };
 fs.mkdirSync(DATA, { recursive: true });
 fs.mkdirSync(EXPORTS, { recursive: true });
 
@@ -31,6 +31,7 @@ let adjustments = readJson(files.adjustments, {});
 let pauses = readJson(files.pauses, []);
 let manualCuts = readJson(files.manualCuts, []);
 let selection = readJson(files.selection, null);
+let sensitiveScan = readJson(files.sensitive, null);
 let job = { status: 'idle', message: '', progress: '', percent: 0 };
 let activeProc = null; // proceso ffmpeg/whisper en curso (para poder cancelar)
 let filmstrip = null; // {count, interval, wave} de la línea de tiempo del video actual
@@ -67,7 +68,7 @@ function resolveWhisper() {
 }
 function readiness() { const preferred=path.join(ROOT,'tools','ggml-large-v3-turbo-q5_0.bin'), fallback=path.join(ROOT,'tools','ggml-small.bin'); const whisper=resolveWhisper(); return { ffmpeg: executable(config.ffmpeg, 'ffmpeg'), ffprobe: executable(config.ffprobe, 'ffprobe'), whisper, whisperGpu: whisper.includes('tools-gpu'), model: config.model && fs.existsSync(config.model) ? config.model : fs.existsSync(preferred) ? preferred : fs.existsSync(fallback) ? fallback : '' }; }
 function listExports() { return fs.readdirSync(EXPORTS).filter(name=>/\.(mp4|png|jpe?g)$/i.test(name)).map(name=>({name,modified:fs.statSync(path.join(EXPORTS,name)).mtimeMs})).sort((a,b)=>b.modified-a.modified).slice(0,24); }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, version: APP_VERSION, job }; }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -89,7 +90,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -673,6 +674,79 @@ async function preview() {
     catch(e) {job={status: job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0};}
   })();
 }
+// ===== Detección IA de contenido sensible (gemma3:4b visión, local vía Ollama) =====
+const OLLAMA = 'http://127.0.0.1:11434';
+const SCAN_MODEL = 'gemma3:4b';
+const SCAN_CATS = ['beso','desnudez','pelea','drogas']; // categorías que el modelo evalúa
+async function ollamaHasVision(){
+  try{ const r=await fetch(OLLAMA+'/api/tags',{signal:AbortSignal.timeout(4000)}); if(!r.ok) return false; const j=await r.json(); return (j.models||[]).some(m=>String(m.name||'').startsWith('gemma3')); }catch{ return false; }
+}
+function scanPrompt(){
+  return 'Eres moderador de YouTube. Mira SOLO este fotograma de un video. '+
+    'Marca ÚNICAMENTE lo que YouTube penaliza de verdad: desnudez explícita o genitales, acto sexual, beso apasionado o intimidad fuerte, pelea real con golpes o sangre, consumo visible de drogas. '+
+    'NO marques lo normal: fiesta o antro, baile, una copa o cerveza social, ropa escotada o de fiesta, abrazos, gente conversando o posando. '+
+    'Responde SOLO en JSON, sin texto extra: {"beso":true/false,"desnudez":true/false,"pelea":true/false,"drogas":true/false,"riesgo":"ninguno|bajo|medio|alto","nota":"máximo 8 palabras"}.';
+}
+async function classifyFrame(fp){
+  let b64; try{ b64=await fsp.readFile(fp,{encoding:'base64'}); }catch{ return null; }
+  try{
+    const r=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(60000),headers:{'content-type':'application/json'},
+      body:JSON.stringify({model:SCAN_MODEL,prompt:scanPrompt(),images:[b64],stream:false,options:{temperature:0}})});
+    if(!r.ok) throw Error('Ollama '+r.status);
+    const j=await r.json(); const txt=String(j.response||'');
+    const m=txt.match(/\{[\s\S]*\}/); if(!m) return {beso:false,desnudez:false,pelea:false,drogas:false,riesgo:'ninguno',nota:''};
+    const o=JSON.parse(m[0]);
+    return {beso:!!o.beso,desnudez:!!o.desnudez,pelea:!!o.pelea,drogas:!!o.drogas,riesgo:String(o.riesgo||'ninguno'),nota:String(o.nota||'').slice(0,80)};
+  }catch(e){ return null; } // un frame que falla no tumba el escaneo
+}
+const RISK_ORDER={ninguno:0,bajo:1,medio:2,alto:3};
+function scanSensitive(opts){
+  const bin=readiness().ffmpeg;
+  if(!bin||!project?.videoPath) throw Error('Abre un video primero.');
+  if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  const cats=(Array.isArray(opts.cats)&&opts.cats.length)?opts.cats.filter(c=>SCAN_CATS.includes(c)):SCAN_CATS.slice();
+  const sens=['relajado','normal','estricto'].includes(opts.sensitivity)?opts.sensitivity:'normal';
+  const minRisk=sens==='relajado'?3:sens==='estricto'?1:2; // umbral por sensibilidad
+  const step=Math.max(2,Math.min(15,Number(opts.step)||4));
+  const maxFrames=Math.max(10,Math.min(600,Number(opts.max)||250));
+  job={status:'running',message:'Preparando análisis con IA…',progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+    try{
+      if(!(await ollamaHasVision())) throw Error('No encuentro gemma3 en Ollama. Abre Ollama y ten el modelo gemma3:4b instalado.');
+      const dur=await durationOf(project.videoPath);
+      const dir=path.join(DATA,'scan'); await fsp.rm(dir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(dir,{recursive:true});
+      let times=[]; for(let t=1;t<dur-0.5;t+=step) times.push(+t.toFixed(2));
+      if(times.length>maxFrames){ const k=Math.ceil(times.length/maxFrames); times=times.filter((_,i)=>i%k===0); }
+      const frames=[];
+      for(let i=0;i<times.length;i++){
+        if(job.cancelRequested) throw Error('Análisis cancelado.');
+        const t=times[i], fp=path.join(dir,`f${i}.jpg`);
+        await run(bin,['-y','-ss',String(t),'-i',project.videoPath,'-frames:v','1','-vf','scale=512:-2','-q:v','4',fp]).catch(()=>{});
+        if(fs.existsSync(fp)) frames.push({t,i,fp});
+        job.message=`Sacando fotogramas… (${i+1}/${times.length})`; job.percent=Math.round((i+1)/times.length*35);
+      }
+      job.message='Revisando con IA (gemma3)…';
+      const flagged=[];
+      for(let n=0;n<frames.length;n++){
+        if(job.cancelRequested) throw Error('Análisis cancelado.');
+        const f=frames[n]; const r=await classifyFrame(f.fp);
+        if(r){ const hit=cats.some(c=>r[c]) && (RISK_ORDER[r.riesgo]||0)>=minRisk; if(hit){ const which=cats.filter(c=>r[c]); flagged.push({t:f.t,i:f.i,cats:which,riesgo:r.riesgo,nota:r.nota}); } }
+        job.message=`Revisando con IA… (${n+1}/${frames.length})`; job.percent=35+Math.round((n+1)/Math.max(1,frames.length)*63);
+      }
+      // Agrupa fotogramas marcados cercanos en TRAMOS
+      const ranges=[]; const gap=step*2.2;
+      for(const fl of flagged){
+        const last=ranges[ranges.length-1];
+        if(last && fl.t-last.endRaw<=gap){ last.endRaw=fl.t; last.end=Math.min(dur,fl.t+step); last.hits++; if((RISK_ORDER[fl.riesgo]||0)>(RISK_ORDER[last.riesgo]||0)){last.riesgo=fl.riesgo;last.nota=fl.nota;last.thumb=fl.i;} for(const c of fl.cats) if(!last.cats.includes(c)) last.cats.push(c); }
+        else ranges.push({start:Math.max(0,fl.t-1),end:Math.min(dur,fl.t+step),endRaw:fl.t,cats:[...fl.cats],riesgo:fl.riesgo,nota:fl.nota,thumb:fl.i,hits:1});
+      }
+      ranges.forEach(r=>{delete r.endRaw;r.start=+r.start.toFixed(2);r.end=+r.end.toFixed(2);});
+      sensitiveScan={ranges,scannedAt:Date.now(),frames:frames.length,cats,sensitivity:sens};
+      writeJson(files.sensitive,sensitiveScan);
+      job={status:'done',message:ranges.length?`Revisión lista: ${ranges.length} momento(s) a revisar.`:'Revisión lista: no se marcó nada sospechoso.',progress:'',percent:100};
+    }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
+  })();
+}
 const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
@@ -777,6 +851,18 @@ const server=http.createServer(async (req,res) => {
       if(job.status==='running') return respond(res,202,{started:false,busy:true});
       prepareProject();
       return respond(res,202,{started:true});
+    }
+    if (req.method==='POST' && url.pathname==='/api/scan-sensitive') {
+      const body=await jsonBody(req); scanSensitive(body||{}); return respond(res,202,{started:true});
+    }
+    if (req.method==='POST' && url.pathname==='/api/scan-sensitive/clear') {
+      sensitiveScan=null; try{fs.unlinkSync(files.sensitive);}catch{} return respond(res,200,state());
+    }
+    if (req.method==='GET' && url.pathname==='/api/scan-thumb') {
+      const i=parseInt(url.searchParams.get('i')||'-1',10);
+      const fp=path.join(DATA,'scan',`f${i}.jpg`);
+      if(!Number.isInteger(i)||i<0||!fs.existsSync(fp)) return error(res,'Miniatura no encontrada.',404);
+      return serveMedia(req,res,fp);
     }
     if (req.method==='POST' && url.pathname==='/api/filmstrip') {
       const bin=readiness().ffmpeg;

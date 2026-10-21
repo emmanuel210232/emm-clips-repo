@@ -144,6 +144,41 @@ async function syncRemoved(){
   if(dur>cur+0.02)rem.push({start:cur,end:dur});
   try{state=await api('/api/cuts/manual/set',{cuts:rem});}catch(e){notice(e.message,true);}
 }
+// Quita el tramo [a,b] de la secuencia (ripple) — lo usa "Marcar para cortar" de la revisión IA.
+function cutRange(a,b){
+  ensureClips();const out=[];
+  for(const c of clips){
+    if(c.end<=a+0.02||c.start>=b-0.02){out.push(c);continue;}
+    if(c.start<a-0.02)out.push({start:c.start,end:a});
+    if(c.end>b+0.02)out.push({start:b,end:c.end});
+  }
+  const kept=out.filter(c=>c.end-c.start>0.1);
+  if(!kept.length)return notice('Ese corte quitaría todo el video.',true);
+  pushUndo();clips=kept;saveClips();selectedClipIdx=-1;syncRemoved();buildTimeline();
+  notice('🗑️ Cortado '+fmt(a)+'–'+fmt(b)+'. Revisa el salto y exporta cuando termines.');
+}
+const SCAN_CAT_LABEL={beso:'Beso/intimidad',desnudez:'Desnudez',pelea:'Pelea/golpes',drogas:'Alcohol/drogas'};
+function buildScanResults(){
+  const box=$('scanResults'); if(!box) return;
+  const sc=state.sensitiveScan; const info=$('scanInfo');
+  if(!sc){ if(box.childElementCount)box.replaceChildren(); box.dataset.fp=''; if(info)info.textContent=''; return; }
+  if(info)info.textContent=`${sc.ranges.length} marca(s) · ${sc.frames} fotogramas`;
+  const fp=(sc.scannedAt||0)+'|'+sc.ranges.length;
+  if(box.dataset.fp===fp && box.childElementCount) return; box.dataset.fp=fp; box.replaceChildren();
+  if(!sc.ranges.length){ const p=document.createElement('p'); p.className='hint'; p.textContent='✅ La IA no marcó nada sospechoso en este video.'; box.append(p); return; }
+  for(const r of sc.ranges){
+    const row=document.createElement('div'); row.className='scanRow risk-'+(r.riesgo||'bajo');
+    const img=document.createElement('img'); img.className='scanThumb'; img.loading='lazy'; img.src='/api/scan-thumb?i='+r.thumb;
+    const body=document.createElement('div'); body.className='scanBody';
+    const t=document.createElement('div'); t.className='scanTitle'; t.textContent=(r.cats||[]).map(c=>SCAN_CAT_LABEL[c]||c).join(', ')+' · riesgo '+(r.riesgo||'?');
+    const sub=document.createElement('div'); sub.className='scanSub'; sub.textContent=fmt(r.start)+'–'+fmt(r.end)+(r.nota?' · '+r.nota:'');
+    body.append(t,sub);
+    const acts=document.createElement('div'); acts.className='scanActs';
+    const go=document.createElement('button'); go.type='button'; go.className='secondary compact'; go.textContent='▶ Ir'; go.onclick=()=>{goStep(1);playAt(r.start).catch(()=>{});};
+    const cut=document.createElement('button'); cut.type='button'; cut.className='tl-btn danger'; cut.textContent='🗑️ Marcar para cortar'; cut.onclick=()=>cutRange(r.start,r.end);
+    acts.append(go,cut); row.append(img,body,acts); box.append(row);
+  }
+}
 async function deleteSelectedClip(){
   ensureClips();
   if(selectedClipIdx<0||selectedClipIdx>=clips.length)return notice('Pica un clip en la línea del tiempo para seleccionarlo.',true);
@@ -293,6 +328,7 @@ function render() {
   $('matchCount').textContent=`${state.matches.length} coincidencias`;
   buildTranscript();
   buildTimeline();
+  buildScanResults();
   // Auto-preparar el video al abrirlo (como CapCut): vista previa si el formato no se ve + miniaturas + onda.
   if(p && state.job.status!=='running'){
     const needPrev=!p.previewPath && /\.(mpg|mpeg|mkv|avi)$/i.test(p.videoPath||'');
@@ -422,6 +458,13 @@ $('auOff').onclick=()=>{['auDenoise','auCompress','auNormalize','auVoice'].forEa
 $('animPreviewIn').onclick=()=>previewAnim('in');
 $('animPreviewOut').onclick=()=>previewAnim('out');
 $('themeToggle').onclick=toggleTheme; applyThemeIcon();
+$('scanRun').onclick=safe(async()=>{
+  if(!state.project)throw Error('Abre un video primero.');
+  const cats=[];if($('scBeso').checked)cats.push('beso');if($('scDesnudez').checked)cats.push('desnudez');if($('scPelea').checked)cats.push('pelea');if($('scDrogas').checked)cats.push('drogas');
+  if(!cats.length)throw Error('Marca al menos una cosa que quieras que la IA busque.');
+  await api('/api/scan-sensitive',{cats,sensitivity:$('scSens').value,step:Number($('scStep').value)||4,max:400});
+  notice('🛡️ Analizando el video con IA (necesita Ollama abierto). Puedes cancelar arriba. Verás las marcas aquí al terminar.');
+});
 // Si la pestaña se oculta a media previa, limpia el overlay (las animaciones se pausan al ocultar).
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopAnimPreview();});
 $('takeManualStart').onclick=()=>{try{$('manualStart').value=sourcePlayerTime().toFixed(2);}catch(e){notice(e.message,true);}};

@@ -93,6 +93,22 @@
         </aside>
         </div><!-- /editorGrid -->
       </div>
+      <details class="card scanCard" id="scanCard"><summary class="cardSummary">🛡️ Revisar contenido sensible (IA) <small style="font-weight:400;color:#8a968b">— marca lo que YouTube podría penalizar para que tú lo revises</small></summary>
+        <p class="hint">La IA de tu PC (gemma3) mira el video y <b>marca</b> posibles besos/intimidad, desnudez, peleas o drogas. <b>No corta solo</b>: tú revisas cada marca y decides. En videos de antro/fiesta puede marcar de más — ahí revísalo con calma. (Necesita <b>Ollama</b> abierto.)</p>
+        <div class="row wrap scanCats">
+          <label class="inlineCheck mini"><input type="checkbox" id="scBeso" checked> Besos / intimidad</label>
+          <label class="inlineCheck mini"><input type="checkbox" id="scDesnudez" checked> Desnudez</label>
+          <label class="inlineCheck mini"><input type="checkbox" id="scPelea" checked> Peleas / golpes</label>
+          <label class="inlineCheck mini"><input type="checkbox" id="scDrogas"> Alcohol / drogas</label>
+        </div>
+        <div class="row wrap" style="margin-top:8px;align-items:center">
+          <label>Sensibilidad <select id="scSens"><option value="relajado">Relajada (solo lo evidente)</option><option value="normal" selected>Normal</option><option value="estricto">Estricta (marca más)</option></select></label>
+          <label>Revisar 1 cada <select id="scStep"><option value="3">3 s</option><option value="4" selected>4 s</option><option value="6">6 s</option><option value="10">10 s</option></select></label>
+          <button id="scanRun" class="primary">🛡️ Analizar video</button>
+          <span class="muted" id="scanInfo"></span>
+        </div>
+        <div id="scanResults" class="scanResults"></div>
+      </details>
       <div class="stepNav"><span></span><button type="button" class="primary next" data-go="2">Siguiente: Transcribir →</button></div>
     </section>
 
