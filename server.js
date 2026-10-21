@@ -89,7 +89,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.4.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -314,7 +314,7 @@ async function finalizeExport(bin,temporary,output,intro,outro,studio,clipIn='no
   await run(bin,['-y',...inputs,'-filter_complex',parts.join(';'),'-map','[v]','-map','[a]',...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',output]);
   for(const c of clips) await fsp.unlink(c).catch(()=>{});
 }
-async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8) {
+async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null) {
   const q = QUALITY[quality] || QUALITY.original;
   const {chain:audioChain, studio:studioOn} = buildAudioFilter(enhance);
   const stdEnhance = !!audioChain;
@@ -357,11 +357,18 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     })();
     return { output, cuts: ranges.length, mode };
   }
-  const chosenPauses=pauses.filter(p=>selectedPauseIds.includes(p.id));
-  const cuts = adjustedCuts(matches, selectedIds, duration, words, adjustments,[...chosenPauses,...manualCuts]);
-  if (!cuts.length) throw Error('Selecciona al menos una palabra o pausa para cortar.');
-  const keep = keptIntervals(cuts, duration);
-  if (!keep.length) throw Error('Los cortes eliminarían el video completo.');
+  // Si el editor de clips manda "segments" (los clips en orden), se concatenan EN ESE ORDEN (soporta reordenar/trim).
+  let keep;
+  if (Array.isArray(segments) && segments.length) {
+    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end)})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
+    if (!keep.length) throw Error('Los clips no son válidos.');
+  } else {
+    const chosenPauses=pauses.filter(p=>selectedPauseIds.includes(p.id));
+    const cuts = adjustedCuts(matches, selectedIds, duration, words, adjustments,[...chosenPauses,...manualCuts]);
+    if (!cuts.length) throw Error('Selecciona al menos una palabra o pausa para cortar.');
+    keep = keptIntervals(cuts, duration);
+    if (!keep.length) throw Error('Los cortes eliminarían el video completo.');
+  }
   const keptTotal = keep.reduce((a,k)=>a+(k.end-k.start),0);
   const filter = [];
   keep.forEach((k,i) => {
@@ -388,7 +395,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
       job = { status:'done', message:`Video exportado: ${output}`, progress:'', percent:100, output };
     } catch (e) { await fsp.unlink(temporary).catch(()=>{});job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
   })();
-  return { output, cuts:cuts.length };
+  return { output, cuts:keep.length };
 }
 async function analyzePauses() {
   const bin=readiness().ffmpeg;
@@ -933,7 +940,7 @@ const server=http.createServer(async (req,res) => {
     }
     if (req.method==='POST' && url.pathname==='/api/shorts/render') { const body=await jsonBody(req); return respond(res,202,await renderShort(String(body.id||''))); }
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
-    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8); return respond(res,202,result); }
+    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null); return respond(res,202,result); }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);
   } catch(e) { return error(res,e); }

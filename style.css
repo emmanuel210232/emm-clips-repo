@@ -323,4 +323,12 @@ body{font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,san
 .tl-clipstrip{display:flex;height:100%;width:100%;background:#0b0f0c;overflow:hidden}
 .tl-clipstrip img{height:100%;flex:1 1 0;min-width:0;object-fit:cover;pointer-events:none;display:block}
 .tl-clip::after{content:'';position:absolute;inset:0;border-radius:7px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);pointer-events:none}
+.tl-clip{cursor:grab}
+.tl-clip.moving{opacity:.55;cursor:grabbing;z-index:5}
+/* Asas de recorte (trim) en los bordes del clip */
+.tl-handle{position:absolute;top:0;width:10px;height:100%;cursor:ew-resize;z-index:4;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .12s}
+.tl-handle.l{left:0}.tl-handle.r{right:0}
+.tl-handle::before{content:'';width:4px;height:40%;border-radius:3px;background:rgba(255,255,255,.85);box-shadow:0 0 0 1px rgba(0,0,0,.4)}
+.tl-clip:hover .tl-handle,.tl-clip.selected .tl-handle{opacity:.9}
+.tl-clip.selected .tl-handle::before{background:#53fc18}
 .tl-head{top:26px!important;height:88px!important}

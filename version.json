@@ -1,5 +1,5 @@
 {
-  "version": "1.3.1",
-  "notes": "Paquete de EFECTOS de entrada/salida (ya incluidos, sin descargar nada): 15 efectos — fundido negro/blanco, disolver, deslizar (4 lados), barrido, persiana, círculo, pixeles, zoom, radial, cubrir, desenfoque. Elígelos en el panel de efectos del Paso 1.",
+  "version": "1.4.0",
+  "notes": "Editor no-lineal completo tipo CapCut: ARRASTRA un clip para moverlo/reordenar ([ y ] también), ARRASTRA sus bordes para recortarlo (trim), D divide, Supr borra (ripple), Ctrl+Z deshace. Al exportar queda justo lo que armaste, en ese orden y con esos recortes. Más el paquete de 15 efectos de entrada/salida.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

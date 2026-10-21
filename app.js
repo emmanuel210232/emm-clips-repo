@@ -167,9 +167,9 @@ function updateCutButtons(){
   const hasClip=selectedClipIdx>=0&&clips&&selectedClipIdx<clips.length&&clips.length>1;
   const del=$('tlDelSel');if(del)del.disabled=!hasClip;
   const un=$('tlUndo');if(un)un.disabled=!clipUndo.length;
-  const n=(state?.manualCuts||[]).length;
-  const info=$('tlCutInfo');if(info){const c=clips&&clips[selectedClipIdx];info.textContent=(hasClip&&c)?('Clip '+(selectedClipIdx+1)+'/'+clips.length+' · '+fmt(c.end-c.start)):(n?(n+' tramo'+(n>1?'s':'')+' recortado'+(n>1?'s':'')):'');}
-  const go=$('tlGoCut');if(go)go.hidden=!n;
+  const edited=clipsEdited();
+  const info=$('tlCutInfo');if(info){const c=clips&&clips[selectedClipIdx];info.textContent=(hasClip&&c)?('Clip '+(selectedClipIdx+1)+'/'+(clips.length)+' · '+fmt(c.end-c.start)):(edited?('Editado · '+(clips.length)+' clip'+(clips.length>1?'s':'')+' · '+fmt(totalOut())):'');}
+  const go=$('tlGoCut');if(go)go.hidden=!edited;
 }
 function drawSelection(){const inner=tlInner();if(!inner)return;inner.querySelectorAll('.tl-clip').forEach(b=>b.classList.toggle('selected',+b.dataset.i===selectedClipIdx));updateCutButtons();}
 function refreshOverlays(){drawSelection();}
@@ -214,6 +214,8 @@ function buildTimeline(){
     block.style.left=L+'px';block.style.width=W+'px';block.dataset.i=i;
     block.title='Clip '+(i+1)+' · '+fmt(c.end-c.start)+' · pica para seleccionar · Supr para borrar';
     if(N){const row=document.createElement('div');row.className='tl-clipstrip';for(let k=1;k<=N;k++){const tk=(k-0.5)*interval;if(tk>=c.start&&tk<c.end){const img=document.createElement('img');img.loading='lazy';img.draggable=false;img.src='/api/strip?i='+k;row.append(img);}}block.append(row);}
+    const hl=document.createElement('div');hl.className='tl-handle l';block.append(hl);
+    const hr=document.createElement('div');hr.className='tl-handle r';block.append(hr);
     inner.append(block);
   });
   const head=document.createElement('div');head.className='tl-head';head.id='tlHead';inner.append(head);
@@ -353,16 +355,40 @@ $('tlBack1s').onclick=()=>frameStep(-1);
 $('tlFwd1s').onclick=()=>frameStep(1);
 $('tlPlay').onclick=()=>{const v=$('video');if(!v)return;v.paused?v.play().catch(()=>{}):v.pause();};
 $('tlLoadStrip').onclick=safe(async()=>{if(!state.project)throw Error('Abre un video primero.');await api('/api/filmstrip',{});notice('Generando miniaturas y onda de audio… (puedes cancelar arriba)');});
+// Interacciones de clips: arrastrar el cuerpo = MOVER/reordenar · arrastrar el borde = RECORTAR (trim) · clic = seleccionar+ir · regla = scrub.
+let dragMode=null, trimState=null, moveState=null;
+function edgeHit(block,clientX){const r=block.getBoundingClientRect();if(clientX-r.left<=9)return 'L';if(r.right-clientX<=9)return 'R';return null;}
+function doTrim(clientX){const t=trimState;if(!t)return;const c=clips[t.idx];if(!c)return;const dSrc=(clientX-t.startX)/(t.pxStart||1)*(t.totStart||0);
+  if(t.side==='R')c.end=Math.max(c.start+0.3,Math.min(tlDuration(),t.startVal+dSrc));
+  else c.start=Math.max(0,Math.min(c.end-0.3,t.startVal+dSrc));
+  const now=performance.now();if(now-(t.last||0)>70){t.last=now;buildTimeline();}}
+function commitTrim(){const c=clips[trimState.idx];saveClips();syncRemoved();buildTimeline();if(c)notice('✂️ Clip recortado a '+fmt(c.end-c.start)+'.');}
+function moveClipTo(fromIdx,targetOut){const b=clipOutBounds();let ins=b.findIndex(x=>targetOut<(x.outStart+x.outEnd)/2);if(ins<0)ins=clips.length;
+  pushUndo();const[clip]=clips.splice(fromIdx,1);if(ins>fromIdx)ins--;ins=Math.max(0,Math.min(clips.length,ins));clips.splice(ins,0,clip);
+  saveClips();selectedClipIdx=ins;syncRemoved();buildTimeline();notice('↔ Clip movido al lugar '+(ins+1)+'.');}
 (function(){const bar=$('timeline');if(!bar)return;
   bar.addEventListener('mousedown',e=>{
-    if(e.target.closest('.tl-tick'))return;
-    // Si picas un clip, lo selecciona; además mueve la línea del tiempo a ese punto.
+    if(e.target.closest('.tl-tick')||e.target.closest('.tl-cutx'))return;
     const block=e.target.closest('.tl-clip');
-    if(block){ selectedClipIdx=+block.dataset.i; }
-    tlDrag=true; tlSeekFromX(e.clientX); drawSelection(); e.preventDefault();
+    if(block&&clips&&clips.length){
+      const idx=+block.dataset.i; selectedClipIdx=idx; drawSelection();
+      const edge=edgeHit(block,e.clientX);
+      if(edge){ dragMode='trim'; trimState={idx,side:edge,startX:e.clientX,startVal:edge==='L'?clips[idx].start:clips[idx].end,pxStart:tlInner().offsetWidth,totStart:totalOut(),last:0}; e.preventDefault(); return; }
+      dragMode='pending'; moveState={idx,startX:e.clientX,moved:false}; e.preventDefault(); return;
+    }
+    dragMode='scrub'; tlDrag=true; tlSeekFromX(e.clientX); e.preventDefault();
   });
-  window.addEventListener('mousemove',e=>{ if(tlDrag)tlSeekFromX(e.clientX); });
-  window.addEventListener('mouseup',()=>{ tlDrag=false; });
+  window.addEventListener('mousemove',e=>{
+    if(dragMode==='scrub'){ tlSeekFromX(e.clientX); return; }
+    if(dragMode==='trim'){ doTrim(e.clientX); return; }
+    if(dragMode==='pending'&&moveState){ if(Math.abs(e.clientX-moveState.startX)>8){dragMode='move';moveState.moved=true;const bl=tlInner()&&tlInner().querySelector('.tl-clip[data-i="'+moveState.idx+'"]');if(bl)bl.classList.add('moving');} }
+  });
+  window.addEventListener('mouseup',e=>{
+    if(dragMode==='trim'){ commitTrim(); }
+    else if(dragMode==='move'&&moveState){ moveClipTo(moveState.idx,tlOutFromX(e.clientX)); }
+    else if(dragMode==='pending'&&moveState){ tlSeekFromX(moveState.startX); }
+    dragMode=null; trimState=null; moveState=null; tlDrag=false;
+  });
 })();
 $('video').addEventListener('timeupdate',()=>{editedPlaybackTick();positionHead();updateTlTime();});
 // Reconstruye la timeline cuando cambia su ancho (fit-to-width): al mostrarse o al redimensionar la ventana.
@@ -381,6 +407,7 @@ window.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if(k==='d'){e.preventDefault();splitAtPlayhead();return;}
   if((e.ctrlKey||e.metaKey)&&k==='z'){e.preventDefault();undoClip();return;}
+  if((e.key==='['||e.key===']')&&clips&&selectedClipIdx>=0){e.preventDefault();const to=selectedClipIdx+(e.key==='['?-1:1);if(to>=0&&to<clips.length){pushUndo();const[c]=clips.splice(selectedClipIdx,1);clips.splice(to,0,c);saveClips();selectedClipIdx=to;syncRemoved();buildTimeline();notice('↔ Clip movido al lugar '+(to+1)+'.');}return;}
   if(e.key==='Delete'||e.key==='Backspace'){
     e.preventDefault();
     deleteSelectedClip();
@@ -410,7 +437,17 @@ $('saveTerms').onclick=safe(async()=>{await api('/api/dictionary',{entries:state
 $('saveConfig').onclick=safe(async()=>{await api('/api/config',{ffmpeg:$('ffmpegPath').value,ffprobe:$('ffprobePath').value,whisper:$('whisperPath').value,model:$('modelPath').value,brandHandle:$('brandHandle').value,brandMark:$('brandMark').value});notice('Configuración guardada.');});
 $('selectAll').onclick=()=>{selected=new Set(state.matches.map(m=>m.id));persistSelection();render();};
 $('selectNone').onclick=()=>{selected.clear();persistSelection();render();};
-$('export').onclick=safe(async()=>{await selectionSave;const mode=(document.querySelector('input[name="censorMode"]:checked')||{}).value==='cut'?'cut':'mute';const ids=[...selected];const pauseIds=[...selectedPauses];if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas o agrega un corte manual.');const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});notice(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`);});
+function clipsEdited(){ensureClips();if(!clips||!clips.length)return false;const dur=tlDuration();if(clips.length>1)return true;const c=clips[0];return c.start>0.15||c.end<dur-0.15;}
+$('export').onclick=safe(async()=>{await selectionSave;
+  const edited=clipsEdited();
+  let mode=(document.querySelector('input[name="censorMode"]:checked')||{}).value==='cut'?'cut':'mute';
+  const ids=[...selected];const pauseIds=[...selectedPauses];
+  let segments=null;
+  if(edited){ mode='cut'; segments=clips.map(c=>({start:+c.start.toFixed(3),end:+c.end.toFixed(3)})); }
+  else { if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas, o edita clips en la línea del tiempo (Paso 1).'); }
+  const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};
+  const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});
+  notice(edited?`Exportando tu edición (${segments.length} clip${segments.length>1?'s':''}). El archivo aparecerá en exports.`:(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`));});
 $('cancelJob').onclick=safe(async()=>{await api('/api/job/cancel',{});notice('Cancelando el proceso…');});
 $('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};
 // Asistente por pasos (wizard)
