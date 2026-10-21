@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
-  "notes": "Editor de línea de tiempo estilo CapCut: pulsa D para DIVIDIR el clip donde está la línea, pica un clip para seleccionarlo y Supr para BORRARLO (el ↺ lo restaura). Ahora todo el video cabe de un vistazo (sin andar moviendo la pantalla), la barra es más alta y con más espacio, y el video se ve más grande.",
+  "version": "1.3.0",
+  "notes": "Edición de verdad tipo CapCut: los clips ahora son BLOQUES separados con su miniatura y espacio arriba y abajo. Divide con D, pica un clip para seleccionarlo y Supr para borrarlo — el hueco se cierra solo (ripple, pum). ↶ Deshacer (Ctrl+Z). Al reproducir se saltan solos los pedazos borrados, y todo el video editado cabe de un vistazo.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

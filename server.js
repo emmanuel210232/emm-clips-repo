@@ -89,7 +89,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -819,6 +819,17 @@ const server=http.createServer(async (req,res) => {
       const body=await jsonBody(req),id=String(body.id||'');
       if (!manualCuts.some(c=>c.id===id)) throw Error('No encuentro ese corte manual.');
       manualCuts=manualCuts.filter(c=>c.id!==id);writeJson(files.manualCuts,manualCuts);return respond(res,200,state());
+    }
+    // Reemplaza TODOS los cortes manuales de un jalón (lo usa el editor de clips tipo CapCut al borrar/restaurar con ripple).
+    if (req.method==='POST' && url.pathname==='/api/cuts/manual/set') {
+      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      if (!project?.videoPath) throw Error('Abre un video primero.');
+      const body=await jsonBody(req), arr=Array.isArray(body.cuts)?body.cuts:[];
+      if (arr.length>2000) throw Error('Demasiados cortes.');
+      const dur=await durationOf(project.videoPath);
+      const clean=[];
+      for(const c of arr){ const s=Number(c.start),e=Number(c.end); if(Number.isFinite(s)&&Number.isFinite(e)&&e-s>=0.04&&s>=0&&e<=dur+0.5) clean.push({id:'manual_'+crypto.randomUUID(),start:+s.toFixed(3),end:+Math.min(e,dur).toFixed(3),label:String(c.label||'Clip borrado').slice(0,80)}); }
+      manualCuts=clean; writeJson(files.manualCuts,manualCuts); return respond(res,200,state());
     }
     if (req.method==='POST' && url.pathname==='/api/cuts/selection') {
       const body=await jsonBody(req);
