@@ -62,17 +62,19 @@
           </div>
           <div class="tl-legend2"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías <i class="lg-cut"></i>se quita · arrastra para buscar</div>
           <div class="tl-cutbar">
-            <button id="tlCutMode" class="tl-btn" type="button" title="Actívalo y arrastra sobre la barra para seleccionar un tramo">✂️ Modo corte</button>
-            <button id="tlMark" class="tl-btn" type="button" title="Marca inicio/fin del tramo en la posición actual del reproductor">⬇️ Marcar aquí (S)</button>
-            <button id="tlDelSel" class="tl-btn danger" type="button" title="Quita el tramo seleccionado del video (tecla Supr)" disabled>🗑️ Quitar tramo</button>
-            <button id="tlClearSel" class="tl-btn" type="button" title="Borra la selección actual">✖</button>
+            <button id="tlSplit" class="tl-btn primaryMini" type="button" title="Divide el clip en la posición de la línea del tiempo (tecla D)">✂️ Dividir (D)</button>
+            <button id="tlDelSel" class="tl-btn danger" type="button" title="Borra el clip o tramo seleccionado (tecla Supr)" disabled>🗑️ Borrar (Supr)</button>
+            <span style="width:10px"></span>
+            <button id="tlCutMode" class="tl-btn" type="button" title="Modo avanzado: arrastra sobre la barra para seleccionar un tramo libre">▭ Selección libre</button>
+            <button id="tlMark" class="tl-btn" type="button" title="Marca inicio/fin del tramo en la posición actual del reproductor" hidden>⬇️ Marcar aquí (S)</button>
+            <button id="tlClearSel" class="tl-btn" type="button" title="Quita la selección actual">✖</button>
             <span style="flex:1"></span>
-            <label class="tl-keylbl">Tecla de corte <select id="tlKeyMark" class="tl-key" title="Tecla del teclado para marcar el corte"><option value="s">S</option><option value="c">C</option><option value="b">B</option><option value="m">M</option><option value="x">X</option></select></label>
             <span id="tlCutInfo" class="tl-cutinfo"></span>
-            <button id="tlGoCut" class="tl-btn primaryMini" type="button" title="Ir a Exportar quitando los tramos marcados" hidden>Exportar recortado →</button>
+            <button id="tlGoCut" class="tl-btn primaryMini" type="button" title="Ir a Exportar quitando los clips borrados" hidden>Exportar recortado →</button>
+            <select id="tlKeyMark" class="tl-key" title="Tecla para marcar tramo libre" hidden><option value="s">S</option><option value="c">C</option><option value="b">B</option><option value="m">M</option><option value="x">X</option></select>
           </div>
           <div id="timeline" class="timelineBar"></div>
-          <p class="hint" style="margin:8px 2px 0">✂️ <b>Para cortar:</b> activa <b>Modo corte</b> y arrastra sobre la barra (o reproduce y pulsa tu <b>tecla de corte</b> para marcar inicio y fin). Luego <b>Quitar tramo</b> lo pinta de rojo. Al <b>Exportar recortado</b> esos tramos desaparecen y el video se une solo.</p>
+          <p class="hint" style="margin:8px 2px 0">🎬 <b>Editar como CapCut:</b> mueve la línea del tiempo y pulsa <b>D</b> para <b>dividir</b> el clip. Pica un clip para seleccionarlo y <b>Supr</b> para <b>borrarlo</b> (se pinta de rojo). Al <b>Exportar recortado</b> los clips borrados desaparecen y el video se une solo. El <b>↺</b> restaura un clip.</p>
         </div>
         </div><!-- /editorMain -->
         <aside class="editorSide">
