@@ -110,8 +110,8 @@ details.card>summary.cardSummary{list-style:revert}
 .tl-legend2 .lg-gros{background:#d12;width:3px;height:13px}
 .timelineBar{height:82px}
 .timelineInner{user-select:none}
-.tl-ruler{position:absolute;top:0;left:0;height:20px;width:100%;border-bottom:1px solid #d9e4d6;pointer-events:none}
-.tl-tick{position:absolute;top:0;height:20px;border-left:1px solid #c3d4bf}
+.tl-ruler{position:absolute;top:0;left:0;height:52px;width:100%;border-bottom:1px solid #d9e4d6;pointer-events:auto;cursor:ew-resize}
+.tl-tick{position:absolute;top:0;height:20px;border-left:1px solid #c3d4bf;pointer-events:none}
 .tl-tick span{position:absolute;left:3px;top:3px;font-size:10px;color:#6a8a6f;font-variant-numeric:tabular-nums;white-space:nowrap}
 .timelineInner .tl-pause{top:26px;height:48px}
 .timelineInner .tl-gros{top:26px;height:48px}
@@ -307,8 +307,8 @@ body.bestof-mode #wizard, body.bestof-mode section.step, body.bestof-mode #confi
    ============================================================ */
 .timelineBar{height:138px!important;background:#0e1114;border:1px solid #2a2f36;border-radius:10px;padding:0}
 :root[data-theme="dark"] .timelineBar{background:#0e1114;border-color:#2a2f36}
-.tl-ruler{height:22px!important;border-bottom:1px solid #2a2f36}
-.tl-tick{height:22px!important;border-left:1px solid #39424b}
+.tl-ruler{height:52px!important;border-bottom:1px solid #2a2f36;pointer-events:auto;cursor:ew-resize}
+.tl-tick{height:22px!important;border-left:1px solid #39424b;pointer-events:none}
 .tl-tick span{color:#8793a6!important}
 .tl-strip{top:30px!important;height:76px!important}
 .tl-strip img{height:76px!important}

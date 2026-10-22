@@ -1,5 +1,5 @@
 {
-  "version": "1.16.1",
-  "notes": "Render por GPU (NVENC) con auto-respaldo: intenta usar la tarjeta gráfica y, si el driver no lo soporta todavía, cae solo a CPU rápido sin fallar. Actualiza tu driver NVIDIA para que el render por GPU se active solo.",
+  "version": "1.16.2",
+  "notes": "ARREGLADO: ahora SÍ puedes mover la barra de tiempo. La regla de arriba (más alta ahora) recibe el arrastre para moverte por el video; antes el mouse la atravesaba y no funcionaba. Arrastra en la franja de arriba = mover la barra; arrastra un clip = moverlo de lugar.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
