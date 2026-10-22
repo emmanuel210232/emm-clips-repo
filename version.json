@@ -1,5 +1,5 @@
 {
-  "version": "1.14.0",
-  "notes": "Arreglo importante del editor: picar un clip ahora lo SELECCIONA (ya no mueve la barra), arrastrarlo lo MUEVE/reordena, y el scrub quedó en la regla de arriba. Ctrl+clic selecciona varios clips para Unir o borrar. Unir vuelve a funcionar.",
+  "version": "1.15.0",
+  "notes": "Scrub fluido: al arrastrar la regla ahora se ve al instante la miniatura del punto (ya no espera el salto lento del video); al soltar queda el frame real nítido. Incluye el arreglo del editor (clic selecciona, arrastrar mueve, Ctrl+clic para Unir).",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

@@ -298,7 +298,15 @@ function clearMarquee(){const inner=tlInner();if(inner){const m=inner.querySelec
 function refreshOverlays(){drawSelection();}
 function tlDuration(){const v=$('video');if(v&&v.duration&&isFinite(v.duration))return v.duration;const t=state?.transcript;return t&&t.length?Number(t[t.length-1].end)||0:0;}
 function positionHead(){const head=$('tlHead');if(!head)return;const v=$('video');const src=(v?.currentTime||0)+(playerSourceOffset||0);let o=sourceToOut(src);if(o==null)o=sourceToOut(nearestKeptSource(src));if(o==null)o=0;head.style.left=tlXofOut(o)+'px';}
-function tlSeekFromX(clientX){const inner=tlInner();if(!inner)return;const o=tlOutFromX(clientX);const src=outToSource(o);const v=$('video');if(v){try{if(tlDrag){v.pause();if(v.fastSeek){v.fastSeek(src);}else{v.currentTime=src;}}else{v.currentTime=src;}}catch{}}positionHead();updateTlTime();}
+// Scrub FLUIDO: mientras arrastras, muestra la miniatura del filmstrip más cercana sobre el preview
+// (instantáneo, sin esperar el seek lento del <video>). Al soltar se hace un seek preciso y se ve el frame real.
+function nearestStripIndex(src){const N=state.filmstrip?state.filmstrip.count:0;if(!N)return 0;const dur=tlDuration();if(!dur)return 0;const interval=dur/N;let k=Math.round(src/interval+0.5);return Math.max(1,Math.min(N,k));}
+function showScrubThumb(src){const N=state.filmstrip?state.filmstrip.count:0;const img=$('scrubThumb');if(!img||!N)return;const k=nearestStripIndex(src);if(img.dataset.k!==String(k)){img.dataset.k=String(k);img.src='/api/strip?i='+k;}img.classList.add('show');}
+function hideScrubThumb(){const img=$('scrubThumb');if(img)img.classList.remove('show');}
+function scrubEndAt(clientX){const v=$('video');if(!v){hideScrubThumb();return;}let src;try{src=outToSource(tlOutFromX(clientX));}catch{src=v.currentTime;}
+  const done=()=>{hideScrubThumb();v.removeEventListener('seeked',done);};v.addEventListener('seeked',done);setTimeout(done,500);
+  try{v.currentTime=src;}catch{hideScrubThumb();}positionHead();updateTlTime();}
+function tlSeekFromX(clientX){const inner=tlInner();if(!inner)return;const o=tlOutFromX(clientX);const src=outToSource(o);const v=$('video');if(v){try{if(tlDrag){v.pause();showScrubThumb(src);if(v.fastSeek){v.fastSeek(src);}else{v.currentTime=src;}}else{v.currentTime=src;}}catch{}}positionHead();updateTlTime();}
 function updateTlTime(){const v=$('video'),el=$('tlTime');if(!el)return;const src=(v?.currentTime||0)+(playerSourceOffset||0);let o=sourceToOut(src);if(o==null)o=0;el.textContent=fmt(o)+' / '+fmt(totalOut());}
 // Reproducción EDITADA: al reproducir, salta automáticamente los huecos borrados.
 let editPlayGuard=0;
@@ -530,6 +538,7 @@ function moveClipTo(fromIdx,targetOut){const b=clipOutBounds();let ins=b.findInd
   window.addEventListener('mouseup',e=>{
     if(dragMode==='trim'){ commitTrim(); }
     else if(dragMode==='move'&&moveState){ moveClipTo(moveState.idx,tlOutFromX(e.clientX)); }
+    else if(dragMode==='scrub'){ scrubEndAt(e.clientX); }   // seek preciso + ocultar la miniatura
     // 'pending' (clic en clip sin arrastrar) = solo seleccionar (ya hecho en mousedown); NO mueve la barra
     else if(dragMode==='marquee'&&marquee){ clearMarquee(); selectClipsInRange(marquee.x0,marquee.x1); }
     else if(dragMode==='marqueePending'&&marquee){ multiSel.clear(); selectedClipIdx=-1; drawSelection(); }
