@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -403,12 +403,12 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   const keptTotal = keep.reduce((a,k)=>a+(k.end-k.start),0);
   const filter = [];
   let vLabel, aLabel;
-  // Zoom (punch-in) por segmento marcado con .zoom
-  const hasZoom = false; // zoom en export temporalmente desactivado (zoompan se cuelga; pendiente método confiable)
+  // Zoom (punch-in) por segmento marcado con .zoom. Zoom ESTÁTICO (crop+scale): fiable, instantáneo
+  // y sin colgarse (el zoompan de este ffmpeg se desboca generando miles de frames). Recorta ~1.12x al centro.
+  const hasZoom = keep.some(k=>k.zoom);
   const {width:ZW,height:ZH} = hasZoom ? videoDimensions(project.videoPath) : {width:0,height:0};
-  const zfps = q.fps || videoFps(project.videoPath);
-  const zoomOf = (k)=> k.zoom ? `,scale=${ZW}:${ZH},zoompan=z='min(1.0+0.004*on,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:fps=${zfps}:s=${ZW}x${ZH},setsar=1` : '';
-  const normOf = (k)=> hasZoom ? (k.zoom ? zoomOf(k) : `,scale=${ZW}:${ZH},fps=${zfps},setsar=1,format=yuv420p`) : '';
+  const zoomOf = (k)=> (k.zoom && ZW && ZH) ? `,crop=iw/1.12:ih/1.12,scale=${ZW}:${ZH},setsar=1` : '';
+  const normOf = (k)=> zoomOf(k); // los pedazos sin zoom quedan en su tamaño nativo (ya coinciden para el concat)
   const canSmooth = smooth && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
   if (canSmooth) {
     // Crossfade corto entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
