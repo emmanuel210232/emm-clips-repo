@@ -152,6 +152,27 @@ function toggleZoom(){
   pushUndo(); clips[selectedClipIdx].zoom=!clips[selectedClipIdx].zoom; saveClips(); buildTimeline();
   notice(clips[selectedClipIdx].zoom?'🔍 Zoom (acercamiento) puesto en este clip. Se aplica al exportar.':'Zoom quitado de este clip.');
 }
+// Parte un clip en pedazos según las ventanas de zoom (en tiempo de la fuente); los pedazos dentro de una ventana quedan con zoom.
+function splitClipByWindows(clip, windows){
+  const pts=[clip.start,clip.end];
+  for(const w of windows){ if(w.end>clip.start+0.05 && w.start<clip.end-0.05){ pts.push(Math.max(clip.start,w.start),Math.min(clip.end,w.end)); } }
+  const uniq=[...new Set(pts.map(p=>+p.toFixed(3)))].sort((a,b)=>a-b);
+  const out=[];
+  for(let i=0;i<uniq.length-1;i++){ const a=uniq[i],b=uniq[i+1]; if(b-a<0.12)continue; const mid=(a+b)/2; const z=windows.some(w=>mid>=w.start&&mid<=w.end); out.push({start:+a.toFixed(3),end:+b.toFixed(3),zoom:z||!!clip.zoom}); }
+  return out.length?out:[{...clip}];
+}
+async function suggestZooms(){
+  ensureClips();
+  notice('✨ Escuchando el audio para sugerir acercamientos…');
+  const r=await api('/api/suggest-zooms',{});
+  const windows=(r&&r.windows)||[];
+  if(!windows.length){ return notice('No encontré momentos claros para acercar. Puedes poner zoom a mano con 🔍.',true); }
+  pushUndo();
+  const next=[]; for(const c of clips){ for(const sc of splitClipByWindows(c,windows)) next.push(sc); }
+  clips=next; selectedClipIdx=-1; multiSel.clear(); saveClips(); syncRemoved(); buildTimeline();
+  const z=clips.filter(c=>c.zoom).length;
+  notice('✨ Puse '+z+' acercamiento(s) en los momentos más enfáticos. Revisa y quita los que no quieras con 🔍 (o ↶ Deshacer).');
+}
 function selectClipsInRange(x0,x1){
   const a=Math.min(x0,x1), b=Math.max(x0,x1);
   const oa=tlOutFromX(a), ob=tlOutFromX(b); const bounds=clipOutBounds();
@@ -496,6 +517,7 @@ $('tlSplit').onclick=()=>splitAtPlayhead();
 $('tlDelSel').onclick=()=>deleteSelectedClip();
 $('tlMerge').onclick=()=>mergeClips();
 $('tlZoomClip').onclick=()=>toggleZoom();
+$('tlZoomAuto').onclick=safe(suggestZooms);
 $('tlUndo').onclick=()=>undoClip();
 $('tlClearSel').onclick=()=>{selectedClipIdx=-1;drawSelection();notice('Clip deseleccionado.');};
 $('tlGoCut').onclick=()=>{goStep(4);const c=document.querySelector('input[name="censorMode"][value="cut"]');if(c){c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));}notice('Modo “Cortar” elegido: al Exportar MP4 se quitan los clips borrados y el video se une solo.');};

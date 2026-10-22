@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -487,6 +487,37 @@ async function analyzePauses() {
     }catch(e){job={status: job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0};}
   })();
   return {started:true};
+}
+// Sugiere ZOOMS automáticos: analiza la energía del audio por ventanas de 1s y marca los
+// momentos más enfáticos (picos de volumen) para acercar ahí. Devuelve ventanas en tiempo de la fuente.
+async function suggestZooms(){
+  const bin=readiness().ffmpeg;
+  if(!project?.videoPath||!bin) throw Error('Abre un video primero.');
+  if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  const dur=await durationOf(project.videoPath).catch(()=>0);
+  let out='';
+  await run(bin,['-hide_banner','-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],s=>{out=(out+s).slice(-3000000);});
+  const pts=[]; let curT=null;
+  for(const line of out.split(/\r?\n/)){
+    const mt=line.match(/pts_time:([\d.]+)/); if(mt){curT=Number(mt[1]);continue;}
+    const mr=line.match(/RMS_level=(-?[\d.]+|-?inf|nan)/i);
+    if(mr&&curT!=null){ let db=Number(mr[1]); if(!Number.isFinite(db)) db=-120; pts.push({t:curT,db}); curT=null; }
+  }
+  if(pts.length<4) return {peaks:[],windows:[]};
+  const dbs=pts.map(p=>p.db); const mean=dbs.reduce((a,b)=>a+b,0)/dbs.length;
+  const sd=Math.sqrt(dbs.reduce((a,b)=>a+(b-mean)*(b-mean),0)/dbs.length)||1;
+  const thr=mean+0.6*sd; // picos claramente por encima del promedio
+  const cand=[];
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i], prev=(pts[i-1]&&pts[i-1].db)??-999, next=(pts[i+1]&&pts[i+1].db)??-999;
+    if(p.db>=thr && p.db>=prev && p.db>=next) cand.push(p);
+  }
+  cand.sort((a,b)=>b.db-a.db);
+  const chosen=[]; const minGap=6; const maxN=Math.max(3,Math.min(10,Math.round(dur/45)||3));
+  for(const c of cand){ if(chosen.every(x=>Math.abs(x.t-c.t)>=minGap)){ chosen.push(c); if(chosen.length>=maxN) break; } }
+  chosen.sort((a,b)=>a.t-b.t);
+  const windows=chosen.map(c=>({start:Math.max(0,+(c.t-0.6).toFixed(2)),end:Math.min(dur,+(c.t+1.6).toFixed(2))})).filter(w=>w.end-w.start>0.5);
+  return {peaks:chosen.map(c=>+c.t.toFixed(2)),windows};
 }
 // Detecta silencios y calcula los PEDAZOS A CONSERVAR (como "quitar silencios" de CapCut).
 function detectSilences(opts){
@@ -1147,6 +1178,7 @@ const server=http.createServer(async (req,res) => {
     }
     if (req.method==='POST' && url.pathname==='/api/shorts/render') { const body=await jsonBody(req); return respond(res,202,await renderShort(String(body.id||''))); }
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
+    if (req.method==='POST' && url.pathname==='/api/suggest-zooms') return respond(res,200,await suggestZooms());
     if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth); return respond(res,202,result); }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);
