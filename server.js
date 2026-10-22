@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -698,7 +698,7 @@ async function buildPreviewFile(bin){
 // Genera miniaturas (filmstrip) + onda de audio para la línea de tiempo, leyendo el ORIGINAL.
 async function buildFilmstripFiles(bin){
   const dur=await durationOf(project.videoPath);
-  const n=Math.max(24,Math.min(120,Math.round(dur/15)));
+  const n=Math.max(20,Math.min(70,Math.round(dur/26))); // menos miniaturas = la línea de tiempo aparece más rápido
   const interval=dur/n;
   const stripDir=path.join(DATA,'strip');
   await fsp.rm(stripDir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(stripDir,{recursive:true});

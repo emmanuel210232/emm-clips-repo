@@ -467,7 +467,8 @@ function moveClipTo(fromIdx,targetOut){const b=clipOutBounds();let ins=b.findInd
       const idx=+block.dataset.i; if(!multiSel.has(idx))multiSel.clear(); selectedClipIdx=idx; drawSelection();
       const edge=edgeHit(block,e.clientX);
       if(edge){ dragMode='trim'; trimState={idx,side:edge,startX:e.clientX,startVal:edge==='L'?clips[idx].start:clips[idx].end,pxStart:tlInner().offsetWidth,totStart:totalOut(),last:0}; e.preventDefault(); return; }
-      dragMode='pending'; moveState={idx,startX:e.clientX,moved:false}; e.preventDefault(); return;
+      // cuerpo del clip → seleccionar + arrastrar para MOVER LA LÍNEA del tiempo (scrub). Reordenar = teclas [ y ].
+      dragMode='scrub'; tlDrag=true; tlSeekFromX(e.clientX); e.preventDefault(); return;
     }
     // espacio vacío (arriba/abajo de los clips) → marquee de selección
     dragMode='marqueePending'; marquee={x0:e.clientX,x1:e.clientX,moved:false}; e.preventDefault();
