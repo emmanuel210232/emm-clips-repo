@@ -534,7 +534,7 @@ $('scanRun').onclick=safe(async()=>{
   if(!state.project)throw Error('Abre un video primero.');
   const cats=[];if($('scBeso').checked)cats.push('beso');if($('scDesnudez').checked)cats.push('desnudez');if($('scPelea').checked)cats.push('pelea');if($('scDrogas').checked)cats.push('drogas');
   if(!cats.length)throw Error('Marca al menos una cosa que quieras que la IA busque.');
-  await api('/api/scan-sensitive',{cats,sensitivity:$('scSens').value,step:Number($('scStep').value)||4,max:400});
+  await api('/api/scan-sensitive',{cats,sensitivity:$('scSens').value,step:Number($('scStep').value)||4,max:400,mode:($('scMode')||{}).value||'rapido'});
   notice('🛡️ Analizando el video con IA (necesita Ollama abierto). Puedes cancelar arriba. Verás las marcas aquí al terminar.');
 });
 // Si la pestaña se oculta a media previa, limpia el overlay (las animaciones se pausan al ocultar).

@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.10.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -799,6 +799,16 @@ async function classifyFrame(fp){
     return {beso:!!o.beso,desnudez:!!o.desnudez,pelea:!!o.pelea,drogas:!!o.drogas,riesgo:String(o.riesgo||'ninguno'),nota:String(o.nota||'').slice(0,80)};
   }catch(e){ return null; } // un frame que falla no tumba el escaneo
 }
+async function ollamaHasModel(prefix){ try{ const r=await fetch(OLLAMA+'/api/tags',{signal:AbortSignal.timeout(4000)}); if(!r.ok)return false; const j=await r.json(); return (j.models||[]).some(m=>String(m.name||'').startsWith(prefix)); }catch{return false;} }
+// Etapa 1 RÁPIDA: moondream (modelo chico) dice si el frame es sospechoso (sí/no). Lo sospechoso lo confirma gemma3.
+async function moondreamQuick(fp){
+  let b64; try{ b64=await fsp.readFile(fp,{encoding:'base64'}); }catch{ return true; }
+  try{
+    const r=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(40000),headers:{'content-type':'application/json'},
+      body:JSON.stringify({model:'moondream',prompt:'Does this image contain nudity, a sexual act, people kissing, a real physical fight with blows or blood, or visible drug use? Answer only YES or NO.',images:[b64],stream:false,options:{temperature:0,num_predict:8}})});
+    if(!r.ok) return true; const j=await r.json(); return /\byes\b|\bs[ií]\b/i.test(String(j.response||''));
+  }catch{ return true; } // ante la duda, que lo revise gemma3
+}
 const RISK_ORDER={ninguno:0,bajo:1,medio:2,alto:3};
 function scanSensitive(opts){
   const bin=readiness().ffmpeg;
@@ -825,13 +835,21 @@ function scanSensitive(opts){
         if(fs.existsSync(fp)) frames.push({t,i,fp});
         job.message=`Sacando fotogramas… (${i+1}/${times.length})`; job.percent=Math.round((i+1)/times.length*35);
       }
-      job.message='Revisando con IA (gemma3)…';
-      const flagged=[];
+      // MODO RÁPIDO: moondream (chico) filtra primero; solo lo sospechoso lo confirma gemma3.
+      const fast = opts.mode==='rapido' && await ollamaHasModel('moondream');
+      job.message = fast ? 'Filtrando rápido (moondream)…' : 'Revisando con IA (gemma3)…';
+      const flagged=[]; let descartados=0, revisados=0;
       for(let n=0;n<frames.length;n++){
         if(job.cancelRequested) throw Error('Análisis cancelado.');
-        const f=frames[n]; const r=await classifyFrame(f.fp);
+        const f=frames[n];
+        if(fast){
+          const sus=await moondreamQuick(f.fp);
+          if(!sus){ descartados++; job.message=`Filtrando rápido (moondream)… (${n+1}/${frames.length})`; job.percent=35+Math.round((n+1)/Math.max(1,frames.length)*63); continue; }
+        }
+        revisados++;
+        const r=await classifyFrame(f.fp);
         if(r){ const hit=cats.some(c=>r[c]) && (RISK_ORDER[r.riesgo]||0)>=minRisk; if(hit){ const which=cats.filter(c=>r[c]); flagged.push({t:f.t,i:f.i,cats:which,riesgo:r.riesgo,nota:r.nota}); } }
-        job.message=`Revisando con IA… (${n+1}/${frames.length})`; job.percent=35+Math.round((n+1)/Math.max(1,frames.length)*63);
+        job.message=fast?`Confirmando con gemma3… (${n+1}/${frames.length})`:`Revisando con IA… (${n+1}/${frames.length})`; job.percent=35+Math.round((n+1)/Math.max(1,frames.length)*63);
       }
       // Agrupa fotogramas marcados cercanos en TRAMOS
       const ranges=[]; const gap=step*2.2;
@@ -841,7 +859,7 @@ function scanSensitive(opts){
         else ranges.push({start:Math.max(0,fl.t-1),end:Math.min(dur,fl.t+step),endRaw:fl.t,cats:[...fl.cats],riesgo:fl.riesgo,nota:fl.nota,thumb:fl.i,hits:1});
       }
       ranges.forEach(r=>{delete r.endRaw;r.start=+r.start.toFixed(2);r.end=+r.end.toFixed(2);});
-      sensitiveScan={ranges,scannedAt:Date.now(),frames:frames.length,cats,sensitivity:sens};
+      sensitiveScan={ranges,scannedAt:Date.now(),frames:frames.length,cats,sensitivity:sens,mode:fast?'rapido':'preciso',revisados:fast?revisados:frames.length};
       writeJson(files.sensitive,sensitiveScan);
       job={status:'done',message:ranges.length?`Revisión lista: ${ranges.length} momento(s) a revisar.`:'Revisión lista: no se marcó nada sospechoso.',progress:'',percent:100};
     }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }

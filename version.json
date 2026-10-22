@@ -1,5 +1,5 @@
 {
-  "version": "1.9.0",
-  "notes": "Export más rápido: el efecto de entrada/salida ahora se aplica en el MISMO paso que el corte/censura (una sola barra en vez de dos). Menos espera, misma calidad.",
+  "version": "1.10.0",
+  "notes": "Detector de contenido sensible más rápido: modo 'Rápida (2 modelos)' usa un modelo chico (moondream) para filtrar y gemma3 solo confirma lo sospechoso. Puedes elegir 'Precisa (solo gemma3)' si prefieres máxima calidad.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
