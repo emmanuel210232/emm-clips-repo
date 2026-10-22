@@ -1,5 +1,5 @@
 {
-  "version": "1.12.0",
-  "notes": "✨ Sugerir zooms: la IA escucha el audio y pone acercamientos automáticos en los momentos más enfáticos (puedes quitarlos uno por uno con 🔍 o deshacer). Botón nuevo en el editor de clips.",
+  "version": "1.13.0",
+  "notes": "🎬 Transición por tema: la IA lee la transcripción, detecta dónde cambia el tema y pone un fundido suave (dissolve) ahí. Botón nuevo en el editor; marca los clips con 🎬 y puedes deshacer los que no quieras.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

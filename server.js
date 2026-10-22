@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -391,7 +391,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   // Si el editor de clips manda "segments" (los clips en orden), se concatenan EN ESE ORDEN (soporta reordenar/trim).
   let keep;
   if (Array.isArray(segments) && segments.length) {
-    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end),zoom:!!s.zoom})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
+    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end),zoom:!!s.zoom,trans:!!s.trans})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
     if (!keep.length) throw Error('Los clips no son válidos.');
   } else {
     const chosenPauses=pauses.filter(p=>selectedPauseIds.includes(p.id));
@@ -409,9 +409,12 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   const {width:ZW,height:ZH} = hasZoom ? videoDimensions(project.videoPath) : {width:0,height:0};
   const zoomOf = (k)=> (k.zoom && ZW && ZH) ? `,crop=iw/1.12:ih/1.12,scale=${ZW}:${ZH},setsar=1` : '';
   const normOf = (k)=> zoomOf(k); // los pedazos sin zoom quedan en su tamaño nativo (ya coinciden para el concat)
-  const canSmooth = smooth && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
+  // Transición por tema: los pedazos marcados .trans llevan un fundido (dissolve) más largo en su entrada.
+  const hasTrans = keep.some(k=>k.trans);
+  const canSmooth = (smooth||hasTrans) && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
   if (canSmooth) {
-    // Crossfade corto entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
+    // Crossfade entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
+    // d por límite: 0.5s donde cambia el tema (.trans), 0.14s si se pidió suavizar, 0.05s en cortes normales (imperceptible).
     const fpsOut = q.fps || videoFps(project.videoPath);
     const Dxf=0.14;
     keep.forEach((k,i)=>{
@@ -420,7 +423,8 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     });
     let vp='[v0]', ap='[a0]', L=keep[0].end-keep[0].start;
     for(let i=1;i<keep.length;i++){
-      const d=Math.min(Dxf,(keep[i].end-keep[i].start)/2,(keep[i-1].end-keep[i-1].start)/2,L/2);
+      const want = keep[i].trans ? 0.5 : (smooth ? Dxf : 0.05);
+      const d=Math.min(want,(keep[i].end-keep[i].start)/2,(keep[i-1].end-keep[i-1].start)/2,L/2);
       filter.push(`${vp}[v${i}]xfade=transition=fade:duration=${d.toFixed(3)}:offset=${(L-d).toFixed(3)}[vx${i}]`);
       filter.push(`${ap}[a${i}]acrossfade=d=${d.toFixed(3)}[ax${i}]`);
       vp=`[vx${i}]`; ap=`[ax${i}]`; L=L+(keep[i].end-keep[i].start)-d;
@@ -518,6 +522,34 @@ async function suggestZooms(){
   chosen.sort((a,b)=>a.t-b.t);
   const windows=chosen.map(c=>({start:Math.max(0,+(c.t-0.6).toFixed(2)),end:Math.min(dur,+(c.t+1.6).toFixed(2))})).filter(w=>w.end-w.start>0.5);
   return {peaks:chosen.map(c=>+c.t.toFixed(2)),windows};
+}
+// Detecta CAMBIOS DE TEMA con la IA (texto): agrupa la transcripción en bloques y le pide a gemma3
+// los segundos donde empieza un tema nuevo → para meter una transición (fundido) ahí.
+async function detectTopics(){
+  if(!project?.videoPath) throw Error('Abre un video primero.');
+  if(!Array.isArray(transcript)||!transcript.length) throw Error('Primero transcribe el video (Paso 2).');
+  if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  const dur=await durationOf(project.videoPath).catch(()=>0);
+  const build=(sec)=>{ const out=[]; let cur=null; for(const s of transcript){ const st=Number(s.start); const tx=String(s.text||'').trim(); if(!Number.isFinite(st)||!tx)continue; if(!cur||st-cur.t>=sec){ cur={t:st,text:tx}; out.push(cur);} else cur.text+=' '+tx; } return out; };
+  let target=12, chunks=build(target);
+  while(chunks.length>120){ target+=8; chunks=build(target); }
+  if(chunks.length<3) return {boundaries:[]};
+  const fmt=(s)=>{const m=Math.floor(s/60),x=Math.round(s%60);return `${m}:${String(x).padStart(2,'0')}`;};
+  const list=chunks.map(c=>`[${fmt(c.t)}|${Math.round(c.t)}] ${c.text.replace(/\s+/g,' ').slice(0,150)}`).join('\n');
+  const prompt=`Eres un editor de video que organiza un video de ${Math.round(dur)} segundos en CAPÍTULOS.\nAbajo está la transcripción en bloques; cada bloque empieza con [m:ss|SEGUNDOS].\nMarca SOLO los pocos momentos donde CLARAMENTE empieza un tema o segmento NUEVO (otra actividad, otro lugar, otro asunto). La mayoría de los videos tienen entre 2 y 6 capítulos. NO marques cada bloque; ignora repeticiones y charla del mismo tema.\nReglas: devuelve MÁXIMO 6 tiempos; cada tiempo DEBE ser uno de los SEGUNDOS que aparecen en la lista; no inventes números; no incluyas el 0.\nResponde SOLO con el arreglo JSON, ejemplo: [120, 340, 560]. Si no hay cambios claros, responde [].\n\n${list}`;
+  let txt='';
+  try{
+    const r=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(120000),headers:{'content-type':'application/json'},body:JSON.stringify({model:SCAN_MODEL,prompt,stream:false,options:{temperature:0,num_predict:120}})});
+    if(!r.ok) throw Error('Ollama '+r.status);
+    const j=await r.json(); txt=String(j.response||'');
+  }catch(e){ throw Error('No pude usar la IA de texto (¿Ollama abierto con gemma3:4b?). '+e.message); }
+  // Parseo tolerante: intenta JSON; si viene cortado, saca los números después del primer "[".
+  let arr=[]; const m=txt.match(/\[[\s\S]*?\]/);
+  if(m){ try{ arr=JSON.parse(m[0]); }catch{} }
+  if(!arr.length){ const br=txt.indexOf('['); if(br>=0){ arr=(txt.slice(br).match(/\d+(?:\.\d+)?/g)||[]).map(Number); } }
+  const bounds=arr.map(Number).filter(n=>Number.isFinite(n)&&n>8&&n<dur-10).sort((a,b)=>a-b);
+  const out=[]; for(const b of bounds){ if(out.every(x=>Math.abs(x-b)>=25)) out.push(b); }
+  return {boundaries:out.slice(0,6).map(x=>+x.toFixed(2))};
 }
 // Detecta silencios y calcula los PEDAZOS A CONSERVAR (como "quitar silencios" de CapCut).
 function detectSilences(opts){
@@ -1179,6 +1211,7 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/shorts/render') { const body=await jsonBody(req); return respond(res,202,await renderShort(String(body.id||''))); }
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
     if (req.method==='POST' && url.pathname==='/api/suggest-zooms') return respond(res,200,await suggestZooms());
+    if (req.method==='POST' && url.pathname==='/api/topics') return respond(res,200,await detectTopics());
     if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth); return respond(res,202,result); }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);
