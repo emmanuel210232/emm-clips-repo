@@ -1,5 +1,5 @@
 {
-  "version": "1.8.1",
-  "notes": "Arreglo: ya puedes arrastrar sobre la barra de tiempo para moverte por el video (scrub) — antes la selección lo bloqueaba. La línea de tiempo también carga más rápido. Y al exportar, el video se guarda solo en tu carpeta de Descargas.",
+  "version": "1.9.0",
+  "notes": "Export más rápido: el efecto de entrada/salida ahora se aplica en el MISMO paso que el corte/censura (una sola barra en vez de dos). Menos espera, misma calidad.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

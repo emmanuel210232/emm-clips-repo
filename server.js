@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.9.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -279,6 +279,16 @@ function clipFxLabels(){ return [
   ['barrido','Barrido'],['persiana','Persiana'],['circulo','Círculo'],['pixeles','Pixeles'],
   ['zoom','Zoom'],['radial','Radial'],['cubrir','Cubrir'],['desenfoque','Desenfoque'],
 ]; }
+// Devuelve el trozo de filtro (xfade contra negro) para el efecto de entrada/salida, aplicable DENTRO del comando principal (1 solo paso).
+function clipFxParts(vIn, total, clipIn, clipOut, dur, W, H, fps, startIdx){
+  const d=Math.max(0.3,Math.min(3,Number(dur)||0.8));
+  const inFx=CLIP_FX[clipIn]||{}, outFx=CLIP_FX[clipOut]||{};
+  const hasIn=!!inFx.tr, hasOut=!!outFx.tr && total>d*2;
+  const inputs=[], parts=[]; let vlabel=vIn, idx=startIdx;
+  if(hasIn){ inputs.push('-f','lavfi','-t',String(d),'-i',`color=c=${inFx.color}:s=${W}x${H}:r=${fps}`); parts.push(`[${idx}:v]settb=AVTB,fps=${fps},format=yuv420p,setsar=1[cfi]`); parts.push(`[cfi]${vlabel}xfade=transition=${inFx.tr}:duration=${d}:offset=0[vfi]`); vlabel='[vfi]'; idx++; }
+  if(hasOut){ inputs.push('-f','lavfi','-t',String(d),'-i',`color=c=${outFx.color}:s=${W}x${H}:r=${fps}`); parts.push(`[${idx}:v]settb=AVTB,fps=${fps},format=yuv420p,setsar=1[cfo]`); parts.push(`${vlabel}[cfo]xfade=transition=${outFx.tr}:duration=${d}:offset=${(total-d).toFixed(3)}[vfo]`); vlabel='[vfo]'; idx++; }
+  return {inputs, parts, label:vlabel, applied:hasIn||hasOut, nextIdx:idx};
+}
 async function applyClipAnim(bin,inFile,outFile,clipIn,clipOut,dur){
   const total=await durationOf(inFile).catch(()=>0);
   const d=Math.max(0.3,Math.min(3,Number(dur)||0.8));
@@ -352,17 +362,27 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     (async () => {
       try {
         const af = `volume=enable='${enable}':volume=0`+(audioChain?`,${audioChain}`:'');
-        const base=['-y','-i',project.videoPath,'-map','0:v:0','-map','0:a:0'];
-        const tail=['-af',af,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
-        try {
-          await run(bins.ffmpeg, [...base,...videoArgs,...tail], progress(duration,q.copy?'Silenciando':'Exportando'));
-        } catch(copyErr) {
-          if(!q.copy||job.cancelRequested) throw copyErr;
-          // El formato (p.ej. .mpg/MPEG-2) no deja copiar el video tal cual → reencoda SIN pérdida visible (crf 18, misma resolución).
-          job.message='Reencodeando en máxima calidad (el formato no permitía copiar)…'; job.percent=0;
-          await run(bins.ffmpeg, [...base,...HQ_VIDEO,...tail], progress(duration,'Exportando (máxima calidad)'));
+        const fx=(clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none');
+        let fxInFinalizeIn=clipIn, fxInFinalizeOut=clipOut;
+        if(fx && !q.scale && !q.fps){
+          // UN SOLO PASO: silenciar + efecto de entrada/salida juntos (no hay dos barras).
+          const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=videoFps(project.videoPath);
+          const fxg=clipFxParts('[m]', duration, clipIn, clipOut, clipDur, EW, EH, efps, 1);
+          const parts=[`[0:v]settb=AVTB,fps=${efps},format=yuv420p,setsar=1[m]`, ...fxg.parts, `[0:a]${af}[ao]`];
+          await run(bins.ffmpeg, ['-y','-i',project.videoPath,...fxg.inputs,'-filter_complex',parts.join(';'),'-map',fxg.label,'-map','[ao]',...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(duration,'Silenciando y aplicando efecto'));
+          fxInFinalizeIn='none'; fxInFinalizeOut='none'; // ya aplicado
+        } else {
+          const base=['-y','-i',project.videoPath,'-map','0:v:0','-map','0:a:0'];
+          const tail=['-af',af,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
+          try {
+            await run(bins.ffmpeg, [...base,...videoArgs,...tail], progress(duration,q.copy?'Silenciando':'Exportando'));
+          } catch(copyErr) {
+            if(!q.copy||job.cancelRequested) throw copyErr;
+            job.message='Reencodeando en máxima calidad (el formato no permitía copiar)…'; job.percent=0;
+            await run(bins.ffmpeg, [...base,...HQ_VIDEO,...tail], progress(duration,'Exportando (máxima calidad)'));
+          }
         }
-        await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,clipIn,clipOut,clipDur);
+        await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,fxInFinalizeIn,fxInFinalizeOut,clipDur);
         const dl1=toDownloads(output); job = { status:'done', message:dl1?`✅ Listo y guardado en Descargas: ${path.basename(dl1)}`:`Video con groserías silenciadas: ${output}`, progress:'', percent:100, output, downloaded:dl1 };
       } catch (e) { await fsp.unlink(temporary).catch(()=>{}); job = { status: job.cancelRequested?'cancelled':'error', message: job.cancelRequested?e.message:`No se pudo silenciar: ${e.message}`, progress:'', percent:0 }; }
     })();
@@ -420,6 +440,15 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     vLabel='[v]';
     if(!q.copy && (q.scale||q.fps)){const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(',');filter.push(`[v]${vf}[vout]`);vLabel='[vout]';}
   }
+  // Efecto de entrada/salida fundido en el MISMO paso (una sola barra), salvo con crossfade o reescalado.
+  let cutFxIn=clipIn, cutFxOut=clipOut, cutExtraInputs=[];
+  if(((clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none')) && !q.scale && !canSmooth){
+    const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath);
+    filter.push(`${vLabel}settb=AVTB,fps=${efps},format=yuv420p,setsar=1[vnorm]`); // normaliza antes del xfade
+    const fxg=clipFxParts('[vnorm]', keptTotal, clipIn, clipOut, clipDur, EW, EH, efps, 1);
+    if(fxg.applied){ fxg.parts.forEach(p=>filter.push(p)); vLabel=fxg.label; cutExtraInputs=fxg.inputs; cutFxIn='none'; cutFxOut='none'; }
+    else { filter.pop(); } // no se aplicó efecto: quita la normalización que ya no se usa
+  }
   const cutCrf=String(q.crf||18);
   const script = path.join(DATA,'filter.txt');
   await fsp.writeFile(script, filter.join(';\n'), 'utf8');
@@ -429,8 +458,8 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   job = { status:'running', message:'Exportando video limpio…', progress:'', percent:0, cancelRequested:false };
   (async () => {
     try {
-      await run(bins.ffmpeg, ['-y','-i',project.videoPath,'-/filter_complex',script,'-map',vLabel,'-map',aLabel,'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',cutCrf,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(keptTotal,'Exportando'));
-      await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,clipIn,clipOut,clipDur);
+      await run(bins.ffmpeg, ['-y','-i',project.videoPath,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel,'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',cutCrf,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(keptTotal,'Exportando'));
+      await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,cutFxIn,cutFxOut,clipDur);
       const dl2=toDownloads(output); job = { status:'done', message:dl2?`✅ Listo y guardado en Descargas: ${path.basename(dl2)}`:`Video exportado: ${output}`, progress:'', percent:100, output, downloaded:dl2 };
     } catch (e) { await fsp.unlink(temporary).catch(()=>{});job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
   })();
