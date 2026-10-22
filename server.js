@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.16.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -469,9 +469,9 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     else { filter.pop(); } // no se aplicó efecto: quita la normalización que ya no se usa
   }
   const cutCrf=String(q.crf||18);
-  // Render rápido cuando gpu=true: libx264 preset veryfast (~3x más rápido que medium) para videos largos (best-of).
-  // (El NVENC del ffmpeg incluido no inicializa en este build, así que el "rápido" es por CPU pero veloz y sin perder calidad perceptible.)
-  const cutVCodec = ['-c:v','libx264','-pix_fmt','yuv420p','-preset',gpu?'veryfast':'medium','-crf',cutCrf];
+  // Render rápido cuando gpu=true: intenta GPU (NVENC) y, si el driver no lo soporta, cae solo a CPU veryfast.
+  const cutVx264 = ['-c:v','libx264','-pix_fmt','yuv420p','-preset',gpu?'veryfast':'medium','-crf',cutCrf];
+  const cutVnvenc = ['-c:v','h264_nvenc','-pix_fmt','yuv420p','-preset','p5','-rc','vbr','-cq',cutCrf,'-b:v','0'];
   const script = path.join(DATA,'filter.txt');
   await fsp.writeFile(script, filter.join(';\n'), 'utf8');
   const name = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
@@ -480,7 +480,15 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   job = { status:'running', message:'Exportando video limpio…', progress:'', percent:0, cancelRequested:false };
   (async () => {
     try {
-      await run(bins.ffmpeg, ['-y','-i',project.videoPath,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel,...cutVCodec,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(keptTotal,'Exportando'));
+      const cutBase=['-y','-i',project.videoPath,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
+      const cutTail=['-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
+      try{
+        await run(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal,'Exportando'));
+      }catch(gpuErr){
+        if(!gpu || job.cancelRequested) throw gpuErr;
+        job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; job.percent=0;
+        await run(bins.ffmpeg, [...cutBase,...cutVx264,...cutTail], progress(keptTotal,'Exportando'));
+      }
       await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,cutFxIn,cutFxOut,clipDur);
       const dl2=toDownloads(output); job = { status:'done', message:dl2?`✅ Listo y guardado en Descargas: ${path.basename(dl2)}`:`Video exportado: ${output}`, progress:'', percent:100, output, downloaded:dl2 };
     } catch (e) { await fsp.unlink(temporary).catch(()=>{});job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }

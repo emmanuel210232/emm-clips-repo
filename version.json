@@ -1,5 +1,5 @@
 {
-  "version": "1.16.0",
-  "notes": "🎬 NUEVO: Resumen del directo (best-of). Botón en el header: metes un directo largo y la IA encuentra los mejores momentos, los junta con transición, silencia groserías y exporta un solo video. Usa el modelo qwen2.5:14b (ollama pull qwen2.5:14b-instruct). También: silenciar groserías al cortar + render rápido en Exportar.",
+  "version": "1.16.1",
+  "notes": "Render por GPU (NVENC) con auto-respaldo: intenta usar la tarjeta gráfica y, si el driver no lo soporta todavía, cae solo a CPU rápido sin fallar. Actualiza tu driver NVIDIA para que el render por GPU se active solo.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
