@@ -1,5 +1,5 @@
 {
-  "version": "1.6.1",
-  "notes": "Quitar silencios ahora agarra también los silencios CORTOS: la sensibilidad muestra el mínimo (Suave 1 s · Normal 0.6 s · Fuerte 0.35 s · Máxima 0.25 s). Entre más fuerte, más apretado y ágil queda el video.",
+  "version": "1.7.0",
+  "notes": "Timeline más espaciosa (estilo CapCut): hay espacio arriba y abajo de los clips; arrastra ahí para SELECCIONAR VARIOS clips y luego Borrarlos o Unirlos. Nuevo botón 🔗 Unir (junta clips seguidos / quita divisiones). Y el escaneo de contenido sensible va un poco más rápido.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

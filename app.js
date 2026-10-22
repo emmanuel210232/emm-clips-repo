@@ -113,7 +113,7 @@ function addMetaEditor(row,s){
 let tlZoom=1, tlDrag=false;
 // ============ EDITOR DE CLIPS tipo CapCut (tiempo de SALIDA + ripple) ============
 // clips = segmentos de la fuente que forman el video final, en orden. Al borrar uno, el hueco se CIERRA (ripple).
-let clips=null, selectedClipIdx=-1, clipsVideo='', clipUndo=[];
+let clips=null, selectedClipIdx=-1, clipsVideo='', clipUndo=[], multiSel=new Set();
 function clipsKey(){return 'eirl_clips_'+(state?.project?.videoPath||'');}
 function keptFromCuts(cuts,dur){const sorted=[...(cuts||[])].map(c=>({start:+c.start,end:+c.end})).sort((a,b)=>a.start-b.start);const keep=[];let cur=0;for(const c of sorted){if(c.start>cur+0.015)keep.push({start:cur,end:c.start});cur=Math.max(cur,c.end);}if(dur>cur+0.015)keep.push({start:cur,end:dur});return keep.length?keep:[{start:0,end:dur}];}
 function loadClips(){const dur=tlDuration();
@@ -130,7 +130,29 @@ function outToSource(outT){let acc=0;for(const c of (clips||[])){const d=c.end-c
 function sourceToOut(srcT){let acc=0;for(const c of (clips||[])){const d=c.end-c.start;if(srcT>=c.start-1e-6&&srcT<=c.end+1e-6)return acc+(srcT-c.start);acc+=d;}return null;}
 function nearestKeptSource(srcT){for(const c of (clips||[])){if(srcT<=c.end)return Math.max(c.start,Math.min(srcT,c.end));}const last=(clips||[])[(clips||[]).length-1];return last?last.end:0;}
 function pushUndo(){try{clipUndo.push(JSON.stringify(clips));if(clipUndo.length>40)clipUndo.shift();}catch{}}
-function undoClip(){if(!clipUndo.length)return notice('Nada que deshacer.');try{clips=JSON.parse(clipUndo.pop());saveClips();selectedClipIdx=-1;syncRemoved();buildTimeline();notice('↶ Deshecho.');}catch{}}
+function undoClip(){if(!clipUndo.length)return notice('Nada que deshacer.');try{clips=JSON.parse(clipUndo.pop());saveClips();selectedClipIdx=-1;multiSel.clear();syncRemoved();buildTimeline();notice('↶ Deshecho.');}catch{}}
+// Une clips contiguos (quita divisiones sin quitar contenido). Si hay varios seleccionados, une esos; si no, une todos.
+function mergeClips(){
+  ensureClips(); if(clips.length<2) return notice('No hay nada que unir.');
+  const sel = multiSel.size>=2 ? multiSel : new Set(clips.map((_,i)=>i));
+  const out=[]; let merged=0;
+  for(let i=0;i<clips.length;){
+    let cur={start:clips[i].start,end:clips[i].end};
+    while(i+1<clips.length && sel.has(i) && sel.has(i+1) && Math.abs(clips[i+1].start-cur.end)<0.06){ cur.end=clips[i+1].end; i++; merged++; }
+    out.push(cur); i++;
+  }
+  if(!merged) return notice('Esos clips no son seguidos (tienen cortes en medio), no se pueden unir.',true);
+  pushUndo(); clips=out; saveClips(); multiSel.clear(); selectedClipIdx=-1; syncRemoved(); buildTimeline();
+  notice('🔗 Clips unidos ('+merged+' división'+(merged>1?'es':'')+' quitada'+(merged>1?'s':'')+').');
+}
+function selectClipsInRange(x0,x1){
+  const a=Math.min(x0,x1), b=Math.max(x0,x1);
+  const oa=tlOutFromX(a), ob=tlOutFromX(b); const bounds=clipOutBounds();
+  multiSel.clear(); selectedClipIdx=-1;
+  bounds.forEach((bn,i)=>{ if(bn.outStart<ob && bn.outEnd>oa) multiSel.add(i); });
+  drawSelection();
+  if(multiSel.size) notice(multiSel.size+' clip(s) seleccionado(s). Pulsa 🔗 Unir o Supr para borrarlos.');
+}
 function splitAtPlayhead(){
   const v=$('video');const src=(v?.currentTime||0)+(playerSourceOffset||0);ensureClips();
   const out=[];let done=false;
@@ -182,8 +204,14 @@ function buildScanResults(){
 }
 async function deleteSelectedClip(){
   ensureClips();
-  if(selectedClipIdx<0||selectedClipIdx>=clips.length)return notice('Pica un clip en la línea del tiempo para seleccionarlo.',true);
   if(clips.length<=1)return notice('Es el único clip. Divide primero con D y luego borra la parte que no quieras.',true);
+  if(multiSel.size){ // borrar varios (multi-selección por arrastre)
+    const toDel=new Set(multiSel); const kept=clips.filter((_,i)=>!toDel.has(i));
+    if(!kept.length)return notice('Eso borraría todo el video.',true);
+    pushUndo();clips=kept;saveClips();multiSel.clear();selectedClipIdx=-1;await syncRemoved();buildTimeline();positionHead();updateTlTime();
+    notice('🗑️ '+toDel.size+' clips borrados y el hueco se cerró. Ctrl+Z para deshacer.'); return;
+  }
+  if(selectedClipIdx<0||selectedClipIdx>=clips.length)return notice('Pica un clip en la línea del tiempo para seleccionarlo.',true);
   const idx=selectedClipIdx;
   const inner=tlInner();const block=inner&&inner.querySelector('.tl-clip[data-i="'+idx+'"]');
   const finish=async()=>{
@@ -200,14 +228,21 @@ function tlInner(){const h=$('tlHead');return h&&h.parentElement;}
 function tlOutFromX(clientX){const inner=tlInner();const T=totalOut();if(!inner||!T)return 0;const r=inner.getBoundingClientRect();const x=Math.max(0,Math.min(inner.offsetWidth,clientX-r.left));return x/inner.offsetWidth*T;}
 function tlXofOut(o){const inner=tlInner();const T=totalOut();if(!inner||!T)return 0;return Math.max(0,Math.min(inner.offsetWidth,o/T*inner.offsetWidth));}
 function updateCutButtons(){
-  const hasClip=selectedClipIdx>=0&&clips&&selectedClipIdx<clips.length&&clips.length>1;
-  const del=$('tlDelSel');if(del)del.disabled=!hasClip;
+  const n=multiSel.size;
+  const canDelete=clips&&clips.length>1&&(n>0||(selectedClipIdx>=0&&selectedClipIdx<clips.length));
+  const del=$('tlDelSel');if(del)del.disabled=!canDelete;
+  const mg=$('tlMerge');if(mg)mg.disabled=!(clips&&clips.length>1);
   const un=$('tlUndo');if(un)un.disabled=!clipUndo.length;
   const edited=clipsEdited();
-  const info=$('tlCutInfo');if(info){const c=clips&&clips[selectedClipIdx];info.textContent=(hasClip&&c)?('Clip '+(selectedClipIdx+1)+'/'+(clips.length)+' · '+fmt(c.end-c.start)):(edited?('Editado · '+(clips.length)+' clip'+(clips.length>1?'s':'')+' · '+fmt(totalOut())):'');}
+  const info=$('tlCutInfo');if(info){
+    if(n>1) info.textContent=n+' clips seleccionados';
+    else { const c=clips&&clips[selectedClipIdx]; info.textContent=(selectedClipIdx>=0&&c)?('Clip '+(selectedClipIdx+1)+'/'+(clips.length)+' · '+fmt(c.end-c.start)):(edited?('Editado · '+(clips.length)+' clips · '+fmt(totalOut())):''); }
+  }
   const go=$('tlGoCut');if(go)go.hidden=!edited;
 }
-function drawSelection(){const inner=tlInner();if(!inner)return;inner.querySelectorAll('.tl-clip').forEach(b=>b.classList.toggle('selected',+b.dataset.i===selectedClipIdx));updateCutButtons();}
+function drawSelection(){const inner=tlInner();if(!inner)return;inner.querySelectorAll('.tl-clip').forEach(b=>{const i=+b.dataset.i;b.classList.toggle('selected',i===selectedClipIdx||multiSel.has(i));});updateCutButtons();}
+function drawMarquee(x0,x1){const inner=tlInner();if(!inner)return;let m=inner.querySelector('.tl-marquee');if(!m){m=document.createElement('div');m.className='tl-marquee';inner.append(m);}const r=inner.getBoundingClientRect();const a=Math.max(0,Math.min(inner.offsetWidth,x0-r.left)),b=Math.max(0,Math.min(inner.offsetWidth,x1-r.left));m.style.left=Math.min(a,b)+'px';m.style.width=Math.abs(b-a)+'px';}
+function clearMarquee(){const inner=tlInner();if(inner){const m=inner.querySelector('.tl-marquee');if(m)m.remove();}}
 function refreshOverlays(){drawSelection();}
 function tlDuration(){const v=$('video');if(v&&v.duration&&isFinite(v.duration))return v.duration;const t=state?.transcript;return t&&t.length?Number(t[t.length-1].end)||0:0;}
 function positionHead(){const head=$('tlHead');if(!head)return;const v=$('video');const src=(v?.currentTime||0)+(playerSourceOffset||0);let o=sourceToOut(src);if(o==null)o=sourceToOut(nearestKeptSource(src));if(o==null)o=0;head.style.left=tlXofOut(o)+'px';}
@@ -414,27 +449,33 @@ function moveClipTo(fromIdx,targetOut){const b=clipOutBounds();let ins=b.findInd
   pushUndo();const[clip]=clips.splice(fromIdx,1);if(ins>fromIdx)ins--;ins=Math.max(0,Math.min(clips.length,ins));clips.splice(ins,0,clip);
   saveClips();selectedClipIdx=ins;syncRemoved();buildTimeline();notice('↔ Clip movido al lugar '+(ins+1)+'.');}
 (function(){const bar=$('timeline');if(!bar)return;
+  let marquee=null;
   bar.addEventListener('mousedown',e=>{
-    if(e.target.closest('.tl-tick')||e.target.closest('.tl-cutx'))return;
+    if(e.target.closest('.tl-cutx'))return;
+    if(e.target.closest('.tl-ruler')){ dragMode='scrub'; tlDrag=true; tlSeekFromX(e.clientX); e.preventDefault(); return; }
     const block=e.target.closest('.tl-clip');
     if(block&&clips&&clips.length){
-      const idx=+block.dataset.i; selectedClipIdx=idx; drawSelection();
+      const idx=+block.dataset.i; if(!multiSel.has(idx))multiSel.clear(); selectedClipIdx=idx; drawSelection();
       const edge=edgeHit(block,e.clientX);
       if(edge){ dragMode='trim'; trimState={idx,side:edge,startX:e.clientX,startVal:edge==='L'?clips[idx].start:clips[idx].end,pxStart:tlInner().offsetWidth,totStart:totalOut(),last:0}; e.preventDefault(); return; }
       dragMode='pending'; moveState={idx,startX:e.clientX,moved:false}; e.preventDefault(); return;
     }
-    dragMode='scrub'; tlDrag=true; tlSeekFromX(e.clientX); e.preventDefault();
+    // espacio vacío (arriba/abajo de los clips) → marquee de selección
+    dragMode='marqueePending'; marquee={x0:e.clientX,x1:e.clientX,moved:false}; e.preventDefault();
   });
   window.addEventListener('mousemove',e=>{
     if(dragMode==='scrub'){ tlSeekFromX(e.clientX); return; }
     if(dragMode==='trim'){ doTrim(e.clientX); return; }
-    if(dragMode==='pending'&&moveState){ if(Math.abs(e.clientX-moveState.startX)>8){dragMode='move';moveState.moved=true;const bl=tlInner()&&tlInner().querySelector('.tl-clip[data-i="'+moveState.idx+'"]');if(bl)bl.classList.add('moving');} }
+    if(dragMode==='pending'&&moveState){ if(Math.abs(e.clientX-moveState.startX)>8){dragMode='move';moveState.moved=true;const bl=tlInner()&&tlInner().querySelector('.tl-clip[data-i="'+moveState.idx+'"]');if(bl)bl.classList.add('moving');} return; }
+    if((dragMode==='marqueePending'||dragMode==='marquee')&&marquee){ marquee.x1=e.clientX; if(Math.abs(marquee.x1-marquee.x0)>5){dragMode='marquee';marquee.moved=true;drawMarquee(marquee.x0,marquee.x1);} }
   });
   window.addEventListener('mouseup',e=>{
     if(dragMode==='trim'){ commitTrim(); }
     else if(dragMode==='move'&&moveState){ moveClipTo(moveState.idx,tlOutFromX(e.clientX)); }
     else if(dragMode==='pending'&&moveState){ tlSeekFromX(moveState.startX); }
-    dragMode=null; trimState=null; moveState=null; tlDrag=false;
+    else if(dragMode==='marquee'&&marquee){ clearMarquee(); selectClipsInRange(marquee.x0,marquee.x1); }
+    else if(dragMode==='marqueePending'&&marquee){ multiSel.clear(); selectedClipIdx=-1; tlSeekFromX(marquee.x0); drawSelection(); }
+    dragMode=null; trimState=null; moveState=null; marquee=null; tlDrag=false;
   });
 })();
 $('video').addEventListener('timeupdate',()=>{editedPlaybackTick();positionHead();updateTlTime();});
@@ -443,6 +484,7 @@ $('video').addEventListener('timeupdate',()=>{editedPlaybackTick();positionHead(
 // ---- Cortes visuales en la timeline ----
 $('tlSplit').onclick=()=>splitAtPlayhead();
 $('tlDelSel').onclick=()=>deleteSelectedClip();
+$('tlMerge').onclick=()=>mergeClips();
 $('tlUndo').onclick=()=>undoClip();
 $('tlClearSel').onclick=()=>{selectedClipIdx=-1;drawSelection();notice('Clip deseleccionado.');};
 $('tlGoCut').onclick=()=>{goStep(4);const c=document.querySelector('input[name="censorMode"][value="cut"]');if(c){c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));}notice('Modo “Cortar” elegido: al Exportar MP4 se quitan los clips borrados y el video se une solo.');};

@@ -91,7 +91,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -747,7 +747,7 @@ async function classifyFrame(fp){
   let b64; try{ b64=await fsp.readFile(fp,{encoding:'base64'}); }catch{ return null; }
   try{
     const r=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(60000),headers:{'content-type':'application/json'},
-      body:JSON.stringify({model:SCAN_MODEL,prompt:scanPrompt(),images:[b64],stream:false,options:{temperature:0}})});
+      body:JSON.stringify({model:SCAN_MODEL,prompt:scanPrompt(),images:[b64],stream:false,options:{temperature:0,num_predict:120}})});
     if(!r.ok) throw Error('Ollama '+r.status);
     const j=await r.json(); const txt=String(j.response||'');
     const m=txt.match(/\{[\s\S]*\}/); if(!m) return {beso:false,desnudez:false,pelea:false,drogas:false,riesgo:'ninguno',nota:''};
