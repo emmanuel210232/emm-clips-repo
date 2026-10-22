@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const os = require('node:os');
 const { spawn, spawnSync } = require('node:child_process');
 const { normalize, findMatches, buildCuts, keptIntervals, adjustedCuts, parseSrt, parseWhisperJson, tokenizeTranscript } = require('./lib/core');
 const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS } = require('./lib/shorts');
@@ -20,6 +21,14 @@ const files = { project: path.join(DATA, 'project.json'), config: path.join(DATA
 fs.mkdirSync(DATA, { recursive: true });
 fs.mkdirSync(EXPORTS, { recursive: true });
 
+// Copia el archivo exportado a la carpeta Descargas del usuario (como si se descargara).
+function toDownloads(file){
+  try{ const dl=path.join(os.homedir(),'Downloads'); if(!fs.existsSync(dl)) return null;
+    let dest=path.join(dl, path.basename(file));
+    if(fs.existsSync(dest)){ const p=path.parse(dest); dest=path.join(dl, `${p.name}_${Date.now().toString().slice(-5)}${p.ext}`); }
+    fs.copyFileSync(file, dest); return dest;
+  }catch{ return null; }
+}
 function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } }
 function writeJson(file, value) { fs.writeFileSync(file, JSON.stringify(value, null, 2), 'utf8'); }
 let project = readJson(files.project, null);
@@ -91,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -354,7 +363,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
           await run(bins.ffmpeg, [...base,...HQ_VIDEO,...tail], progress(duration,'Exportando (máxima calidad)'));
         }
         await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,clipIn,clipOut,clipDur);
-        job = { status:'done', message:`Video con groserías silenciadas: ${output}`, progress:'', percent:100, output };
+        const dl1=toDownloads(output); job = { status:'done', message:dl1?`✅ Listo y guardado en Descargas: ${path.basename(dl1)}`:`Video con groserías silenciadas: ${output}`, progress:'', percent:100, output, downloaded:dl1 };
       } catch (e) { await fsp.unlink(temporary).catch(()=>{}); job = { status: job.cancelRequested?'cancelled':'error', message: job.cancelRequested?e.message:`No se pudo silenciar: ${e.message}`, progress:'', percent:0 }; }
     })();
     return { output, cuts: ranges.length, mode };
@@ -362,7 +371,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   // Si el editor de clips manda "segments" (los clips en orden), se concatenan EN ESE ORDEN (soporta reordenar/trim).
   let keep;
   if (Array.isArray(segments) && segments.length) {
-    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end)})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
+    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end),zoom:!!s.zoom})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
     if (!keep.length) throw Error('Los clips no son válidos.');
   } else {
     const chosenPauses=pauses.filter(p=>selectedPauseIds.includes(p.id));
@@ -374,13 +383,19 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   const keptTotal = keep.reduce((a,k)=>a+(k.end-k.start),0);
   const filter = [];
   let vLabel, aLabel;
+  // Zoom (punch-in) por segmento marcado con .zoom
+  const hasZoom = false; // zoom en export temporalmente desactivado (zoompan se cuelga; pendiente método confiable)
+  const {width:ZW,height:ZH} = hasZoom ? videoDimensions(project.videoPath) : {width:0,height:0};
+  const zfps = q.fps || videoFps(project.videoPath);
+  const zoomOf = (k)=> k.zoom ? `,scale=${ZW}:${ZH},zoompan=z='min(1.0+0.004*on,1.15)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:fps=${zfps}:s=${ZW}x${ZH},setsar=1` : '';
+  const normOf = (k)=> hasZoom ? (k.zoom ? zoomOf(k) : `,scale=${ZW}:${ZH},fps=${zfps},setsar=1,format=yuv420p`) : '';
   const canSmooth = smooth && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
   if (canSmooth) {
     // Crossfade corto entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
     const fpsOut = q.fps || videoFps(project.videoPath);
     const Dxf=0.14;
     keep.forEach((k,i)=>{
-      filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS,settb=AVTB,fps=${fpsOut},format=yuv420p,setsar=1[v${i}]`);
+      filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${zoomOf(k)},settb=AVTB,fps=${fpsOut},format=yuv420p,setsar=1[v${i}]`);
       filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
     });
     let vp='[v0]', ap='[a0]', L=keep[0].end-keep[0].start;
@@ -395,7 +410,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     if(q.scale){ filter.push(`${vLabel}${q.scale}[vout]`); vLabel='[vout]'; }
   } else {
     keep.forEach((k,i) => {
-      filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
+      filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${normOf(k)}[v${i}]`);
       const length=k.end-k.start,fade=Math.min(.03,length/3);
       filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
     });
@@ -416,7 +431,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     try {
       await run(bins.ffmpeg, ['-y','-i',project.videoPath,'-/filter_complex',script,'-map',vLabel,'-map',aLabel,'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',cutCrf,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(keptTotal,'Exportando'));
       await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,clipIn,clipOut,clipDur);
-      job = { status:'done', message:`Video exportado: ${output}`, progress:'', percent:100, output };
+      const dl2=toDownloads(output); job = { status:'done', message:dl2?`✅ Listo y guardado en Descargas: ${path.basename(dl2)}`:`Video exportado: ${output}`, progress:'', percent:100, output, downloaded:dl2 };
     } catch (e) { await fsp.unlink(temporary).catch(()=>{});job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
   })();
   return { output, cuts:keep.length };
