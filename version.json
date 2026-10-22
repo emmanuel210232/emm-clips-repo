@@ -1,5 +1,5 @@
 {
-  "version": "1.13.0",
-  "notes": "🎬 Transición por tema: la IA lee la transcripción, detecta dónde cambia el tema y pone un fundido suave (dissolve) ahí. Botón nuevo en el editor; marca los clips con 🎬 y puedes deshacer los que no quieras.",
+  "version": "1.14.0",
+  "notes": "Arreglo importante del editor: picar un clip ahora lo SELECCIONA (ya no mueve la barra), arrastrarlo lo MUEVE/reordena, y el scrub quedó en la regla de arriba. Ctrl+clic selecciona varios clips para Unir o borrar. Unir vuelve a funcionar.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
