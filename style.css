@@ -183,6 +183,25 @@ body{font-family:'Plus Jakarta Sans',system-ui,-apple-system,Segoe UI,Roboto,san
 .animOverlay{position:absolute;inset:0;background:#000;opacity:0;display:none;pointer-events:none;z-index:4}
 .scrubThumb{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:none;pointer-events:none;z-index:3}
 .scrubThumb.show{display:block}
+/* Resumen del directo (sección aparte) */
+body.bestof-mode #wizard, body.bestof-mode section.step, body.bestof-mode #configFooter{display:none !important}
+.modeToggle{background:#53fc18;color:#06240a;border:none;border-radius:10px;padding:8px 14px;font-weight:700;cursor:pointer;font-family:inherit;font-size:.9rem;margin-right:6px}
+.modeToggle:hover{filter:brightness(1.08)}
+.bestofSection{display:flex;flex-direction:column;gap:16px}
+.bestofHero{padding:2px}
+.bestofList{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.bestofItem{display:flex;align-items:flex-start;gap:12px;padding:12px;border:1px solid #1c3022;border-radius:12px;background:rgba(255,255,255,.02)}
+.bestofItem.off{opacity:.45}
+.bestofItem>input[type=checkbox]{margin-top:4px;width:18px;height:18px;flex:none;accent-color:#53fc18}
+.bfMain{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.bfTop{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bfTime{font-weight:700}
+.bfBadge{font-size:.78rem;background:rgba(83,252,24,.16);color:#8ef06a;border-radius:6px;padding:1px 7px;font-weight:600}
+.bfBadge.bfEnergy{background:rgba(224,176,32,.18);color:#e0b020}
+.bfHook{font-weight:600;padding:6px 8px;border-radius:8px;width:100%}
+.bfWhy{font-size:.86rem;line-height:1.35}
+.bfActs{display:flex;gap:4px;flex:none;flex-wrap:wrap;max-width:118px;justify-content:flex-end}
+.bfActs .tl-btn{padding:4px 9px}
 .animPanel{margin:10px 0 2px;padding:12px 14px;border:1px solid #e3eadf;border-radius:12px;background:#fbfdfa}
 .animHead{font-weight:700;font-size:14px;color:#1f3326;margin-bottom:8px}
 .animHead small{font-weight:400;color:#8a968b}

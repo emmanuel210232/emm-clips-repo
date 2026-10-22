@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><div class="topbarRight"><button id="themeToggle" class="themeToggle" type="button" title="Cambiar entre tema claro y oscuro" aria-label="Cambiar tema">🌙</button><span class="badge">Asistente</span></div></header>
+  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><div class="topbarRight"><button id="modeToggle" class="modeToggle" type="button" title="Cambiar entre el editor de cortos y el Resumen del directo">🎬 Resumen del directo</button><button id="themeToggle" class="themeToggle" type="button" title="Cambiar entre tema claro y oscuro" aria-label="Cambiar tema">🌙</button><span class="badge">Asistente</span></div></header>
   <main>
     <nav class="wizard" id="wizard" aria-label="Pasos">
       <button type="button" class="wstep" data-step="1"><span class="wnum">1</span><span class="wlbl">Abrir</span></button>
@@ -195,10 +195,37 @@
         <select id="exportQuality"></select>
         <p class="hint">“Original” conserva el video tal cual (rápido, máxima fidelidad). 1080p/60fps reencoda (el 60fps real solo ayuda si el directo ya es 60fps).</p>
         <p class="hint">🎬 Las <b>animaciones</b> (fade in/out) e <b>intro/outro</b> se eligen y previsualizan en el <b>Paso 1</b>, debajo del video. Lo que dejes ahí se aplica al exportar.</p>
+        <div class="row wrap" style="margin-top:4px;gap:16px">
+          <label class="inlineCheck mini"><input type="checkbox" id="exCensor"> 🤫 Silenciar groserías automáticamente <small style="color:#8a968b">(útil al cortar varios momentos)</small></label>
+          <label class="inlineCheck mini"><input type="checkbox" id="exGpu"> ⚡ Render rápido <small style="color:#8a968b">(ideal para videos largos; calidad casi igual)</small></label>
+        </div>
         <div class="row"><button id="export" class="primary">Exportar MP4</button><span id="exportInfo" class="muted"></span></div>
         <div id="exportedFiles" class="exportedFiles"></div>
       </div>
       <div class="stepNav"><button type="button" class="secondary prev" data-go="3">← Atrás</button><span></span></div>
+    </section>
+
+    <!-- SECCIÓN APARTE: RESUMEN DEL DIRECTO (best-of con modelo pesado, bajo demanda) -->
+    <section id="bestofSection" class="bestofSection" hidden>
+      <div class="bestofHero">
+        <h2 class="stepTitle">🎬 Resumen del directo</h2>
+        <p class="stepLead">Mete un directo largo (4-7 h) y la IA encuentra los <b>mejores momentos</b>, los junta y te deja listo un solo video. Tú apruebas y ajustas antes de exportar. <span class="muted">(Usa un modelo pesado que solo se carga aquí.)</span></p>
+      </div>
+      <div class="card">
+        <div class="cardhead"><div><span class="number">1</span><h2>El directo</h2></div><span id="bestofVideoStatus" class="status">Sin video</span></div>
+        <div class="row"><button id="bestofPick" class="primary big">📂 Elegir directo…</button><span class="muted">Es el mismo video que tengas abierto; puedes cambiarlo aquí.</span></div>
+        <div class="row" style="margin-top:12px;align-items:center;gap:14px">
+          <label>¿Cuántos momentos? <select id="bestofCount"><option value="8">8</option><option value="12" selected>12</option><option value="16">16</option><option value="20">20</option></select></label>
+          <button id="bestofRun" class="primary">⚙️ Procesar directo</button>
+          <span class="muted" id="bestofInfo">Transcribe + analiza con IA. Tarda (segundo plano).</span>
+        </div>
+      </div>
+      <div id="bestofPanel" class="card" hidden>
+        <div class="cardhead"><div><span class="number">2</span><h2>Mejores momentos propuestos</h2></div><span id="bestofCountBadge" class="status"></span></div>
+        <p class="hint">Desmarca los que no quieras, reordénalos con ↑↓, edita el gancho, o ▶ para verlo. Al final, mándalos al editor para ponerles groserías/intro/transiciones y exportar.</p>
+        <div id="bestofList" class="bestofList"></div>
+        <div class="row" style="margin-top:14px;gap:10px"><button id="bestofToEditor" class="primary big">✅ Mandar al editor con los aprobados →</button><span class="muted" id="bestofSel"></span></div>
+      </div>
     </section>
 
     <details class="card settings" id="configFooter"><summary>⚙️ Configuración de motores</summary><p class="hint">La transcripción local usa whisper.cpp y un modelo multilingüe. El corte usa FFmpeg. Puedes indicar sus rutas aquí o poner los ejecutables en PATH.</p>

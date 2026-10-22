@@ -437,6 +437,12 @@ function render() {
   }
   buildTimeline();
   buildScanResults();
+  if(inBestof()) buildBestof();
+  // Encadena: si se pidió best-of sin transcripción, al terminar la transcripción arranca el análisis solo.
+  if(bestofPendingAnalyze && state.transcript && state.transcript.length && state.job.status==='done'){
+    bestofPendingAnalyze=false;
+    api('/api/bestof/analyze',{count:bestofPendingCount}).then(()=>notice('⚙️ Transcrito. Ahora analizando los mejores momentos con IA (modelo pesado)…')).catch(e=>notice(e.message,true));
+  }
   // Auto-preparar el video al abrirlo (como CapCut): vista previa si el formato no se ve + miniaturas + onda.
   if(p && state.job.status!=='running'){
     const needPrev=!p.previewPath && /\.(mpg|mpeg|mkv|avi)$/i.test(p.videoPath||'');
@@ -582,6 +588,87 @@ $('auOff').onclick=()=>{['auDenoise','auCompress','auNormalize','auVoice'].forEa
 $('animPreviewIn').onclick=()=>previewAnim('in');
 $('animPreviewOut').onclick=()=>previewAnim('out');
 $('themeToggle').onclick=toggleTheme; applyThemeIcon();
+// ====== RESUMEN DEL DIRECTO (sección aparte) ======
+let bestofItems=null, bestofScannedAt=0, bestofPendingAnalyze=false, bestofPendingCount=12;
+function inBestof(){return document.body.classList.contains('bestof-mode');}
+function switchMode(mode){
+  const bestof = mode==='bestof';
+  document.body.classList.toggle('bestof-mode', bestof);
+  const sec=$('bestofSection'); if(sec) sec.hidden=!bestof;
+  const btn=$('modeToggle'); if(btn) btn.textContent = bestof?'✂️ Editor de cortos':'🎬 Resumen del directo';
+  try{ localStorage.setItem('eirl_mode', mode); }catch{}
+  if(bestof) buildBestof();
+  window.scrollTo(0,0);
+}
+function bfmt(s){return `${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}`;}
+function buildBestof(){
+  const p=state.project;
+  const vs=$('bestofVideoStatus'); if(vs) vs.textContent = p? p.videoPath.split(/[\\/]/).at(-1):'Sin video';
+  const sc=state.bestofScan;
+  if(sc && sc.candidates && sc.candidates.length){
+    if(sc.scannedAt!==bestofScannedAt || !bestofItems){ bestofScannedAt=sc.scannedAt; bestofItems=sc.candidates.map(c=>({...c,on:true})); }
+    renderBestofList();
+    $('bestofPanel').hidden=false;
+  } else { $('bestofPanel').hidden=true; }
+}
+function renderBestofList(){
+  const box=$('bestofList'); if(!box||!bestofItems) return; box.replaceChildren();
+  bestofItems.forEach((c,i)=>{
+    const row=document.createElement('div'); row.className='bestofItem'+(c.on?'':' off');
+    const chk=document.createElement('input'); chk.type='checkbox'; chk.checked=c.on; chk.title='Incluir este momento';
+    chk.onchange=()=>{c.on=chk.checked;row.classList.toggle('off',!c.on);updateBestofCounts();};
+    const main=document.createElement('div'); main.className='bfMain';
+    const top=document.createElement('div'); top.className='bfTop';
+    const time=document.createElement('span'); time.className='bfTime'; time.textContent=`${bfmt(c.start)}–${bfmt(c.end)}`;
+    const sc=document.createElement('span'); sc.className='bfBadge'; sc.textContent='★ '+c.score;
+    const en=document.createElement('span'); en.className='bfBadge bfEnergy'; en.textContent='⚡ '+c.energia+'/10';
+    top.append(time,sc,en);
+    const hook=document.createElement('input'); hook.className='bfHook'; hook.value=c.gancho||''; hook.placeholder='Gancho (título corto)';
+    hook.oninput=()=>{c.gancho=hook.value;};
+    const why=document.createElement('div'); why.className='bfWhy muted'; why.textContent=c.por||'';
+    main.append(top,hook,why);
+    const acts=document.createElement('div'); acts.className='bfActs';
+    const play=document.createElement('button'); play.className='tl-btn'; play.textContent='▶'; play.title='Ver este momento en el editor';
+    play.onclick=()=>{ switchMode('cortos'); goStep(1); const v=$('video'); if(v){try{v.currentTime=c.start; v.play&&v.play();}catch{}} notice('▶ Saltando a '+bfmt(c.start)+' en el editor.'); };
+    const up=document.createElement('button'); up.className='tl-btn'; up.textContent='↑'; up.title='Subir'; up.onclick=()=>{if(i>0){[bestofItems[i-1],bestofItems[i]]=[bestofItems[i],bestofItems[i-1]];renderBestofList();}};
+    const dn=document.createElement('button'); dn.className='tl-btn'; dn.textContent='↓'; dn.title='Bajar'; dn.onclick=()=>{if(i<bestofItems.length-1){[bestofItems[i+1],bestofItems[i]]=[bestofItems[i],bestofItems[i+1]];renderBestofList();}};
+    const del=document.createElement('button'); del.className='tl-btn danger'; del.textContent='🗑️'; del.title='Quitar'; del.onclick=()=>{bestofItems.splice(i,1);renderBestofList();};
+    acts.append(play,up,dn,del);
+    row.append(chk,main,acts); box.append(row);
+  });
+  updateBestofCounts();
+}
+function updateBestofCounts(){
+  if(!bestofItems)return;
+  const on=bestofItems.filter(c=>c.on);
+  const badge=$('bestofCountBadge'); if(badge) badge.textContent=bestofItems.length+' momentos';
+  const sel=$('bestofSel'); if(sel) sel.textContent=on.length+' aprobados · total ~'+bfmt(on.reduce((a,c)=>a+(c.end-c.start),0));
+}
+$('modeToggle').onclick=()=>switchMode(inBestof()?'cortos':'bestof');
+$('bestofPick').onclick=safe(async()=>{notice('Elige el directo en el explorador…');const r=await api('/api/pick-video',{});if(r.cancelled){notice('Cancelado.');return;}await api('/api/project/open',{path:r.path});await refresh();buildBestof();notice('Directo abierto. Pulsa “Procesar directo”.');});
+$('bestofRun').onclick=safe(async()=>{
+  if(!state.project)throw Error('Elige un directo primero.');
+  bestofPendingCount=Number($('bestofCount').value)||12;
+  if(!state.transcript||!state.transcript.length){
+    bestofPendingAnalyze=true; await api('/api/transcribe',{vad:true});
+    notice('📝 Primero transcribo el directo saltando silencios (más rápido). En cuanto termine, arranca solo el análisis de mejores momentos.'); return;
+  }
+  await api('/api/bestof/analyze',{count:bestofPendingCount});
+  notice('⚙️ Analizando el directo con IA (modelo pesado). Tarda; puedes cancelar arriba. Los momentos aparecen aquí al terminar.');
+});
+$('bestofToEditor').onclick=safe(()=>{
+  if(!bestofItems||!bestofItems.some(c=>c.on))throw Error('Marca al menos un momento para mandar al editor.');
+  const approved=bestofItems.filter(c=>c.on);
+  ensureClips();
+  clips=approved.map((c,i)=>({start:+(+c.start).toFixed(3),end:+(+c.end).toFixed(3),trans:i>0}));
+  saveClips(); selectedClipIdx=-1; multiSel.clear();
+  // Pre-activa: modo Cortar + censurar groserías + render por GPU (para que solo le des Exportar)
+  const cutRadio=document.querySelector('input[name="censorMode"][value="cut"]'); if(cutRadio){cutRadio.checked=true;cutRadio.dispatchEvent(new Event('change',{bubbles:true}));}
+  if($('exCensor'))$('exCensor').checked=true;
+  if($('exGpu'))$('exGpu').checked=true;
+  switchMode('cortos'); goStep(1); syncRemoved().then(()=>buildTimeline()); buildTimeline();
+  notice('✅ '+approved.length+' momentos mandados al editor, con transición entre cada uno. Ya dejé activado silenciar groserías y render por GPU: ve a “Exportar” y dale Exportar MP4.');
+});
 $('rmSilence').onclick=safe(async()=>{
   if(!state.project)throw Error('Abre un video primero.');
   const sens=$('silSens').value;
@@ -621,7 +708,8 @@ $('export').onclick=safe(async()=>{await selectionSave;
   else { if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas, o edita clips en la línea del tiempo (Paso 1).'); }
   const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};
   const smooth=edited && !!$('silSmooth')?.checked;
-  const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,smooth,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});
+  const censor=!!$('exCensor')?.checked, gpu=!!$('exGpu')?.checked;
+  const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,smooth,censor,gpu,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});
   notice(edited?`Exportando tu edición (${segments.length} clip${segments.length>1?'s':''}). El archivo aparecerá en exports.`:(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`));});
 $('cancelJob').onclick=safe(async()=>{await api('/api/job/cancel',{});notice('Cancelando el proceso…');});
 $('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};
@@ -630,5 +718,6 @@ function goStep(n){n=Math.max(1,Math.min(4,Number(n)||1));document.querySelector
 document.querySelectorAll('.wstep').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.step)));
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.go)));
 goStep(1); // siempre empezar en el paso 1 (como CapCut), no en el último
+try{ if(localStorage.getItem('eirl_mode')==='bestof') switchMode('bestof'); }catch{}
 refresh().catch(e=>notice(e.message,true));
 setInterval(()=>{if(state?.job.status==='running')refresh().catch(()=>{});},1000);

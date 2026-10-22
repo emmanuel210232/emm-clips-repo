@@ -78,7 +78,7 @@ function resolveWhisper() {
 }
 function readiness() { const preferred=path.join(ROOT,'tools','ggml-large-v3-turbo-q5_0.bin'), fallback=path.join(ROOT,'tools','ggml-small.bin'); const whisper=resolveWhisper(); return { ffmpeg: executable(config.ffmpeg, 'ffmpeg'), ffprobe: executable(config.ffprobe, 'ffprobe'), whisper, whisperGpu: whisper.includes('tools-gpu'), model: config.model && fs.existsSync(config.model) ? config.model : fs.existsSync(preferred) ? preferred : fs.existsSync(fallback) ? fallback : '' }; }
 function listExports() { return fs.readdirSync(EXPORTS).filter(name=>/\.(mp4|png|jpe?g)$/i.test(name)).map(name=>({name,modified:fs.statSync(path.join(EXPORTS,name)).mtimeMs})).sort((a,b)=>b.modified-a.modified).slice(0,24); }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, version: APP_VERSION, job }; }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.16.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -158,11 +158,14 @@ async function importTranscript(file) {
   writeJson(files.shorts, shorts);
   if (project) { project.transcriptSource = file; writeJson(files.project, project); }
 }
-async function transcribe() {
+async function transcribe(opts) {
   const bins = readiness();
   if (!project?.videoPath) throw Error('Abre un video primero.');
   if (!bins.ffmpeg || !bins.whisper || !bins.model) throw Error('Configura FFmpeg, whisper-cli y un modelo multilingüe antes de transcribir.');
   if (job.status === 'running') throw Error('Ya hay un proceso en curso.');
+  // VAD (saltar silencios): más rápido sin perder calidad; whisper mapea los tiempos a la línea original.
+  const vadModel = path.join(ROOT,'tools','ggml-silero-v5.1.2.bin');
+  const useVad = !!(opts&&opts.vad) && fs.existsSync(vadModel);
   const total = await durationOf(project.videoPath).catch(() => 0);
   job = { status:'running', message:'Extrayendo audio…', progress:'', percent:0, cancelRequested:false };
   const wav = path.join(DATA, 'audio.wav');
@@ -172,7 +175,9 @@ async function transcribe() {
       await run(bins.ffmpeg, ['-y','-i',project.videoPath,'-vn','-ar','16000','-ac','1','-c:a','pcm_s16le',wav], progress(total,'Audio'));
       job.message='Transcribiendo en español…'; job.progress=''; job.percent=0;
       const prompt = channelStyle.transcriptionPrompt || 'Conversación informal en español de México. Directo, chat, güey, no mames.';
-      await run(bins.whisper, ['-m',bins.model,'-f',wav,'-l','es','-ml','1','-sow','-ojf','-of',outputBase,'--prompt',prompt], progress(total,'Texto'));
+      const wargs=['-m',bins.model,'-f',wav,'-l','es','-ml','1','-sow','-ojf','-of',outputBase,'--prompt',prompt];
+      if(useVad){ wargs.push('--vad','--vad-model',vadModel); job.message='Transcribiendo en español (saltando silencios)…'; }
+      await run(bins.whisper, wargs, progress(total,'Texto'));
       await importTranscript(outputBase + '.json');
       job = { status:'done', message:`Transcripción lista: ${transcript.length} segmentos.`, progress:'', percent:100 };
     } catch (e) { job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
@@ -335,7 +340,7 @@ async function finalizeExport(bin,temporary,output,intro,outro,studio,clipIn='no
   await run(bin,['-y',...inputs,'-filter_complex',parts.join(';'),'-map','[v]','-map','[a]',...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',output]);
   for(const c of clips) await fsp.unlink(c).catch(()=>{});
 }
-async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false) {
+async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false) {
   const q = QUALITY[quality] || QUALITY.original;
   const {chain:audioChain, studio:studioOn} = buildAudioFilter(enhance);
   const stdEnhance = !!audioChain;
@@ -401,6 +406,16 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     if (!keep.length) throw Error('Los cortes eliminarían el video completo.');
   }
   const keptTotal = keep.reduce((a,k)=>a+(k.end-k.start),0);
+  // Censurar groserías DENTRO de los pedazos (modo Cortar + censor=true, p.ej. best-of): silencia por segmento,
+  // con los tiempos relativos al inicio de cada pedazo (porque asetpts reinicia a 0).
+  const CPAD=0.15;
+  const censorRanges = censor ? (findMatches(transcript, dictionary)||[]).map(m=>({start:Number(m.start),end:Number(m.end)})).filter(r=>Number.isFinite(r.start)&&Number.isFinite(r.end)&&r.end>r.start) : [];
+  const censorAf = (s,e)=>{
+    if(!censorRanges.length) return '';
+    const hits=censorRanges.filter(r=>r.end>s-CPAD && r.start<e+CPAD); if(!hits.length) return '';
+    const enable=hits.map(r=>`between(t,${Math.max(0,r.start-CPAD-s).toFixed(3)},${Math.min(e-s,r.end+CPAD-s).toFixed(3)})`).join('+');
+    return `,volume=enable='${enable}':volume=0`;
+  };
   const filter = [];
   let vLabel, aLabel;
   // Zoom (punch-in) por segmento marcado con .zoom. Zoom ESTÁTICO (crop+scale): fiable, instantáneo
@@ -419,7 +434,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     const Dxf=0.14;
     keep.forEach((k,i)=>{
       filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${zoomOf(k)},settb=AVTB,fps=${fpsOut},format=yuv420p,setsar=1[v${i}]`);
-      filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
+      filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS${censorAf(k.start,k.end)}[a${i}]`);
     });
     let vp='[v0]', ap='[a0]', L=keep[0].end-keep[0].start;
     for(let i=1;i<keep.length;i++){
@@ -436,7 +451,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     keep.forEach((k,i) => {
       filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${normOf(k)}[v${i}]`);
       const length=k.end-k.start,fade=Math.min(.03,length/3);
-      filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
+      filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS${censorAf(k.start,k.end)},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
     });
     filter.push(keep.map((_,i) => `[v${i}][a${i}]`).join('') + `concat=n=${keep.length}:v=1:a=1[v][a]`);
     aLabel = stdEnhance ? '[aout]' : '[a]';
@@ -454,6 +469,9 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     else { filter.pop(); } // no se aplicó efecto: quita la normalización que ya no se usa
   }
   const cutCrf=String(q.crf||18);
+  // Render rápido cuando gpu=true: libx264 preset veryfast (~3x más rápido que medium) para videos largos (best-of).
+  // (El NVENC del ffmpeg incluido no inicializa en este build, así que el "rápido" es por CPU pero veloz y sin perder calidad perceptible.)
+  const cutVCodec = ['-c:v','libx264','-pix_fmt','yuv420p','-preset',gpu?'veryfast':'medium','-crf',cutCrf];
   const script = path.join(DATA,'filter.txt');
   await fsp.writeFile(script, filter.join(';\n'), 'utf8');
   const name = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
@@ -462,7 +480,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   job = { status:'running', message:'Exportando video limpio…', progress:'', percent:0, cancelRequested:false };
   (async () => {
     try {
-      await run(bins.ffmpeg, ['-y','-i',project.videoPath,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel,'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',cutCrf,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(keptTotal,'Exportando'));
+      await run(bins.ffmpeg, ['-y','-i',project.videoPath,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel,...cutVCodec,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(keptTotal,'Exportando'));
       await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,cutFxIn,cutFxOut,clipDur);
       const dl2=toDownloads(output); job = { status:'done', message:dl2?`✅ Listo y guardado en Descargas: ${path.basename(dl2)}`:`Video exportado: ${output}`, progress:'', percent:100, output, downloaded:dl2 };
     } catch (e) { await fsp.unlink(temporary).catch(()=>{});job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
@@ -550,6 +568,63 @@ async function detectTopics(){
   const bounds=arr.map(Number).filter(n=>Number.isFinite(n)&&n>8&&n<dur-10).sort((a,b)=>a-b);
   const out=[]; for(const b of bounds){ if(out.every(x=>Math.abs(x-b)>=25)) out.push(b); }
   return {boundaries:out.slice(0,6).map(x=>+x.toFixed(2))};
+}
+// ===== RESUMEN DEL DIRECTO (best-of) =====
+// Modelo pesado SOLO para esta sección (se carga bajo demanda). Combina texto (14B) + energía de audio (risas/gritos).
+const BESTOF_MODEL='qwen2.5:14b-instruct';
+let bestofScan=readJson(path.join(DATA,'bestof.json'), null); // se conserva al reiniciar
+async function detectBestMoments(opts){
+  const bin=readiness().ffmpeg;
+  if(!project?.videoPath||!bin) throw Error('Abre un video primero.');
+  if(!Array.isArray(transcript)||!transcript.length) throw Error('Primero transcribe el video.');
+  if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  const want=Math.max(3,Math.min(30,Number(opts&&opts.count)||12));
+  job={status:'running',message:'Analizando el directo con IA (modelo pesado)…',progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+   try{
+    if(!(await ollamaHasModel('qwen2.5:14b'))) throw Error('Falta el modelo qwen2.5:14b-instruct en Ollama (ollama pull qwen2.5:14b-instruct).');
+    const dur=await durationOf(project.videoPath).catch(()=>0);
+    // 1) energía del audio por ventana de 1s
+    job.message='Midiendo la energía del audio…'; job.percent=8;
+    let out='';
+    await run(bin,['-hide_banner','-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],s=>{out=(out+s).slice(-4000000);});
+    const energy=[]; let curT=null;
+    for(const line of out.split(/\r?\n/)){ const mt=line.match(/pts_time:([\d.]+)/); if(mt){curT=Number(mt[1]);continue;} const mr=line.match(/RMS_level=(-?[\d.]+|-?inf|nan)/i); if(mr&&curT!=null){ let db=Number(mr[1]); if(!Number.isFinite(db))db=-120; energy.push({t:curT,db}); curT=null; } }
+    // 2) bloques ~20s con texto + su pico de energía
+    job.message='Preparando la transcripción…'; job.percent=18;
+    const build=(sec)=>{const o=[];let cur=null;for(const s of transcript){const t=Number(s.start);const tx=String(s.text||'').trim();if(!Number.isFinite(t)||!tx)continue;if(!cur||t-cur.t>=sec){cur={t,text:tx};o.push(cur);}else cur.text+=' '+tx;}return o;};
+    let chunks=build(20); while(chunks.length>160){chunks=build(20+ (chunks.length/160|0)*10);}
+    if(chunks.length<2) throw Error('La transcripción es muy corta para un resumen.');
+    const dbs=energy.map(e=>e.db); const emin=Math.min(...dbs), emax=Math.max(...dbs); const span=(emax-emin)||1;
+    for(const c of chunks){ const win=energy.filter(e=>e.t>=c.t&&e.t<c.t+20); const peak=win.length?Math.max(...win.map(e=>e.db)):emin; c.e10=Math.round((peak-emin)/span*10); }
+    const fmt=s=>{const m=Math.floor(s/60),x=Math.round(s%60);return `${m}:${String(x).padStart(2,'0')}`;};
+    const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|energia ${c.e10}/10] ${c.text.replace(/\s+/g,' ').slice(0,170)}`).join('\n');
+    // 3) el 14B elige los mejores momentos
+    job.message='La IA está eligiendo los mejores momentos… (modelo pesado, tarda)'; job.percent=30;
+    const prompt=`Eres editor de un video "MEJORES MOMENTOS" de un streamer mexicano. Abajo está el directo en bloques: [SEGUNDOS|m:ss|energia X/10] texto. La energia alta suele ser risas, gritos o reaccion fuerte.\nElige los ${want} MEJORES momentos (lo gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos. Reparte a lo largo del directo.\nPara cada uno da: "ini" (segundos donde empieza, de la lista), "dur" (duracion 20 a 60 seg), "gancho" (3-6 palabras MAYUSCULAS), "por" (1 frase), "score" (1-10).\nResponde SOLO un arreglo JSON, ejemplo: [{"ini":120,"dur":35,"gancho":"...","por":"...","score":9}].\n\n${list}`;
+    let txt='';
+    const r=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(900000),headers:{'content-type':'application/json'},body:JSON.stringify({model:BESTOF_MODEL,prompt,stream:false,options:{temperature:0.3,num_predict:1200}})});
+    if(!r.ok) throw Error('Ollama '+r.status); const j=await r.json(); txt=String(j.response||'');
+    job.percent=88;
+    let arr=[]; const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} }
+    if(!arr.length){ const br=txt.indexOf('['); if(br>=0){ try{ arr=JSON.parse(txt.slice(br)+(txt.trim().endsWith(']')?'':']')); }catch{} } }
+    const cands=[];
+    for(const o of (Array.isArray(arr)?arr:[])){
+      const ini=Math.max(0,Number(o.ini)); let d=Math.max(15,Math.min(90,Number(o.dur)||35));
+      if(!Number.isFinite(ini)||ini>=dur-2) continue;
+      const end=Math.min(dur,ini+d); if(end-ini<8) continue;
+      // energía del tramo
+      const win=energy.filter(e=>e.t>=ini&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
+      cands.push({start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,40),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)});
+    }
+    // ordena por tiempo, quita solapados
+    cands.sort((a,b)=>a.start-b.start);
+    const picked=[]; for(const c of cands){ if(picked.every(p=>c.start>=p.end-1||c.end<=p.start+1)) picked.push(c); }
+    bestofScan={candidates:picked,scannedAt:Date.now(),model:BESTOF_MODEL,total:dur,count:picked.length};
+    writeJson(path.join(DATA,'bestof.json'),bestofScan);
+    job={status:'done',message:`Resumen listo: ${picked.length} momento(s) propuestos. Revisa y ajusta.`,progress:'',percent:100};
+   }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
+  })();
 }
 // Detecta silencios y calcula los PEDAZOS A CONSERVAR (como "quitar silencios" de CapCut).
 function detectSilences(opts){
@@ -1072,7 +1147,7 @@ const server=http.createServer(async (req,res) => {
       const f=path.join(DATA,'wave.png'); if(!fs.existsSync(f)) return error(res,'No encontrado.',404);
       return serveMedia(req,res,f);
     }
-    if (req.method==='POST' && url.pathname==='/api/transcribe') { await transcribe(); return respond(res,202,state()); }
+    if (req.method==='POST' && url.pathname==='/api/transcribe') { const body=await jsonBody(req).catch(()=>({})); await transcribe(body||{}); return respond(res,202,state()); }
     if (req.method==='POST' && url.pathname==='/api/download-df') {
       if (dfReady()) return respond(res,200,{ready:true});
       const dfUrl='https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/deep-filter-0.5.6-x86_64-pc-windows-msvc.exe';
@@ -1212,7 +1287,9 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
     if (req.method==='POST' && url.pathname==='/api/suggest-zooms') return respond(res,200,await suggestZooms());
     if (req.method==='POST' && url.pathname==='/api/topics') return respond(res,200,await detectTopics());
-    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth); return respond(res,202,result); }
+    if (req.method==='POST' && url.pathname==='/api/bestof/analyze') { const body=await jsonBody(req); detectBestMoments(body||{}); return respond(res,202,{started:true}); }
+    if (req.method==='GET' && url.pathname==='/api/bestof') return respond(res,200,bestofScan||{candidates:[]});
+    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu); return respond(res,202,result); }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);
   } catch(e) { return error(res,e); }

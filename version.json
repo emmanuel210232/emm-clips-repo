@@ -1,5 +1,5 @@
 {
-  "version": "1.15.0",
-  "notes": "Scrub fluido: al arrastrar la regla ahora se ve al instante la miniatura del punto (ya no espera el salto lento del video); al soltar queda el frame real nítido. Incluye el arreglo del editor (clic selecciona, arrastrar mueve, Ctrl+clic para Unir).",
+  "version": "1.16.0",
+  "notes": "🎬 NUEVO: Resumen del directo (best-of). Botón en el header: metes un directo largo y la IA encuentra los mejores momentos, los junta con transición, silencia groserías y exporta un solo video. Usa el modelo qwen2.5:14b (ollama pull qwen2.5:14b-instruct). También: silenciar groserías al cortar + render rápido en Exportar.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
