@@ -1,5 +1,5 @@
 {
-  "version": "1.16.3",
-  "notes": "UNIR mejorado: ahora puedes unir dos pedazos que tenían un corte borrado en medio. Se pegan suave (sin que se note el cortón) y lo que borraste NO vuelve. Antes decía 'no son seguidos' y no hacía nada. Más: arreglo de la barra de tiempo (ya se puede arrastrar para moverte).",
+  "version": "1.17.0",
+  "notes": "Resumen del directo mejorado: ahora eliges la DURACIÓN (~8 a ~30 min) y arma un resumen de ese largo (antes salían 4 min); momentos más completos (45-120s) y si faltan, rellena con los momentos de más risas/gritos. Barra de PROGRESO real mientras la IA elige. Y botón '🔄 Video completo' para quitar todos los cortes y volver al video entero (arregla que la timeline se quedara en una edición vieja).",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

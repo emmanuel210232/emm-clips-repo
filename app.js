@@ -117,7 +117,7 @@ let clips=null, selectedClipIdx=-1, clipsVideo='', clipUndo=[], multiSel=new Set
 function clipsKey(){return 'eirl_clips_'+(state?.project?.videoPath||'');}
 function keptFromCuts(cuts,dur){const sorted=[...(cuts||[])].map(c=>({start:+c.start,end:+c.end})).sort((a,b)=>a.start-b.start);const keep=[];let cur=0;for(const c of sorted){if(c.start>cur+0.015)keep.push({start:cur,end:c.start});cur=Math.max(cur,c.end);}if(dur>cur+0.015)keep.push({start:cur,end:dur});return keep.length?keep:[{start:0,end:dur}];}
 function loadClips(){const dur=tlDuration();
-  try{const raw=JSON.parse(localStorage.getItem(clipsKey())||'null');if(Array.isArray(raw)&&raw.length&&raw.every(c=>Number.isFinite(c.start)&&Number.isFinite(c.end)&&c.end>c.start)){clips=raw.map(c=>({start:+c.start,end:+c.end}));return;}}catch{}
+  try{const raw=JSON.parse(localStorage.getItem(clipsKey())||'null');if(Array.isArray(raw)&&raw.length&&raw.every(c=>Number.isFinite(c.start)&&Number.isFinite(c.end)&&c.end>c.start)){clips=raw.map(c=>({start:+c.start,end:+c.end,zoom:!!c.zoom,trans:!!c.trans,join:!!c.join}));return;}}catch{}
   // Sin clips guardados: si el proyecto ya trae cortes, derivo los clips conservados (consistente con el export).
   if(dur && (state?.manualCuts||[]).length){ clips=keptFromCuts(state.manualCuts,dur); saveClips(); return; }
   clips=dur?[{start:0,end:dur}]:[];}
@@ -132,6 +132,19 @@ function nearestKeptSource(srcT){for(const c of (clips||[])){if(srcT<=c.end)retu
 function pushUndo(){try{clipUndo.push(JSON.stringify(clips));if(clipUndo.length>40)clipUndo.shift();}catch{}}
 function undoClip(){if(!clipUndo.length)return notice('Nada que deshacer.');try{clips=JSON.parse(clipUndo.pop());saveClips();selectedClipIdx=-1;multiSel.clear();syncRemoved();buildTimeline();notice('↶ Deshecho.');}catch{}}
 // Une clips contiguos (quita divisiones sin quitar contenido). Si hay varios seleccionados, une esos; si no, une todos.
+async function resetToFullVideo(){
+  const dur=tlDuration();
+  if(!dur) return notice('Abre un video primero.',true);
+  if(!confirm('¿Quitar TODOS los cortes y dejar el video completo? (Se pierden los clips/cortes actuales de este video.)')) return;
+  pushUndo();
+  clips=[{start:0,end:dur}];
+  try{ localStorage.removeItem(clipsKey()); }catch{}
+  saveClips(); selectedClipIdx=-1; multiSel.clear();
+  await syncRemoved(); // deja manualCuts vacío (ya no hay huecos)
+  const bar=document.getElementById('timeline'); if(bar)bar.dataset.fp='';
+  buildTimeline();
+  notice('🔄 Listo: ahora está el VIDEO COMPLETO ('+fmt(dur)+'). Edita desde cero.');
+}
 function mergeClips(){
   ensureClips(); if(clips.length<2) return notice('No hay nada que unir.');
   const sel = multiSel.size>=2 ? multiSel : new Set(clips.map((_,i)=>i));
@@ -450,7 +463,7 @@ function render() {
   // Encadena: si se pidió best-of sin transcripción, al terminar la transcripción arranca el análisis solo.
   if(bestofPendingAnalyze && state.transcript && state.transcript.length && state.job.status==='done'){
     bestofPendingAnalyze=false;
-    api('/api/bestof/analyze',{count:bestofPendingCount}).then(()=>notice('⚙️ Transcrito. Ahora analizando los mejores momentos con IA (modelo pesado)…')).catch(e=>notice(e.message,true));
+    api('/api/bestof/analyze',{minutes:bestofPendingCount}).then(()=>notice('⚙️ Transcrito. Ahora analizando los mejores momentos con IA (modelo pesado)…')).catch(e=>notice(e.message,true));
   }
   // Auto-preparar el video al abrirlo (como CapCut): vista previa si el formato no se ve + miniaturas + onda.
   if(p && state.job.status!=='running'){
@@ -497,7 +510,7 @@ function render() {
   $('transcribe').disabled=!p||j.status==='running';$('analyzePauses').disabled=!p||j.status==='running';$('export').disabled=!p||j.status==='running';$('makePreview').disabled=!p||j.status==='running';$('suggestShorts').disabled=!p||!state.transcript.length||j.status==='running';$('renderAllShorts').disabled=!state.shorts.length||j.status==='running';
 }
 function safe(handler){return async()=>{try{await handler();await refresh();}catch(e){notice(e.message,true)}}}
-$('newProject').onclick=safe(async()=>{if(!confirm('¿Empezar un proyecto nuevo? Se quita el video y los clips actuales (los archivos ya exportados se conservan).'))return;await api('/api/project/clear',{});goStep(1);notice('Nuevo proyecto. Abre un video para empezar.');});
+$('newProject').onclick=safe(async()=>{if(!confirm('¿Empezar un proyecto nuevo? Se quita el video y los clips actuales (los archivos ya exportados se conservan).'))return;try{Object.keys(localStorage).filter(k=>k.startsWith('eirl_clips_')).forEach(k=>localStorage.removeItem(k));}catch{}clips=null;await api('/api/project/clear',{});goStep(1);notice('Nuevo proyecto. Abre un video para empezar.');});
 $('pickVideo').onclick=safe(async()=>{notice('Elige el video en el explorador de Windows…');const r=await api('/api/pick-video',{});if(r.cancelled){notice('Abrir cancelado.');return;}$('videoPath').value=r.path;await api('/api/project/open',{path:r.path});notice('Video abierto. Ahora pulsa “Transcribir video”.');});
 $('openVideo').onclick=safe(async()=>{await api('/api/project/open',{path:$('videoPath').value});notice('Video abierto. Ya puedes transcribirlo.');});
 $('videoFile').onchange=safe(async()=>{const f=$('videoFile').files[0];if(!f)return;notice('Copiando video a la app…');await upload('/api/project/upload',f);notice('Video listo.');});
@@ -571,6 +584,7 @@ $('tlZoomClip').onclick=()=>toggleZoom();
 $('tlZoomAuto').onclick=safe(suggestZooms);
 $('tlTopics').onclick=safe(suggestTransitions);
 $('tlUndo').onclick=()=>undoClip();
+$('tlResetFull').onclick=safe(resetToFullVideo);
 $('tlClearSel').onclick=()=>{selectedClipIdx=-1;drawSelection();notice('Clip deseleccionado.');};
 $('tlGoCut').onclick=()=>{goStep(4);const c=document.querySelector('input[name="censorMode"][value="cut"]');if(c){c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));}notice('Modo “Cortar” elegido: al Exportar MP4 se quitan los clips borrados y el video se une solo.');};
 window.addEventListener('keydown',e=>{
@@ -657,12 +671,12 @@ $('modeToggle').onclick=()=>switchMode(inBestof()?'cortos':'bestof');
 $('bestofPick').onclick=safe(async()=>{notice('Elige el directo en el explorador…');const r=await api('/api/pick-video',{});if(r.cancelled){notice('Cancelado.');return;}await api('/api/project/open',{path:r.path});await refresh();buildBestof();notice('Directo abierto. Pulsa “Procesar directo”.');});
 $('bestofRun').onclick=safe(async()=>{
   if(!state.project)throw Error('Elige un directo primero.');
-  bestofPendingCount=Number($('bestofCount').value)||12;
+  bestofPendingCount=Number($('bestofMinutes').value)||12;
   if(!state.transcript||!state.transcript.length){
     bestofPendingAnalyze=true; await api('/api/transcribe',{vad:true});
     notice('📝 Primero transcribo el directo saltando silencios (más rápido). En cuanto termine, arranca solo el análisis de mejores momentos.'); return;
   }
-  await api('/api/bestof/analyze',{count:bestofPendingCount});
+  await api('/api/bestof/analyze',{minutes:bestofPendingCount});
   notice('⚙️ Analizando el directo con IA (modelo pesado). Tarda; puedes cancelar arriba. Los momentos aparecen aquí al terminar.');
 });
 $('bestofToEditor').onclick=safe(()=>{

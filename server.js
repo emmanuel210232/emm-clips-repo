@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.16.3';
+const APP_VERSION = '1.17.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -587,7 +587,8 @@ async function detectBestMoments(opts){
   if(!project?.videoPath||!bin) throw Error('Abre un video primero.');
   if(!Array.isArray(transcript)||!transcript.length) throw Error('Primero transcribe el video.');
   if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
-  const want=Math.max(3,Math.min(30,Number(opts&&opts.count)||12));
+  const targetSec=Math.max(180,Math.min(2400,(Number(opts&&opts.minutes)||12)*60)); // objetivo de duración del resumen
+  const want=Math.max(8,Math.min(45,Math.round(targetSec/55)+5)); // cuántos candidatos pedir al modelo
   job={status:'running',message:'Analizando el directo con IA (modelo pesado)…',progress:'',percent:0,cancelRequested:false};
   (async()=>{
    try{
@@ -608,30 +609,53 @@ async function detectBestMoments(opts){
     for(const c of chunks){ const win=energy.filter(e=>e.t>=c.t&&e.t<c.t+20); const peak=win.length?Math.max(...win.map(e=>e.db)):emin; c.e10=Math.round((peak-emin)/span*10); }
     const fmt=s=>{const m=Math.floor(s/60),x=Math.round(s%60);return `${m}:${String(x).padStart(2,'0')}`;};
     const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|energia ${c.e10}/10] ${c.text.replace(/\s+/g,' ').slice(0,170)}`).join('\n');
-    // 3) el 14B elige los mejores momentos
+    // 3) el 14B elige los mejores momentos (streaming para mostrar progreso real)
     job.message='La IA está eligiendo los mejores momentos… (modelo pesado, tarda)'; job.percent=30;
-    const prompt=`Eres editor de un video "MEJORES MOMENTOS" de un streamer mexicano. Abajo está el directo en bloques: [SEGUNDOS|m:ss|energia X/10] texto. La energia alta suele ser risas, gritos o reaccion fuerte.\nElige los ${want} MEJORES momentos (lo gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos. Reparte a lo largo del directo.\nPara cada uno da: "ini" (segundos donde empieza, de la lista), "dur" (duracion 20 a 60 seg), "gancho" (3-6 palabras MAYUSCULAS), "por" (1 frase), "score" (1-10).\nResponde SOLO un arreglo JSON, ejemplo: [{"ini":120,"dur":35,"gancho":"...","por":"...","score":9}].\n\n${list}`;
-    let txt='';
-    const r=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(900000),headers:{'content-type':'application/json'},body:JSON.stringify({model:BESTOF_MODEL,prompt,stream:false,options:{temperature:0.3,num_predict:1200}})});
-    if(!r.ok) throw Error('Ollama '+r.status); const j=await r.json(); txt=String(j.response||'');
-    job.percent=88;
-    let arr=[]; const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} }
-    if(!arr.length){ const br=txt.indexOf('['); if(br>=0){ try{ arr=JSON.parse(txt.slice(br)+(txt.trim().endsWith(']')?'':']')); }catch{} } }
+    const tgtMin=Math.round(targetSec/60);
+    // La instrucción va DESPUÉS del texto (el modelo sigue mejor lo último) + objeto JSON (sin esto, en directos largos el 14B "resume" en prosa).
+    const prompt=`DIRECTO (bloques [SEGUNDOS|m:ss|energia X/10] texto; energia alta = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, extrae los ${want} MEJORES momentos para un video de clips de un streamer mexicano (lo mas gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos; reparte a lo largo del directo. Cada momento dura de 45 a 120 segundos.\nResponde SOLO este JSON, sin texto ni resumen en prosa: {"momentos":[{"ini":<segundos del bloque>,"dur":<45-120>,"gancho":"<TITULO MAYUSCULAS>","por":"<1 frase>","score":<1-10>}]}`;
+    const NP=3000;
+    const res=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(1800000),headers:{'content-type':'application/json'},body:JSON.stringify({model:BESTOF_MODEL,prompt,stream:true,format:'json',options:{temperature:0.4,num_predict:NP}})});
+    if(!res.ok) throw Error('Ollama '+res.status);
+    let txt='', sbuf='', toks=0; const dec=new TextDecoder();
+    for await (const chunk of res.body){
+      if(job.cancelRequested) throw Error('Análisis cancelado.');
+      sbuf+=dec.decode(chunk,{stream:true});
+      let nl; while((nl=sbuf.indexOf('\n'))>=0){ const line=sbuf.slice(0,nl); sbuf=sbuf.slice(nl+1); if(!line.trim())continue; try{ const o=JSON.parse(line); if(o.response){ txt+=o.response; toks++; } }catch{} }
+      job.percent=30+Math.min(57,Math.round(toks/NP*57));
+      job.message=`La IA está eligiendo los mejores momentos… ${job.percent}% (modelo pesado)`;
+    }
+    job.percent=88; job.message='Ordenando los momentos…';
+    let arr=[]; try{ const pj=JSON.parse(txt); arr=Array.isArray(pj)?pj:(pj.momentos||pj.moments||[]); }catch{}
+    if(!arr.length){ const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} } }
     const cands=[];
     for(const o of (Array.isArray(arr)?arr:[])){
-      const ini=Math.max(0,Number(o.ini)); let d=Math.max(15,Math.min(90,Number(o.dur)||35));
+      const ini=Math.max(0,Number(o.ini)); let d=Math.max(30,Math.min(130,Number(o.dur)||70));
       if(!Number.isFinite(ini)||ini>=dur-2) continue;
-      const end=Math.min(dur,ini+d); if(end-ini<8) continue;
-      // energía del tramo
+      const end=Math.min(dur,ini+d); if(end-ini<12) continue;
       const win=energy.filter(e=>e.t>=ini&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
       cands.push({start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,40),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)});
     }
-    // ordena por tiempo, quita solapados
-    cands.sort((a,b)=>a.start-b.start);
-    const picked=[]; for(const c of cands){ if(picked.every(p=>c.start>=p.end-1||c.end<=p.start+1)) picked.push(c); }
-    bestofScan={candidates:picked,scannedAt:Date.now(),model:BESTOF_MODEL,total:dur,count:picked.length};
+    // Selección: los de mayor score (sin solaparse) hasta alcanzar la duración objetivo.
+    cands.sort((a,b)=> b.score-a.score || b.energia-a.energia);
+    const picked=[]; let tot=0;
+    for(const c of cands){ if(!picked.every(p=>c.start>=p.end-1||c.end<=p.start+1)) continue; picked.push(c); tot+=c.end-c.start; if(tot>=targetSec) break; }
+    // RELLENO: si el modelo no llenó la duración objetivo, agrega momentos de ALTA ENERGÍA (risas/gritos) que no se solapen.
+    if(tot < targetSec*0.85){
+      const dbs2=energy.map(e=>e.db); const mean2=dbs2.reduce((a,b)=>a+b,0)/(dbs2.length||1);
+      const sd2=Math.sqrt(dbs2.reduce((a,b)=>a+(b-mean2)*(b-mean2),0)/(dbs2.length||1))||1;
+      const peaks=[]; for(let i=1;i<energy.length-1;i++){ const p=energy[i]; if(p.db>=mean2+0.4*sd2 && p.db>=energy[i-1].db && p.db>=energy[i+1].db) peaks.push(p); }
+      peaks.sort((a,b)=>b.db-a.db);
+      for(const pk of peaks){ if(tot>=targetSec) break; const st=Math.max(0,pk.t-25), en=Math.min(dur,pk.t+35); if(en-st<20) continue;
+        if(!picked.every(p=>st>=p.end-1||en<=p.start+1)) continue;
+        const e10=Math.round((pk.db-emin)/span*10);
+        picked.push({start:+st.toFixed(2),end:+en.toFixed(2),gancho:'MOMENTO FUERTE',por:'Pico de reacción/risas (detectado por audio).',score:5,energia:e10}); tot+=en-st;
+      }
+    }
+    picked.sort((a,b)=>a.start-b.start);
+    bestofScan={candidates:picked,scannedAt:Date.now(),model:BESTOF_MODEL,total:dur,count:picked.length,targetMin:Math.round(targetSec/60),durMin:+(tot/60).toFixed(1)};
     writeJson(path.join(DATA,'bestof.json'),bestofScan);
-    job={status:'done',message:`Resumen listo: ${picked.length} momento(s) propuestos. Revisa y ajusta.`,progress:'',percent:100};
+    job={status:'done',message:`Resumen listo: ${picked.length} momentos (~${Math.round(tot/60)} min). Revisa y ajusta.`,progress:'',percent:100};
    }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
   })();
 }

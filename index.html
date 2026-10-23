@@ -69,6 +69,7 @@
             <button id="tlZoomAuto" class="tl-btn" type="button" title="La IA escucha el audio y pone acercamientos en los momentos más enfáticos (puedes quitarlos uno por uno)">✨ Sugerir zooms</button>
             <button id="tlTopics" class="tl-btn" type="button" title="La IA lee la transcripción, detecta dónde cambia el tema y pone una transición (fundido suave) ahí">🎬 Transición por tema</button>
             <button id="tlUndo" class="tl-btn" type="button" title="Deshacer (Ctrl+Z)" disabled>↶ Deshacer</button>
+            <button id="tlResetFull" class="tl-btn" type="button" title="Quita TODOS los cortes y deja el video completo (empezar de cero)">🔄 Video completo</button>
             <button id="tlClearSel" class="tl-btn" type="button" title="Quita la selección del clip">✖ Deseleccionar</button>
             <span style="flex:1"></span>
             <span id="tlCutInfo" class="tl-cutinfo"></span>
@@ -215,7 +216,7 @@
         <div class="cardhead"><div><span class="number">1</span><h2>El directo</h2></div><span id="bestofVideoStatus" class="status">Sin video</span></div>
         <div class="row"><button id="bestofPick" class="primary big">📂 Elegir directo…</button><span class="muted">Es el mismo video que tengas abierto; puedes cambiarlo aquí.</span></div>
         <div class="row" style="margin-top:12px;align-items:center;gap:14px">
-          <label>¿Cuántos momentos? <select id="bestofCount"><option value="8">8</option><option value="12" selected>12</option><option value="16">16</option><option value="20">20</option></select></label>
+          <label>Duración del resumen <select id="bestofMinutes"><option value="8">~8 min</option><option value="12" selected>~12 min</option><option value="15">~15 min</option><option value="20">~20 min</option><option value="30">~30 min</option></select></label>
           <button id="bestofRun" class="primary">⚙️ Procesar directo</button>
           <span class="muted" id="bestofInfo">Transcribe + analiza con IA. Tarda (segundo plano).</span>
         </div>
