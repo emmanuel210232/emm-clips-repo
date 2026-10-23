@@ -384,3 +384,5 @@ body.bestof-mode #wizard, body.bestof-mode section.step, body.bestof-mode #confi
 .tl-zoombadge{position:absolute;top:2px;left:3px;font-size:12px;background:rgba(224,176,32,.92);border-radius:4px;padding:0 3px;line-height:16px;z-index:3;pointer-events:none}
 .tl-transbadge{position:absolute;top:2px;right:3px;font-size:12px;background:rgba(83,252,24,.85);border-radius:4px;padding:0 3px;line-height:16px;z-index:3;pointer-events:none}
 .tl-clip.hastrans{box-shadow:inset 3px 0 0 #53fc18}
+.tl-clip.welded{box-shadow:inset 3px 0 0 #3aa0ff}
+.tl-joinmark{position:absolute;top:2px;left:3px;font-size:11px;background:rgba(58,160,255,.9);border-radius:4px;padding:0 3px;line-height:16px;z-index:3;pointer-events:none}

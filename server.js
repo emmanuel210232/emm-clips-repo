@@ -100,7 +100,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.16.2';
+const APP_VERSION = '1.16.3';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -396,7 +396,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   // Si el editor de clips manda "segments" (los clips en orden), se concatenan EN ESE ORDEN (soporta reordenar/trim).
   let keep;
   if (Array.isArray(segments) && segments.length) {
-    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end),zoom:!!s.zoom,trans:!!s.trans})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
+    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end),zoom:!!s.zoom,trans:!!s.trans,join:!!s.join})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
     if (!keep.length) throw Error('Los clips no son válidos.');
   } else {
     const chosenPauses=pauses.filter(p=>selectedPauseIds.includes(p.id));
@@ -424,9 +424,10 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   const {width:ZW,height:ZH} = hasZoom ? videoDimensions(project.videoPath) : {width:0,height:0};
   const zoomOf = (k)=> (k.zoom && ZW && ZH) ? `,crop=iw/1.12:ih/1.12,scale=${ZW}:${ZH},setsar=1` : '';
   const normOf = (k)=> zoomOf(k); // los pedazos sin zoom quedan en su tamaño nativo (ya coinciden para el concat)
-  // Transición por tema: los pedazos marcados .trans llevan un fundido (dissolve) más largo en su entrada.
+  // Transición por tema (.trans = dissolve largo) y UNIR suave (.join = crossfade corto para que el corte no se note).
   const hasTrans = keep.some(k=>k.trans);
-  const canSmooth = (smooth||hasTrans) && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
+  const hasJoin = keep.some(k=>k.join);
+  const canSmooth = (smooth||hasTrans||hasJoin) && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
   if (canSmooth) {
     // Crossfade entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
     // d por límite: 0.5s donde cambia el tema (.trans), 0.14s si se pidió suavizar, 0.05s en cortes normales (imperceptible).
@@ -438,7 +439,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     });
     let vp='[v0]', ap='[a0]', L=keep[0].end-keep[0].start;
     for(let i=1;i<keep.length;i++){
-      const want = keep[i].trans ? 0.5 : (smooth ? Dxf : 0.05);
+      const want = keep[i].trans ? 0.5 : keep[i].join ? 0.2 : (smooth ? Dxf : 0.05);
       const d=Math.min(want,(keep[i].end-keep[i].start)/2,(keep[i-1].end-keep[i-1].start)/2,L/2);
       filter.push(`${vp}[v${i}]xfade=transition=fade:duration=${d.toFixed(3)}:offset=${(L-d).toFixed(3)}[vx${i}]`);
       filter.push(`${ap}[a${i}]acrossfade=d=${d.toFixed(3)}[ax${i}]`);

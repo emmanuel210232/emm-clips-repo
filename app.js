@@ -135,15 +135,23 @@ function undoClip(){if(!clipUndo.length)return notice('Nada que deshacer.');try{
 function mergeClips(){
   ensureClips(); if(clips.length<2) return notice('No hay nada que unir.');
   const sel = multiSel.size>=2 ? multiSel : new Set(clips.map((_,i)=>i));
-  const out=[]; let merged=0;
+  const out=[]; let merged=0, welded=0;
   for(let i=0;i<clips.length;){
-    let cur={start:clips[i].start,end:clips[i].end};
-    while(i+1<clips.length && sel.has(i) && sel.has(i+1) && Math.abs(clips[i+1].start-cur.end)<0.06){ cur.end=clips[i+1].end; i++; merged++; }
+    let cur={start:clips[i].start,end:clips[i].end,zoom:clips[i].zoom,trans:clips[i].trans,join:clips[i].join};
+    while(i+1<clips.length && sel.has(i) && sel.has(i+1)){
+      const gap=clips[i+1].start-cur.end;
+      if(Math.abs(gap)<0.06){ // PEGADOS (recién divididos): fusiona el rango → un solo clip
+        cur.end=clips[i+1].end; i++; merged++;
+      } else if(gap>0){ // HAY UN HUECO BORRADO en medio: suelda suave SIN traer de vuelta lo borrado
+        out.push(cur); cur={start:clips[i+1].start,end:clips[i+1].end,zoom:clips[i+1].zoom,trans:clips[i+1].trans,join:true}; i++; welded++;
+      } else break;
+    }
     out.push(cur); i++;
   }
-  if(!merged) return notice('Esos clips no son seguidos (tienen cortes en medio), no se pueden unir.',true);
+  if(!merged && !welded) return notice('No encontré clips para unir ahí. Pica/selecciona al menos dos seguidos.',true);
   pushUndo(); clips=out; saveClips(); multiSel.clear(); selectedClipIdx=-1; syncRemoved(); buildTimeline();
-  notice('🔗 Clips unidos ('+merged+' división'+(merged>1?'es':'')+' quitada'+(merged>1?'s':'')+').');
+  const parts=[]; if(merged)parts.push(merged+(merged>1?' divisiones quitadas':' división quitada')); if(welded)parts.push(welded+(welded>1?' cortes suavizados':' corte suavizado')+' (lo borrado NO vuelve)');
+  notice('🔗 Unido: '+parts.join(' · ')+'. Al exportar el corte no se nota.');
 }
 function toggleZoom(){
   ensureClips();
@@ -341,8 +349,9 @@ function buildTimeline(){
   const N=state.filmstrip?state.filmstrip.count:0, interval=N?dur/N:0, bounds=clipOutBounds();
   clips.forEach((c,i)=>{
     const L=outX(bounds[i].outStart), R=outX(bounds[i].outEnd), W=Math.max(6,R-L-3);
-    const block=document.createElement('div');block.className='tl-clip'+(i===selectedClipIdx?' selected':'')+(c.zoom?' haszoom':'')+(c.trans?' hastrans':'');
+    const block=document.createElement('div');block.className='tl-clip'+(i===selectedClipIdx?' selected':'')+(c.zoom?' haszoom':'')+(c.trans?' hastrans':'')+(c.join?' welded':'');
     block.style.left=L+'px';block.style.width=W+'px';block.dataset.i=i;
+    if(c.join){const jm=document.createElement('div');jm.className='tl-joinmark';jm.textContent='🔗';jm.title='Unido al anterior (corte suavizado; lo borrado no vuelve)';block.append(jm);}
     block.title='Clip '+(i+1)+' · '+fmt(c.end-c.start)+(c.zoom?' · 🔍 zoom':'')+' · pica para seleccionar · Supr para borrar';
     if(c.zoom){const z=document.createElement('div');z.className='tl-zoombadge';z.textContent='🔍';block.append(z);}
     if(c.trans){const tb=document.createElement('div');tb.className='tl-transbadge';tb.textContent='🎬';tb.title='Transición de tema (fundido) al entrar a este clip';block.append(tb);}
@@ -704,7 +713,7 @@ $('export').onclick=safe(async()=>{await selectionSave;
   let mode=(document.querySelector('input[name="censorMode"]:checked')||{}).value==='cut'?'cut':'mute';
   const ids=[...selected];const pauseIds=[...selectedPauses];
   let segments=null;
-  if(edited){ mode='cut'; segments=clips.map(c=>({start:+c.start.toFixed(3),end:+c.end.toFixed(3),zoom:!!c.zoom,trans:!!c.trans})); }
+  if(edited){ mode='cut'; segments=clips.map(c=>({start:+c.start.toFixed(3),end:+c.end.toFixed(3),zoom:!!c.zoom,trans:!!c.trans,join:!!c.join})); }
   else { if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas, o edita clips en la línea del tiempo (Paso 1).'); }
   const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};
   const smooth=edited && !!$('silSmooth')?.checked;

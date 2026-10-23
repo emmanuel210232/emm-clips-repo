@@ -1,5 +1,5 @@
 {
-  "version": "1.16.2",
-  "notes": "ARREGLADO: ahora SÍ puedes mover la barra de tiempo. La regla de arriba (más alta ahora) recibe el arrastre para moverte por el video; antes el mouse la atravesaba y no funcionaba. Arrastra en la franja de arriba = mover la barra; arrastra un clip = moverlo de lugar.",
+  "version": "1.16.3",
+  "notes": "UNIR mejorado: ahora puedes unir dos pedazos que tenían un corte borrado en medio. Se pegan suave (sin que se note el cortón) y lo que borraste NO vuelve. Antes decía 'no son seguidos' y no hacía nada. Más: arreglo de la barra de tiempo (ya se puede arrastrar para moverte).",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }
