@@ -1,6 +1,6 @@
 {
-  "version": "1.17.2",
-  "notes": "El resumen del directo ahora lee el directo COMPLETO (antes, en directos largos, la IA solo veia la ultima hora por un limite de contexto). Momentos repartidos a lo largo de todo el directo con titulos reales.",
+  "version": "1.17.3",
+  "notes": "El resumen del directo ya NO fuerza clips para llenar tiempo: toma solo los momentos que de verdad son buenos (la duracion es un maximo, no un minimo). Si el directo tuvo poco contenido bueno, saca menos clips en vez de rellenar con momentos genericos.",
   "files": [
     "server.js",
     "app.js",

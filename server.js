@@ -110,7 +110,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.17.2';
+const APP_VERSION = '1.17.3';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -654,17 +654,18 @@ async function detectBestMoments(opts){
       const win=energy.filter(e=>e.t>=ini&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
       cands.push({start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,40),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)});
     }
-    // Selección: los de mayor score (sin solaparse) hasta alcanzar la duración objetivo.
+    // Selección QUALITY-FIRST: los momentos del modelo son SUS mejores; se toman por score, sin solaparse.
+    // La duración es un TOPE máximo, NO un mínimo: si solo hay pocos momentos buenos, se dejan pocos — NO se fuerza relleno.
     cands.sort((a,b)=> b.score-a.score || b.energia-a.energia);
     const picked=[]; let tot=0;
     for(const c of cands){ if(!picked.every(p=>c.start>=p.end-1||c.end<=p.start+1)) continue; picked.push(c); tot+=c.end-c.start; if(tot>=targetSec) break; }
-    // RELLENO: si el modelo no llenó la duración objetivo, agrega momentos de ALTA ENERGÍA (risas/gritos) que no se solapen.
-    if(tot < targetSec*0.85){
+    // Red de seguridad SOLO si el modelo casi no encontró nada (falló): ofrece unos POCOS picos de audio (máx 6), sin rellenar a la fuerza.
+    if(picked.length<3){
       const dbs2=energy.map(e=>e.db); const mean2=dbs2.reduce((a,b)=>a+b,0)/(dbs2.length||1);
       const sd2=Math.sqrt(dbs2.reduce((a,b)=>a+(b-mean2)*(b-mean2),0)/(dbs2.length||1))||1;
-      const peaks=[]; for(let i=1;i<energy.length-1;i++){ const p=energy[i]; if(p.db>=mean2+0.4*sd2 && p.db>=energy[i-1].db && p.db>=energy[i+1].db) peaks.push(p); }
+      const peaks=[]; for(let i=1;i<energy.length-1;i++){ const p=energy[i]; if(p.db>=mean2+0.8*sd2 && p.db>=energy[i-1].db && p.db>=energy[i+1].db) peaks.push(p); }
       peaks.sort((a,b)=>b.db-a.db);
-      for(const pk of peaks){ if(tot>=targetSec) break; const st=Math.max(0,pk.t-25), en=Math.min(dur,pk.t+35); if(en-st<20) continue;
+      for(const pk of peaks){ if(picked.length>=6) break; const st=Math.max(0,pk.t-25), en=Math.min(dur,pk.t+35); if(en-st<20) continue;
         if(!picked.every(p=>st>=p.end-1||en<=p.start+1)) continue;
         const e10=Math.round((pk.db-emin)/span*10);
         picked.push({start:+st.toFixed(2),end:+en.toFixed(2),gancho:'MOMENTO FUERTE',por:'Pico de reacción/risas (detectado por audio).',score:5,energia:e10}); tot+=en-st;
