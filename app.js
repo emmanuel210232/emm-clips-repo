@@ -28,6 +28,21 @@ function notice(message, bad=false) { const el=$('notice'); el.hidden=!message; 
 async function api(url, data) { const res=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)}); const body=await res.json(); if(!res.ok)throw Error(body.error||'Error inesperado'); return body; }
 async function upload(url,file) { const res=await fetch(url+'?name='+encodeURIComponent(file.name),{method:'POST',headers:{'content-type':'application/octet-stream'},body:file});const body=await res.json();if(!res.ok)throw Error(body.error||'Error al subir archivo');return body; }
 async function refresh() { const res=await fetch('/api/state'); state=await res.json(); render(); }
+// Sondeo LIGERO del progreso (no baja la transcripción enorme cada segundo). Solo refresca TODO al terminar.
+function updateJobBar(){
+  const j=(state&&state.job)||{}; const running=j.status==='running';
+  const jb=$('jobBar'); if(jb)jb.hidden=!running;
+  if(running){const pct=Math.max(0,Math.min(100,j.percent||0));$('jobFill').style.width=(pct||4)+'%';$('jobFill').classList.toggle('indeterminate',pct===0);$('jobPct').textContent=pct===0?'…':pct+'%';$('jobLabel').textContent=j.message||'Procesando…';$('cancelJob').disabled=!!j.cancelRequested;$('cancelJob').textContent=j.cancelRequested?'Cancelando…':'Cancelar';}
+}
+async function pollJob(){
+  try{
+    const r=await fetch('/api/job'); if(!r.ok)return; const d=await r.json();
+    const prev=(state&&state.job)?state.job.status:'';
+    if(state)state.job=d.job; else state={job:d.job};
+    updateJobBar();
+    if(d.job&&d.job.status!=='running'&&prev==='running'){ await refresh(); } // terminó: trae resultados una sola vez
+  }catch{}
+}
 function fmt(t) { const n=Math.max(0,Math.floor(t));return `${String(Math.floor(n/3600)).padStart(2,'0')}:${String(Math.floor(n%3600/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`; }
 async function playAt(at,length) {
   const v=$('video');
@@ -419,6 +434,8 @@ function buildTranscript(){
   if(tv.dataset.fp===fp) return; tv.dataset.fp=fp;
   tv.replaceChildren();
   if(!state.transcript || !state.transcript.length){tv.textContent='Transcribe el video para ver aquí todo el texto.';return;}
+  // Transcripción enorme (directos largos): no dibujar decenas de miles de palabras (congelaría la app).
+  if(state.transcript.length>4000){ tv.textContent='Transcripción muy larga ('+state.transcript.length+' segmentos). El panel de texto se omite para no congelar la app; el corte de groserías y el resumen funcionan igual.'; return; }
   const ranges=(state.matches||[]).map(m=>[Number(m.start),Number(m.end)]);
   const inCut=t=>ranges.some(r=>t>=r[0]&&t<r[1]);
   const frag=document.createDocumentFragment();
@@ -743,4 +760,4 @@ document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=
 goStep(1); // siempre empezar en el paso 1 (como CapCut), no en el último
 try{ if(localStorage.getItem('eirl_mode')==='bestof') switchMode('bestof'); }catch{}
 refresh().catch(e=>notice(e.message,true));
-setInterval(()=>{if(state?.job.status==='running')refresh().catch(()=>{});},1000);
+setInterval(()=>{if(state?.job&&state.job.status==='running')pollJob().catch(()=>{});},1000);

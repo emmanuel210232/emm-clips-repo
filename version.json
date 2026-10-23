@@ -1,5 +1,5 @@
 {
-  "version": "1.17.0",
-  "notes": "Resumen del directo mejorado: ahora eliges la DURACIÓN (~8 a ~30 min) y arma un resumen de ese largo (antes salían 4 min); momentos más completos (45-120s) y si faltan, rellena con los momentos de más risas/gritos. Barra de PROGRESO real mientras la IA elige. Y botón '🔄 Video completo' para quitar todos los cortes y volver al video entero (arregla que la timeline se quedara en una edición vieja).",
+  "version": "1.17.1",
+  "notes": "ARREGLO IMPORTANTE para directos LARGOS (varias horas): el resumen se quedaba colgado para siempre por un bucle infinito al agrupar la transcripción enorme. Ya corre y avanza bien. Además: la app ya no se congela con directos largos (solo consulta el progreso cada segundo, no toda la transcripción) y el paso de medir energía muestra avance.",
   "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
 }

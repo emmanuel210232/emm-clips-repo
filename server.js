@@ -78,7 +78,17 @@ function resolveWhisper() {
 }
 function readiness() { const preferred=path.join(ROOT,'tools','ggml-large-v3-turbo-q5_0.bin'), fallback=path.join(ROOT,'tools','ggml-small.bin'); const whisper=resolveWhisper(); return { ffmpeg: executable(config.ffmpeg, 'ffmpeg'), ffprobe: executable(config.ffprobe, 'ffprobe'), whisper, whisperGpu: whisper.includes('tools-gpu'), model: config.model && fs.existsSync(config.model) ? config.model : fs.existsSync(preferred) ? preferred : fs.existsSync(fallback) ? fallback : '' }; }
 function listExports() { return fs.readdirSync(EXPORTS).filter(name=>/\.(mp4|png|jpe?g)$/i.test(name)).map(name=>({name,modified:fs.statSync(path.join(EXPORTS,name)).mtimeMs})).sort((a,b)=>b.modified-a.modified).slice(0,24); }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: findMatches(transcript, dictionary), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan, version: APP_VERSION, job }; }
+// CACHÉ de groserías: findMatches sobre transcripciones enormes (directos largos = decenas de miles de segmentos)
+// cuesta mucho; recalcularlo en CADA /api/state (cada segundo) colgaba el servidor. Se recalcula solo si cambian transcripción o diccionario.
+let _mCache={sig:null,val:[]};
+function cachedMatches(){
+  const t=transcript||[]; const lastEnd=t.length?t[t.length-1].end:0;
+  const dsig=(dictionary||[]).filter(d=>d&&d.enabled).map(d=>d.term).join('|');
+  const sig=t.length+':'+lastEnd+':'+dsig;
+  if(_mCache.sig!==sig){ _mCache={sig,val:findMatches(t,dictionary)}; }
+  return _mCache.val;
+}
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: cachedMatches(), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -100,7 +110,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.17.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -594,19 +604,22 @@ async function detectBestMoments(opts){
    try{
     if(!(await ollamaHasModel('qwen2.5:14b'))) throw Error('Falta el modelo qwen2.5:14b-instruct en Ollama (ollama pull qwen2.5:14b-instruct).');
     const dur=await durationOf(project.videoPath).catch(()=>0);
-    // 1) energía del audio por ventana de 1s
-    job.message='Midiendo la energía del audio…'; job.percent=8;
+    // 1) energía del audio por ventana de 1s (con progreso: útil en directos largos)
+    job.message='Midiendo la energía del audio…'; job.percent=5;
     let out='';
-    await run(bin,['-hide_banner','-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],s=>{out=(out+s).slice(-4000000);});
+    await run(bin,['-hide_banner','-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],s=>{
+      out=(out+s).slice(-6000000);
+      if(dur>0){ const mm=String(s).match(/pts_time:([\d.]+)/g); if(mm&&mm.length){ const last=+mm[mm.length-1].split(':')[1]; job.percent=5+Math.min(20,Math.round(last/dur*20)); job.message=`Midiendo la energía del audio… ${Math.round(last/dur*100)}%`; } }
+    });
     const energy=[]; let curT=null;
     for(const line of out.split(/\r?\n/)){ const mt=line.match(/pts_time:([\d.]+)/); if(mt){curT=Number(mt[1]);continue;} const mr=line.match(/RMS_level=(-?[\d.]+|-?inf|nan)/i); if(mr&&curT!=null){ let db=Number(mr[1]); if(!Number.isFinite(db))db=-120; energy.push({t:curT,db}); curT=null; } }
     // 2) bloques ~20s con texto + su pico de energía
     job.message='Preparando la transcripción…'; job.percent=18;
     const build=(sec)=>{const o=[];let cur=null;for(const s of transcript){const t=Number(s.start);const tx=String(s.text||'').trim();if(!Number.isFinite(t)||!tx)continue;if(!cur||t-cur.t>=sec){cur={t,text:tx};o.push(cur);}else cur.text+=' '+tx;}return o;};
-    let chunks=build(20); while(chunks.length>160){chunks=build(20+ (chunks.length/160|0)*10);}
+    let sec=20, chunks=build(sec); while(chunks.length>160 && sec<3600){ sec=Math.ceil(sec*1.6)+5; chunks=build(sec); } // intervalo SIEMPRE crece (antes oscilaba = bucle infinito en directos largos)
     if(chunks.length<2) throw Error('La transcripción es muy corta para un resumen.');
-    const dbs=energy.map(e=>e.db); const emin=Math.min(...dbs), emax=Math.max(...dbs); const span=(emax-emin)||1;
-    for(const c of chunks){ const win=energy.filter(e=>e.t>=c.t&&e.t<c.t+20); const peak=win.length?Math.max(...win.map(e=>e.db)):emin; c.e10=Math.round((peak-emin)/span*10); }
+    let emin=Infinity,emax=-Infinity; for(const e of energy){ if(e.db<emin)emin=e.db; if(e.db>emax)emax=e.db; } if(!Number.isFinite(emin)){emin=-60;emax=-20;} const span=(emax-emin)||1;
+    for(const c of chunks){ let peak=emin; for(const e of energy){ if(e.t>=c.t&&e.t<c.t+20&&e.db>peak)peak=e.db; } c.e10=Math.round((peak-emin)/span*10); }
     const fmt=s=>{const m=Math.floor(s/60),x=Math.round(s%60);return `${m}:${String(x).padStart(2,'0')}`;};
     const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|energia ${c.e10}/10] ${c.text.replace(/\s+/g,' ').slice(0,170)}`).join('\n');
     // 3) el 14B elige los mejores momentos (streaming para mostrar progreso real)
@@ -1045,6 +1058,8 @@ const server=http.createServer(async (req,res) => {
     if (![`127.0.0.1:${PORT}`,`localhost:${PORT}`,`[::1]:${PORT}`].includes(hostHdr)) return error(res,'Host no permitido.',403);
     const url=new URL(req.url,`http://127.0.0.1:${PORT}`);
     if (req.method==='GET' && url.pathname==='/api/state') return respond(res,200,state());
+    // Endpoint LIGERO: solo el progreso del trabajo (para poder sondear cada segundo sin mandar la transcripción enorme).
+    if (req.method==='GET' && url.pathname==='/api/job') return respond(res,200,{job, bestofReady: bestofScan?bestofScan.scannedAt:0, version:APP_VERSION});
     if (req.method==='GET' && url.pathname==='/api/video') return sendVideo(req,res);
     if (req.method==='GET' && url.pathname==='/api/export-file') {
       const name=String(url.searchParams.get('name')||'');
