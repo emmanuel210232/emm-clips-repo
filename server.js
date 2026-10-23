@@ -42,6 +42,8 @@ let manualCuts = readJson(files.manualCuts, []);
 let selection = readJson(files.selection, null);
 let sensitiveScan = readJson(files.sensitive, null);
 let silenceScan = null; // resultado transitorio de "quitar silencios"
+// Config de la NUBE para el resumen del directo (API de Claude). La KEY se guarda local y NUNCA se expone en /api/state.
+let cloud = readJson(path.join(DATA,'cloud.json'), {key:'', engine:'local', model:'claude-opus-5-5'});
 let job = { status: 'idle', message: '', progress: '', percent: 0 };
 let activeProc = null; // proceso ffmpeg/whisper en curso (para poder cancelar)
 let filmstrip = null; // {count, interval, wave} de la línea de tiempo del video actual
@@ -88,7 +90,7 @@ function cachedMatches(){
   if(_mCache.sig!==sig){ _mCache={sig,val:findMatches(t,dictionary)}; }
   return _mCache.val;
 }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: cachedMatches(), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan, version: APP_VERSION, job }; }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: cachedMatches(), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan, cloud:{engine:cloud.engine,model:cloud.model,keySet:!!cloud.key}, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -110,7 +112,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.17.3';
+const APP_VERSION = '1.18.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -592,6 +594,23 @@ async function detectTopics(){
 // Modelo pesado SOLO para esta sección (se carga bajo demanda). Combina texto (14B) + energía de audio (risas/gritos).
 const BESTOF_MODEL='qwen2.5:14b-instruct';
 let bestofScan=readJson(path.join(DATA,'bestof.json'), null); // se conserva al reiniciar
+// Llama a la API de Claude (nube) en streaming para elegir los mejores momentos. Devuelve el texto (JSON).
+async function cloudPick(prompt, model, onProgress){
+  if(!cloud.key) throw Error('Falta la API key de la nube. Pégala en el motor de IA del resumen.');
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal:AbortSignal.timeout(900000),
+    headers:{'x-api-key':cloud.key,'anthropic-version':'2023-06-01','content-type':'application/json'},
+    body:JSON.stringify({model:model||'claude-opus-5-5',max_tokens:8000,stream:true,messages:[{role:'user',content:prompt}]})});
+  if(!r.ok){ let t=''; try{t=await r.text();}catch{} throw Error('La nube respondió '+r.status+(t?(': '+t.slice(0,180)):'')); }
+  let txt='', buf=''; const dec=new TextDecoder();
+  for await (const chunk of r.body){
+    if(job.cancelRequested) throw Error('Análisis cancelado.');
+    buf+=dec.decode(chunk,{stream:true}); let nl;
+    while((nl=buf.indexOf('\n'))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
+      if(line.startsWith('data:')){ const d=line.slice(5).trim(); if(!d||d==='[DONE]')continue;
+        try{ const o=JSON.parse(d); if(o.type==='content_block_delta'&&o.delta&&o.delta.type==='text_delta'){ txt+=o.delta.text; onProgress&&onProgress(txt.length); } }catch{} } }
+  }
+  return txt;
+}
 async function detectBestMoments(opts){
   const bin=readiness().ffmpeg;
   if(!project?.videoPath||!bin) throw Error('Abre un video primero.');
@@ -599,10 +618,13 @@ async function detectBestMoments(opts){
   if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
   const targetSec=Math.max(180,Math.min(2400,(Number(opts&&opts.minutes)||12)*60)); // objetivo de duración del resumen
   const want=Math.max(8,Math.min(45,Math.round(targetSec/55)+5)); // cuántos candidatos pedir al modelo
-  job={status:'running',message:'Analizando el directo con IA (modelo pesado)…',progress:'',percent:0,cancelRequested:false};
+  const engine=((opts&&opts.engine)||cloud.engine||'local'); const useCloud=engine==='cloud'&&!!cloud.key;
+  const cloudModel=(opts&&opts.model)||cloud.model||'claude-opus-5-5';
+  job={status:'running',message:useCloud?'Analizando el directo con la nube…':'Analizando el directo con IA (modelo pesado)…',progress:'',percent:0,cancelRequested:false};
   (async()=>{
    try{
-    if(!(await ollamaHasModel('qwen2.5:14b'))) throw Error('Falta el modelo qwen2.5:14b-instruct en Ollama (ollama pull qwen2.5:14b-instruct).');
+    if(engine==='cloud'&&!cloud.key) throw Error('Elegiste la nube pero falta la API key. Pégala en el motor de IA.');
+    if(!useCloud && !(await ollamaHasModel('qwen2.5:14b'))) throw Error('Falta el modelo qwen2.5:14b-instruct en Ollama (ollama pull qwen2.5:14b-instruct).');
     const dur=await durationOf(project.videoPath).catch(()=>0);
     // 1) energía del audio por ventana de 1s (con progreso: útil en directos largos)
     job.message='Midiendo la energía del audio…'; job.percent=5;
@@ -616,32 +638,41 @@ async function detectBestMoments(opts){
     // 2) bloques ~20s con texto + su pico de energía
     job.message='Preparando la transcripción…'; job.percent=18;
     const build=(sec)=>{const o=[];let cur=null;for(const s of transcript){const t=Number(s.start);const tx=String(s.text||'').trim();if(!Number.isFinite(t)||!tx)continue;if(!cur||t-cur.t>=sec){cur={t,text:tx};o.push(cur);}else cur.text+=' '+tx;}return o;};
-    let sec=20, chunks=build(sec); while(chunks.length>160 && sec<3600){ sec=Math.ceil(sec*1.6)+5; chunks=build(sec); } // intervalo SIEMPRE crece (antes oscilaba = bucle infinito en directos largos)
+    const maxChunks=useCloud?1500:160; // la nube tiene contexto gigante: puede leer muchos más bloques
+    let sec=useCloud?12:20, chunks=build(sec); while(chunks.length>maxChunks && sec<3600){ sec=Math.ceil(sec*1.6)+5; chunks=build(sec); } // intervalo SIEMPRE crece (antes oscilaba = bucle infinito en directos largos)
     if(chunks.length<2) throw Error('La transcripción es muy corta para un resumen.');
     let emin=Infinity,emax=-Infinity; for(const e of energy){ if(e.db<emin)emin=e.db; if(e.db>emax)emax=e.db; } if(!Number.isFinite(emin)){emin=-60;emax=-20;} const span=(emax-emin)||1;
     for(const c of chunks){ let peak=emin; for(const e of energy){ if(e.t>=c.t&&e.t<c.t+20&&e.db>peak)peak=e.db; } c.e10=Math.round((peak-emin)/span*10); }
     const fmt=s=>{const m=Math.floor(s/60),x=Math.round(s%60);return `${m}:${String(x).padStart(2,'0')}`;};
-    const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|energia ${c.e10}/10] ${c.text.replace(/\s+/g,' ').slice(0,170)}`).join('\n');
+    const sliceLen=useCloud?600:170; // la nube lee el texto COMPLETO de cada bloque; el local solo una muestra
+    const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|energia ${c.e10}/10] ${c.text.replace(/\s+/g,' ').slice(0,sliceLen)}`).join('\n');
     // 3) el 14B elige los mejores momentos (streaming para mostrar progreso real)
     job.message='La IA está eligiendo los mejores momentos… (modelo pesado, tarda)'; job.percent=30;
     const tgtMin=Math.round(targetSec/60);
     // La instrucción va DESPUÉS del texto (el modelo sigue mejor lo último) + objeto JSON (sin esto, en directos largos el 14B "resume" en prosa).
     const prompt=`DIRECTO (bloques [SEGUNDOS|m:ss|energia X/10] texto; energia alta = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, extrae los ${want} MEJORES momentos para un video de clips de un streamer mexicano (lo mas gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos; reparte a lo largo del directo. Cada momento dura de 45 a 120 segundos.\nResponde SOLO este JSON, sin texto ni resumen en prosa: {"momentos":[{"ini":<segundos del bloque>,"dur":<45-120>,"gancho":"<TITULO MAYUSCULAS>","por":"<1 frase>","score":<1-10>}]}`;
-    const NP=3000;
-    // num_ctx: Ollama por defecto corta el prompt a ~2-4K tokens → en directos largos el modelo solo "veía" el final.
-    // Lo subimos para que quepa TODO el directo (estimamos tokens ≈ chars/3.5) + margen para la respuesta.
-    const estTok=Math.ceil(prompt.length/3.5)+NP+600;
-    const numCtx=Math.min(16384, Math.max(4096, Math.ceil(estTok/2048)*2048));
-    job.message='La IA está leyendo el directo completo…';
-    const res=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(2400000),headers:{'content-type':'application/json'},body:JSON.stringify({model:BESTOF_MODEL,prompt,stream:true,format:'json',options:{temperature:0.4,num_predict:NP,num_ctx:numCtx}})});
-    if(!res.ok) throw Error('Ollama '+res.status);
-    let txt='', sbuf='', toks=0; const dec=new TextDecoder();
-    for await (const chunk of res.body){
-      if(job.cancelRequested) throw Error('Análisis cancelado.');
-      sbuf+=dec.decode(chunk,{stream:true});
-      let nl; while((nl=sbuf.indexOf('\n'))>=0){ const line=sbuf.slice(0,nl); sbuf=sbuf.slice(nl+1); if(!line.trim())continue; try{ const o=JSON.parse(line); if(o.response){ txt+=o.response; toks++; } }catch{} }
-      job.percent=30+Math.min(57,Math.round(toks/NP*57));
-      job.message=`La IA está eligiendo los mejores momentos… ${job.percent}% (modelo pesado)`;
+    const NP=useCloud?8000:3000;
+    let txt='';
+    if(useCloud){
+      // NUBE (Claude): lee el directo completo y elige con mejor criterio. Streaming para progreso.
+      job.message=`La nube (${cloudModel.replace('claude-','').replace('-',' ')}) está leyendo el directo completo…`; job.percent=32;
+      const expect=Math.max(1500, want*110); // estimación de chars de respuesta para la barra
+      txt=await cloudPick(prompt, cloudModel, (len)=>{ job.percent=32+Math.min(55,Math.round(len/expect*55)); job.message='La nube está eligiendo los mejores momentos…'; });
+    } else {
+      // LOCAL (Ollama 14B). num_ctx subido para que quepa todo el directo (Ollama por defecto lo corta).
+      const estTok=Math.ceil(prompt.length/3.5)+NP+600;
+      const numCtx=Math.min(16384, Math.max(4096, Math.ceil(estTok/2048)*2048));
+      job.message='La IA está leyendo el directo completo…';
+      const res=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(2400000),headers:{'content-type':'application/json'},body:JSON.stringify({model:BESTOF_MODEL,prompt,stream:true,format:'json',options:{temperature:0.4,num_predict:NP,num_ctx:numCtx}})});
+      if(!res.ok) throw Error('Ollama '+res.status);
+      let sbuf='', toks=0; const dec=new TextDecoder();
+      for await (const chunk of res.body){
+        if(job.cancelRequested) throw Error('Análisis cancelado.');
+        sbuf+=dec.decode(chunk,{stream:true});
+        let nl; while((nl=sbuf.indexOf('\n'))>=0){ const line=sbuf.slice(0,nl); sbuf=sbuf.slice(nl+1); if(!line.trim())continue; try{ const o=JSON.parse(line); if(o.response){ txt+=o.response; toks++; } }catch{} }
+        job.percent=30+Math.min(57,Math.round(toks/NP*57));
+        job.message=`La IA está eligiendo los mejores momentos… ${job.percent}% (modelo pesado)`;
+      }
     }
     job.percent=88; job.message='Ordenando los momentos…';
     let arr=[]; try{ const pj=JSON.parse(txt); arr=Array.isArray(pj)?pj:(pj.momentos||pj.moments||[]); }catch{}
@@ -672,7 +703,7 @@ async function detectBestMoments(opts){
       }
     }
     picked.sort((a,b)=>a.start-b.start);
-    bestofScan={candidates:picked,scannedAt:Date.now(),model:BESTOF_MODEL,total:dur,count:picked.length,targetMin:Math.round(targetSec/60),durMin:+(tot/60).toFixed(1)};
+    bestofScan={candidates:picked,scannedAt:Date.now(),model:useCloud?cloudModel:BESTOF_MODEL,engine:useCloud?'cloud':'local',total:dur,count:picked.length,targetMin:Math.round(targetSec/60),durMin:+(tot/60).toFixed(1)};
     writeJson(path.join(DATA,'bestof.json'),bestofScan);
     job={status:'done',message:`Resumen listo: ${picked.length} momentos (~${Math.round(tot/60)} min). Revisa y ajusta.`,progress:'',percent:100};
    }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
@@ -1343,6 +1374,13 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/topics') return respond(res,200,await detectTopics());
     if (req.method==='POST' && url.pathname==='/api/bestof/analyze') { const body=await jsonBody(req); detectBestMoments(body||{}); return respond(res,202,{started:true}); }
     if (req.method==='GET' && url.pathname==='/api/bestof') return respond(res,200,bestofScan||{candidates:[]});
+    if (req.method==='POST' && url.pathname==='/api/bestof/config') { const b=await jsonBody(req)||{};
+      if(typeof b.key==='string'&&b.key.trim()) cloud.key=b.key.trim();
+      if(b.clearKey) cloud.key='';
+      if(b.engine==='local'||b.engine==='cloud') cloud.engine=b.engine;
+      if(typeof b.model==='string'&&/^claude-/.test(b.model)) cloud.model=b.model;
+      writeJson(path.join(DATA,'cloud.json'),cloud);
+      return respond(res,200,{ok:true,engine:cloud.engine,model:cloud.model,keySet:!!cloud.key}); }
     if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu); return respond(res,202,result); }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);

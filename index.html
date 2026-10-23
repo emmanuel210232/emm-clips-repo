@@ -220,6 +220,22 @@
           <button id="bestofRun" class="primary">⚙️ Procesar directo</button>
           <span class="muted" id="bestofInfo">Transcribe + analiza con IA. Tarda (segundo plano).</span>
         </div>
+        <div class="row wrap" style="margin-top:12px;align-items:center;gap:12px;border-top:1px solid #1c3022;padding-top:12px">
+          <label>🧠 Motor de IA
+            <select id="bestofEngine">
+              <option value="local">Local · gratis (modelo pesado)</option>
+              <option value="cloud:claude-opus-5-5">Nube · Opus 5.5 (mejor calidad)</option>
+              <option value="cloud:claude-sonnet-5-5">Nube · Sonnet 5.5 (buen valor)</option>
+              <option value="cloud:claude-haiku-4-5">Nube · Haiku (más barato)</option>
+            </select>
+          </label>
+          <span id="bestofEngineStatus" class="muted"></span>
+        </div>
+        <div class="row wrap" id="bestofKeyRow" style="margin-top:8px;gap:8px" hidden>
+          <input id="bestofKey" type="password" placeholder="Pega tu API key (sk-ant-…)" style="flex:1;min-width:220px" autocomplete="off">
+          <button id="bestofKeySave" class="secondary" type="button">Guardar llave</button>
+          <span class="muted" style="flex-basis:100%">Tu llave se guarda SOLO en tu PC (no se sube a ningún lado). <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Obtener llave</a></span>
+        </div>
       </div>
       <div id="bestofPanel" class="card" hidden>
         <div class="cardhead"><div><span class="number">2</span><h2>Mejores momentos propuestos</h2></div><span id="bestofCountBadge" class="status"></span></div>

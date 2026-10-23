@@ -1,6 +1,6 @@
 {
-  "version": "1.17.3",
-  "notes": "El resumen del directo ya NO fuerza clips para llenar tiempo: toma solo los momentos que de verdad son buenos (la duracion es un maximo, no un minimo). Si el directo tuvo poco contenido bueno, saca menos clips en vez de rellenar con momentos genericos.",
+  "version": "1.18.0",
+  "notes": "NUEVO: motor de IA en la nube para el Resumen del directo (Claude Opus 5.5 / Sonnet / Haiku). Lee el directo COMPLETO y elige los mejores momentos con mucho mejor criterio. Elige Local (gratis) o Nube en el selector y pega tu API key (se guarda solo en tu PC). Opcional; el local sigue funcionando.",
   "files": [
     "server.js",
     "app.js",

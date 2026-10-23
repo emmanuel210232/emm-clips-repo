@@ -641,9 +641,18 @@ function switchMode(mode){
   window.scrollTo(0,0);
 }
 function bfmt(s){return `${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}`;}
+function syncBestofEngine(){
+  const cl=state.cloud||{engine:'local',model:'claude-opus-5-5',keySet:false};
+  const sel=$('bestofEngine'); if(sel) sel.value = cl.engine==='cloud'?('cloud:'+(cl.model||'claude-opus-5-5')):'local';
+  const isCloud=cl.engine==='cloud';
+  const keyRow=$('bestofKeyRow'); if(keyRow) keyRow.hidden = !isCloud || cl.keySet; // pide llave solo si nube y no hay
+  const st=$('bestofEngineStatus');
+  if(st){ if(!isCloud) st.textContent='Gratis, en tu PC (modelo pesado).'; else st.textContent = cl.keySet?('✅ Nube lista · '+(cl.model||'').replace('claude-','')):'⚠️ Pega tu API key para usar la nube.'; }
+}
 function buildBestof(){
   const p=state.project;
   const vs=$('bestofVideoStatus'); if(vs) vs.textContent = p? p.videoPath.split(/[\\/]/).at(-1):'Sin video';
+  syncBestofEngine();
   const sc=state.bestofScan;
   if(sc && sc.candidates && sc.candidates.length){
     if(sc.scannedAt!==bestofScannedAt || !bestofItems){ bestofScannedAt=sc.scannedAt; bestofItems=sc.candidates.map(c=>({...c,on:true})); }
@@ -686,15 +695,31 @@ function updateBestofCounts(){
 }
 $('modeToggle').onclick=()=>switchMode(inBestof()?'cortos':'bestof');
 $('bestofPick').onclick=safe(async()=>{notice('Elige el directo en el explorador…');const r=await api('/api/pick-video',{});if(r.cancelled){notice('Cancelado.');return;}await api('/api/project/open',{path:r.path});await refresh();buildBestof();notice('Directo abierto. Pulsa “Procesar directo”.');});
+$('bestofEngine').onchange=safe(async()=>{
+  const v=$('bestofEngine').value;
+  const engine=v.startsWith('cloud:')?'cloud':'local'; const model=v.startsWith('cloud:')?v.slice(6):undefined;
+  const r=await api('/api/bestof/config',{engine,...(model?{model}:{})});
+  state.cloud={engine:r.engine,model:r.model,keySet:r.keySet}; syncBestofEngine();
+  notice(engine==='cloud'?(r.keySet?('✅ Motor: Nube · '+(r.model||'').replace('claude-','')):'Elegiste la nube: pega tu API key abajo.'):'Motor: Local (gratis).');
+});
+$('bestofKeySave').onclick=safe(async()=>{
+  const key=$('bestofKey').value.trim(); if(!key)throw Error('Pega tu API key.');
+  const v=$('bestofEngine').value; const model=v.startsWith('cloud:')?v.slice(6):'claude-opus-5-5';
+  const r=await api('/api/bestof/config',{key,engine:'cloud',model});
+  state.cloud={engine:r.engine,model:r.model,keySet:r.keySet}; $('bestofKey').value=''; syncBestofEngine();
+  notice('✅ Llave guardada. Nube lista con '+(r.model||'').replace('claude-','')+'. Ya puedes Procesar con la nube.');
+});
 $('bestofRun').onclick=safe(async()=>{
   if(!state.project)throw Error('Elige un directo primero.');
   bestofPendingCount=Number($('bestofMinutes').value)||12;
+  const cloudSel=($('bestofEngine').value||'').startsWith('cloud:');
+  if(cloudSel && !(state.cloud&&state.cloud.keySet)) throw Error('Elegiste la nube pero falta la API key. Pégala abajo y guárdala.');
   if(!state.transcript||!state.transcript.length){
     bestofPendingAnalyze=true; await api('/api/transcribe',{vad:true});
     notice('📝 Primero transcribo el directo saltando silencios (más rápido). En cuanto termine, arranca solo el análisis de mejores momentos.'); return;
   }
   await api('/api/bestof/analyze',{minutes:bestofPendingCount});
-  notice('⚙️ Analizando el directo con IA (modelo pesado). Tarda; puedes cancelar arriba. Los momentos aparecen aquí al terminar.');
+  notice(cloudSel?'☁️ Analizando el directo con la nube. Tarda ~1-2 min; verás el progreso arriba.':'⚙️ Analizando el directo con IA (modelo pesado). Tarda; puedes cancelar arriba.');
 });
 $('bestofToEditor').onclick=safe(()=>{
   if(!bestofItems||!bestofItems.some(c=>c.on))throw Error('Marca al menos un momento para mandar al editor.');
