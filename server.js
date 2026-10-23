@@ -110,7 +110,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.17.1';
+const APP_VERSION = '1.17.2';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -628,7 +628,12 @@ async function detectBestMoments(opts){
     // La instrucción va DESPUÉS del texto (el modelo sigue mejor lo último) + objeto JSON (sin esto, en directos largos el 14B "resume" en prosa).
     const prompt=`DIRECTO (bloques [SEGUNDOS|m:ss|energia X/10] texto; energia alta = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, extrae los ${want} MEJORES momentos para un video de clips de un streamer mexicano (lo mas gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos; reparte a lo largo del directo. Cada momento dura de 45 a 120 segundos.\nResponde SOLO este JSON, sin texto ni resumen en prosa: {"momentos":[{"ini":<segundos del bloque>,"dur":<45-120>,"gancho":"<TITULO MAYUSCULAS>","por":"<1 frase>","score":<1-10>}]}`;
     const NP=3000;
-    const res=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(1800000),headers:{'content-type':'application/json'},body:JSON.stringify({model:BESTOF_MODEL,prompt,stream:true,format:'json',options:{temperature:0.4,num_predict:NP}})});
+    // num_ctx: Ollama por defecto corta el prompt a ~2-4K tokens → en directos largos el modelo solo "veía" el final.
+    // Lo subimos para que quepa TODO el directo (estimamos tokens ≈ chars/3.5) + margen para la respuesta.
+    const estTok=Math.ceil(prompt.length/3.5)+NP+600;
+    const numCtx=Math.min(16384, Math.max(4096, Math.ceil(estTok/2048)*2048));
+    job.message='La IA está leyendo el directo completo…';
+    const res=await fetch(OLLAMA+'/api/generate',{method:'POST',signal:AbortSignal.timeout(2400000),headers:{'content-type':'application/json'},body:JSON.stringify({model:BESTOF_MODEL,prompt,stream:true,format:'json',options:{temperature:0.4,num_predict:NP,num_ctx:numCtx}})});
     if(!res.ok) throw Error('Ollama '+res.status);
     let txt='', sbuf='', toks=0; const dec=new TextDecoder();
     for await (const chunk of res.body){

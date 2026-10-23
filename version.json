@@ -1,5 +1,17 @@
 {
-  "version": "1.17.1",
-  "notes": "ARREGLO IMPORTANTE para directos LARGOS (varias horas): el resumen se quedaba colgado para siempre por un bucle infinito al agrupar la transcripción enorme. Ya corre y avanza bien. Además: la app ya no se congela con directos largos (solo consulta el progreso cada segundo, no toda la transcripción) y el paso de medir energía muestra avance.",
-  "files": ["server.js","app.js","index.html","style.css","lib/core.js","lib/shorts.js","lib/editorial.js","lib/framing.js","package.json","COMPROBAR_PC.ps1","Iniciar Emm Clips.cmd"]
+  "version": "1.17.2",
+  "notes": "El resumen del directo ahora lee el directo COMPLETO (antes, en directos largos, la IA solo veia la ultima hora por un limite de contexto). Momentos repartidos a lo largo de todo el directo con titulos reales.",
+  "files": [
+    "server.js",
+    "app.js",
+    "index.html",
+    "style.css",
+    "lib/core.js",
+    "lib/shorts.js",
+    "lib/editorial.js",
+    "lib/framing.js",
+    "package.json",
+    "COMPROBAR_PC.ps1",
+    "Iniciar Emm Clips.cmd"
+  ]
 }
