@@ -1,6 +1,6 @@
 {
-  "version": "1.19.0",
-  "notes": "Revisar contenido sensible mejorado: (1) ahora SOLO analiza los clips que quedaron en el editor, no todo el video original (no malgasta tiempo ni dinero). (2) Nuevo motor Nube Haiku (mucho mejor que el local: distingue abrazo de beso) con prompt estricto; elige Local gratis o Nube Haiku, usa la misma API key.",
+  "version": "1.19.1",
+  "notes": "Arreglo: al exportar un video con MUCHAS groserias, daba error \"Cannot allocate memory\". Ahora se silencian en grupos y exporta bien sin importar cuantas groserias haya.",
   "files": [
     "server.js",
     "app.js",

@@ -112,7 +112,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.19.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -369,7 +369,12 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     const ranges = adjustedCuts(matches, selectedIds, duration, words, adjustments, manualCuts);
     if (!ranges.length) throw Error('Selecciona al menos una palabra o agrega un corte manual para silenciar.');
     const pad = 0.15; // margen para cubrir el timing aproximado de whisper y no dejar oír la palabra
-    const enable = ranges.map(r=>`between(t,${Math.max(0,r.start-pad).toFixed(3)},${Math.min(duration,r.end+pad).toFixed(3)})`).join('+');
+    // Con MUCHAS groserías, una sola expresión `enable='between()+between()+...'` gigante hace que ffmpeg se quede SIN MEMORIA.
+    // Se parte en grupos y se encadenan varios filtros volume chicos → funciona con cualquier cantidad.
+    const terms = ranges.map(r=>`between(t,${Math.max(0,r.start-pad).toFixed(3)},${Math.min(duration,r.end+pad).toFixed(3)})`);
+    const CHUNK=20; const muteParts=[];
+    for(let i=0;i<terms.length;i+=CHUNK){ muteParts.push(`volume=enable='${terms.slice(i,i+CHUNK).join('+')}':volume=0`); }
+    const muteAf = muteParts.join(',');
     const output = path.join(EXPORTS, `${baseName}_censurado${q.copy?'':'_'+quality}_${Date.now()}.mp4`);
     const temporary = path.join(DATA, `export_${crypto.randomUUID()}.mp4`);
     let videoArgs;
@@ -378,7 +383,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     job = { status:'running', message:q.copy?`Silenciando ${ranges.length} ${ranges.length===1?'grosería':'groserías'}…`:`Silenciando y exportando (${q.label})…`, progress:'', percent:0, cancelRequested:false };
     (async () => {
       try {
-        const af = `volume=enable='${enable}':volume=0`+(audioChain?`,${audioChain}`:'');
+        const af = muteAf+(audioChain?`,${audioChain}`:'');
         const fx=(clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none');
         let fxInFinalizeIn=clipIn, fxInFinalizeOut=clipOut;
         if(fx && !q.scale && !q.fps){
@@ -425,8 +430,9 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   const censorAf = (s,e)=>{
     if(!censorRanges.length) return '';
     const hits=censorRanges.filter(r=>r.end>s-CPAD && r.start<e+CPAD); if(!hits.length) return '';
-    const enable=hits.map(r=>`between(t,${Math.max(0,r.start-CPAD-s).toFixed(3)},${Math.min(e-s,r.end+CPAD-s).toFixed(3)})`).join('+');
-    return `,volume=enable='${enable}':volume=0`;
+    const terms=hits.map(r=>`between(t,${Math.max(0,r.start-CPAD-s).toFixed(3)},${Math.min(e-s,r.end+CPAD-s).toFixed(3)})`);
+    let out=''; for(let i=0;i<terms.length;i+=20){ out+=`,volume=enable='${terms.slice(i,i+20).join('+')}':volume=0`; } // grupos para no agotar memoria
+    return out;
   };
   const filter = [];
   let vLabel, aLabel;
