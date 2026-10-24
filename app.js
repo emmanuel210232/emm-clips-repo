@@ -745,8 +745,14 @@ $('scanRun').onclick=safe(async()=>{
   if(!state.project)throw Error('Abre un video primero.');
   const cats=[];if($('scBeso').checked)cats.push('beso');if($('scDesnudez').checked)cats.push('desnudez');if($('scPelea').checked)cats.push('pelea');if($('scDrogas').checked)cats.push('drogas');
   if(!cats.length)throw Error('Marca al menos una cosa que quieras que la IA busque.');
-  await api('/api/scan-sensitive',{cats,sensitivity:$('scSens').value,step:Number($('scStep').value)||4,max:400,mode:($('scMode')||{}).value||'rapido'});
-  notice('🛡️ Analizando el video con IA (necesita Ollama abierto). Puedes cancelar arriba. Verás las marcas aquí al terminar.');
+  const engine=($('scEngine')||{}).value||'local';
+  if(engine==='cloud'&&!(state.cloud&&state.cloud.keySet)) throw Error('Elegiste la nube pero falta la API key. Ponla en el motor de IA del Resumen del directo.');
+  // SOLO escanea los clips conservados (el editor) → no gasta en las 6h del original.
+  ensureClips();
+  const segments=(clips&&clips.length)?clips.map(c=>({start:+c.start.toFixed(2),end:+c.end.toFixed(2)})):null;
+  await api('/api/scan-sensitive',{cats,sensitivity:$('scSens').value,step:Number($('scStep').value)||4,max:400,mode:($('scMode')||{}).value||'rapido',engine,segments});
+  const mins=segments?Math.round(segments.reduce((a,c)=>a+(c.end-c.start),0)/60):0;
+  notice(engine==='cloud'?('☁️ Analizando con la nube (Haiku) SOLO los '+mins+' min de tus clips. Verás las marcas al terminar.'):'🛡️ Analizando con IA local (necesita Ollama) solo tus clips. Puedes cancelar arriba.');
 });
 // Si la pestaña se oculta a media previa, limpia el overlay (las animaciones se pausan al ocultar).
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopAnimPreview();});

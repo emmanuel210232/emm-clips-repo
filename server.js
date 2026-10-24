@@ -112,7 +112,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.19.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -1031,6 +1031,20 @@ async function moondreamQuick(fp){
   }catch{ return true; } // ante la duda, que lo revise gemma3
 }
 const RISK_ORDER={ninguno:0,bajo:1,medio:2,alto:3};
+// Visión en la NUBE (Claude Haiku) para el escáner sensible: varios fotogramas por llamada (barato) + prompt MUY estricto.
+async function cloudClassifyBatch(files){
+  const content=[];
+  for(const fp of files){ let b64; try{ b64=await fsp.readFile(fp,{encoding:'base64'}); }catch{ continue; } content.push({type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}}); }
+  if(!content.length) return [];
+  content.push({type:'text',text:`Eres moderador de YouTube. Te doy ${content.length} fotogramas de un video EN ORDEN. Para CADA uno marca SOLO lo que YouTube penaliza de verdad y que sea CLARO Y EVIDENTE: un BESO en la boca evidente, DESNUDEZ (genitales, senos o nalgas al descubierto) o acto sexual, una PELEA REAL con golpes o sangre, o consumo visible de DROGAS.\nSE MUY ESTRICTO: abrazos, saludos, gente cerca o posando, baile, fiesta, una copa o cerveza social, ropa escotada o de fiesta = NO cuentan (todo false). Ante la MENOR duda, pon false.\nResponde SOLO un arreglo JSON, un objeto por fotograma EN EL MISMO ORDEN, sin texto extra: [{"beso":bool,"desnudez":bool,"pelea":bool,"drogas":bool,"riesgo":"ninguno|bajo|medio|alto"}]`});
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal:AbortSignal.timeout(120000),
+    headers:{'x-api-key':cloud.key,'anthropic-version':'2023-06-01','content-type':'application/json'},
+    body:JSON.stringify({model:'claude-haiku-4-5',max_tokens:1500,messages:[{role:'user',content}]})});
+  if(!r.ok){ let t=''; try{t=await r.text();}catch{} throw Error('La nube (visión) respondió '+r.status+(t?(': '+t.slice(0,160)):'')); }
+  const j=await r.json(); let txt=''; for(const b of (j.content||[])){ if(b.type==='text') txt+=b.text; }
+  let arr=[]; const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} }
+  return Array.isArray(arr)?arr:[];
+}
 function scanSensitive(opts){
   const bin=readiness().ffmpeg;
   if(!bin||!project?.videoPath) throw Error('Abre un video primero.');
@@ -1040,13 +1054,18 @@ function scanSensitive(opts){
   const minRisk=sens==='relajado'?3:sens==='estricto'?1:2; // umbral por sensibilidad
   const step=Math.max(2,Math.min(15,Number(opts.step)||4));
   const maxFrames=Math.max(10,Math.min(600,Number(opts.max)||250));
+  const engine=(opts.engine==='cloud'&&cloud.key)?'cloud':'local';
+  // SOLO escanea los pedazos conservados (los clips del editor), no el video completo → no malgasta dinero/tiempo en lo borrado.
+  const segsIn=(Array.isArray(opts.segments)&&opts.segments.length)?opts.segments.map(s=>({start:Math.max(0,+s.start),end:+s.end})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>0.3):null;
   job={status:'running',message:'Preparando análisis con IA…',progress:'',percent:0,cancelRequested:false};
   (async()=>{
     try{
-      if(!(await ollamaHasVision())) throw Error('No encuentro gemma3 en Ollama. Abre Ollama y ten el modelo gemma3:4b instalado.');
+      if(opts.engine==='cloud'&&!cloud.key) throw Error('Elegiste la nube pero falta la API key. Pégala en el motor de IA del resumen.');
+      if(engine==='local'&&!(await ollamaHasVision())) throw Error('No encuentro gemma3 en Ollama. Abre Ollama y ten el modelo gemma3:4b instalado.');
       const dur=await durationOf(project.videoPath);
+      const segs=segsIn?segsIn.map(s=>({start:s.start,end:Math.min(dur,s.end)})):[{start:1,end:dur-0.5}];
       const dir=path.join(DATA,'scan'); await fsp.rm(dir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(dir,{recursive:true});
-      let times=[]; for(let t=1;t<dur-0.5;t+=step) times.push(+t.toFixed(2));
+      let times=[]; for(const sg of segs){ for(let t=sg.start+0.4;t<sg.end-0.2;t+=step) times.push(+t.toFixed(2)); }
       if(times.length>maxFrames){ const k=Math.ceil(times.length/maxFrames); times=times.filter((_,i)=>i%k===0); }
       const frames=[];
       for(let i=0;i<times.length;i++){
@@ -1056,21 +1075,30 @@ function scanSensitive(opts){
         if(fs.existsSync(fp)) frames.push({t,i,fp});
         job.message=`Sacando fotogramas… (${i+1}/${times.length})`; job.percent=Math.round((i+1)/times.length*35);
       }
-      // MODO RÁPIDO: moondream (chico) filtra primero; solo lo sospechoso lo confirma gemma3.
-      const fast = opts.mode==='rapido' && await ollamaHasModel('moondream');
-      job.message = fast ? 'Filtrando rápido (moondream)…' : 'Revisando con IA (gemma3)…';
-      const flagged=[]; let descartados=0, revisados=0;
-      for(let n=0;n<frames.length;n++){
-        if(job.cancelRequested) throw Error('Análisis cancelado.');
-        const f=frames[n];
-        if(fast){
-          const sus=await moondreamQuick(f.fp);
-          if(!sus){ descartados++; job.message=`Filtrando rápido (moondream)… (${n+1}/${frames.length})`; job.percent=35+Math.round((n+1)/Math.max(1,frames.length)*63); continue; }
+      const flagged=[];
+      if(engine==='cloud'){
+        // NUBE (Haiku): varios fotogramas por llamada, prompt estricto. Mucho más preciso (distingue abrazo vs beso).
+        job.message='Revisando con la nube (Haiku)…';
+        const BATCH=5;
+        for(let n=0;n<frames.length;n+=BATCH){
+          if(job.cancelRequested) throw Error('Análisis cancelado.');
+          const batch=frames.slice(n,n+BATCH);
+          let verdicts=[]; try{ verdicts=await cloudClassifyBatch(batch.map(f=>f.fp)); }catch(e){ if(n===0) throw e; }
+          batch.forEach((f,bi)=>{ const r=verdicts[bi]; if(r){ const which=cats.filter(c=>r[c]); if(which.length){ flagged.push({t:f.t,i:f.i,cats:which,riesgo:r.riesgo||'medio',nota:''}); } } });
+          job.message=`Revisando con la nube (Haiku)… (${Math.min(n+BATCH,frames.length)}/${frames.length})`; job.percent=35+Math.round(Math.min(n+BATCH,frames.length)/Math.max(1,frames.length)*63);
         }
-        revisados++;
-        const r=await classifyFrame(f.fp);
-        if(r){ const hit=cats.some(c=>r[c]) && (RISK_ORDER[r.riesgo]||0)>=minRisk; if(hit){ const which=cats.filter(c=>r[c]); flagged.push({t:f.t,i:f.i,cats:which,riesgo:r.riesgo,nota:r.nota}); } }
-        job.message=fast?`Confirmando con gemma3… (${n+1}/${frames.length})`:`Revisando con IA… (${n+1}/${frames.length})`; job.percent=35+Math.round((n+1)/Math.max(1,frames.length)*63);
+      } else {
+        // LOCAL: moondream (chico) filtra primero; solo lo sospechoso lo confirma gemma3.
+        const fast = opts.mode==='rapido' && await ollamaHasModel('moondream');
+        job.message = fast ? 'Filtrando rápido (moondream)…' : 'Revisando con IA (gemma3)…';
+        for(let n=0;n<frames.length;n++){
+          if(job.cancelRequested) throw Error('Análisis cancelado.');
+          const f=frames[n];
+          if(fast){ const sus=await moondreamQuick(f.fp); if(!sus){ job.message=`Filtrando rápido (moondream)… (${n+1}/${frames.length})`; job.percent=35+Math.round((n+1)/Math.max(1,frames.length)*63); continue; } }
+          const r=await classifyFrame(f.fp);
+          if(r){ const hit=cats.some(c=>r[c]) && (RISK_ORDER[r.riesgo]||0)>=minRisk; if(hit){ const which=cats.filter(c=>r[c]); flagged.push({t:f.t,i:f.i,cats:which,riesgo:r.riesgo,nota:r.nota}); } }
+          job.message=fast?`Confirmando con gemma3… (${n+1}/${frames.length})`:`Revisando con IA… (${n+1}/${frames.length})`; job.percent=35+Math.round((n+1)/Math.max(1,frames.length)*63);
+        }
       }
       // Agrupa fotogramas marcados cercanos en TRAMOS
       const ranges=[]; const gap=step*2.2;
@@ -1080,7 +1108,7 @@ function scanSensitive(opts){
         else ranges.push({start:Math.max(0,fl.t-1),end:Math.min(dur,fl.t+step),endRaw:fl.t,cats:[...fl.cats],riesgo:fl.riesgo,nota:fl.nota,thumb:fl.i,hits:1});
       }
       ranges.forEach(r=>{delete r.endRaw;r.start=+r.start.toFixed(2);r.end=+r.end.toFixed(2);});
-      sensitiveScan={ranges,scannedAt:Date.now(),frames:frames.length,cats,sensitivity:sens,mode:fast?'rapido':'preciso',revisados:fast?revisados:frames.length};
+      sensitiveScan={ranges,scannedAt:Date.now(),frames:frames.length,cats,sensitivity:sens,engine};
       writeJson(files.sensitive,sensitiveScan);
       job={status:'done',message:ranges.length?`Revisión lista: ${ranges.length} momento(s) a revisar.`:'Revisión lista: no se marcó nada sospechoso.',progress:'',percent:100};
     }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }

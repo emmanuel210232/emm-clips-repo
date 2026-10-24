@@ -1,6 +1,6 @@
 {
-  "version": "1.18.0",
-  "notes": "NUEVO: motor de IA en la nube para el Resumen del directo (Claude Opus 5.5 / Sonnet / Haiku). Lee el directo COMPLETO y elige los mejores momentos con mucho mejor criterio. Elige Local (gratis) o Nube en el selector y pega tu API key (se guarda solo en tu PC). Opcional; el local sigue funcionando.",
+  "version": "1.19.0",
+  "notes": "Revisar contenido sensible mejorado: (1) ahora SOLO analiza los clips que quedaron en el editor, no todo el video original (no malgasta tiempo ni dinero). (2) Nuevo motor Nube Haiku (mucho mejor que el local: distingue abrazo de beso) con prompt estricto; elige Local gratis o Nube Haiku, usa la misma API key.",
   "files": [
     "server.js",
     "app.js",
