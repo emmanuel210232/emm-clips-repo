@@ -1,6 +1,6 @@
 {
-  "version": "1.19.1",
-  "notes": "Arreglo: al exportar un video con MUCHAS groserias, daba error \"Cannot allocate memory\". Ahora se silencian en grupos y exporta bien sin importar cuantas groserias haya.",
+  "version": "1.19.2",
+  "notes": "Arreglo: la linea de tiempo se quedaba vacia (decia Abre un video) aunque el video ya estaba cargado, sobre todo con archivos .mpg que usan vista previa. Ahora se dibuja sola en cuanto el video sabe su duracion.",
   "files": [
     "server.js",
     "app.js",

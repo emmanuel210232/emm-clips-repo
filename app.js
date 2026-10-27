@@ -591,6 +591,9 @@ function moveClipTo(fromIdx,targetOut){const b=clipOutBounds();let ins=b.findInd
   });
 })();
 $('video').addEventListener('timeupdate',()=>{editedPlaybackTick();positionHead();updateTlTime();});
+// La línea de tiempo necesita la DURACIÓN del video; con vistas previas (.mpg) la duración llega DESPUÉS del primer render.
+// Al conocerse la duración (o cambiar), se fuerza a redibujar la timeline (si no, se queda vacía aunque el video ya cargó).
+['loadedmetadata','durationchange','canplay'].forEach(ev=>$('video').addEventListener(ev,()=>{try{const tl=$('timeline');if(tl)tl.dataset.fp='';ensureClips();buildTimeline();updateTlTime();}catch{}}));
 // Reconstruye la timeline cuando cambia su ancho (fit-to-width): al mostrarse o al redimensionar la ventana.
 (function(){const bar=$('timeline');if(!bar||!window.ResizeObserver)return;let lastW=0;const ro=new ResizeObserver(()=>{const w=bar.clientWidth;if(w>0&&Math.abs(w-lastW)>8){lastW=w;bar.dataset.fp='';buildTimeline();}});ro.observe(bar);})();
 // ---- Cortes visuales en la timeline ----
