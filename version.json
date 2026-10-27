@@ -1,6 +1,6 @@
 {
-  "version": "1.19.2",
-  "notes": "Arreglo: la linea de tiempo se quedaba vacia (decia Abre un video) aunque el video ya estaba cargado, sobre todo con archivos .mpg que usan vista previa. Ahora se dibuja sola en cuanto el video sabe su duracion.",
+  "version": "1.19.3",
+  "notes": "Arreglo visual: al usar Unir (soldar clips con hueco borrado), SI se aplicaba pero el indicador 🔗 no aparecia, parecia que no hacia nada. Ahora se ve el 🔗 y el borde azul en el clip soldado. (La union siempre funciono; solo no se veia.)",
   "files": [
     "server.js",
     "app.js",

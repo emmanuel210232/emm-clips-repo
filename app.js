@@ -138,7 +138,7 @@ function loadClips(){const dur=tlDuration();
   clips=dur?[{start:0,end:dur}]:[];}
 function saveClips(){try{localStorage.setItem(clipsKey(),JSON.stringify(clips));}catch{}}
 function ensureClips(){const dur=tlDuration();if(!clips)loadClips();if((!clips||!clips.length)&&dur)clips=[{start:0,end:dur}];return clips||[];}
-function clipsSig(){return (clips||[]).map(c=>c.start.toFixed(1)+'-'+c.end.toFixed(1)).join(',');}
+function clipsSig(){return (clips||[]).map(c=>c.start.toFixed(1)+'-'+c.end.toFixed(1)+(c.zoom?'z':'')+(c.trans?'t':'')+(c.join?'j':'')).join(',');}
 function totalOut(){return (clips||[]).reduce((a,c)=>a+(c.end-c.start),0);}
 function clipOutBounds(){let acc=0;return (clips||[]).map(c=>{const o={outStart:acc,outEnd:acc+(c.end-c.start)};acc=o.outEnd;return o;});}
 function outToSource(outT){let acc=0;for(const c of (clips||[])){const d=c.end-c.start;if(outT<=acc+d+1e-6)return c.start+Math.max(0,Math.min(d,outT-acc));acc+=d;}const last=(clips||[])[(clips||[]).length-1];return last?last.end:0;}
