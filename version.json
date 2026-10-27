@@ -1,6 +1,6 @@
 {
-  "version": "1.19.3",
-  "notes": "Arreglo visual: al usar Unir (soldar clips con hueco borrado), SI se aplicaba pero el indicador 🔗 no aparecia, parecia que no hacia nada. Ahora se ve el 🔗 y el borde azul en el clip soldado. (La union siempre funciono; solo no se veia.)",
+  "version": "1.19.4",
+  "notes": "Arreglo: en Mejores momentos > ver clip completo (Short), la vista previa se quedaba trabada en play/pausa (un tirón por segundo). El motor que salta los huecos de la edicion se metia con la reproduccion del Short. Ahora al ver un Short se reproduce normal; el salto de huecos solo actua al reproducir la linea de tiempo del editor.",
   "files": [
     "server.js",
     "app.js",

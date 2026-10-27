@@ -17,6 +17,7 @@ let selectionHydrated = false;
 let selectionSave = Promise.resolve();
 let playerSourceOffset = 0;
 let playerIsCutPreview = false;
+let reviewClip = false; // true cuando se reproduce un Short/fragmento de revisión → NO aplicar el salto de huecos de la edición
 function sourcePlayerTime() { if(playerIsCutPreview) throw Error('Abre el video original o un fragmento sin cortar para tomar su tiempo.'); return $('video').currentTime+playerSourceOffset; }
 function persistSelection() {
   const snapshot={selectedIds:[...selected],selectedPauseIds:[...selectedPauses]};
@@ -50,12 +51,12 @@ async function playAt(at,length) {
   if(!state.project?.previewPath && /\.(mpg|mpeg|mkv|avi)$/i.test(state.project?.videoPath||'')) {
     notice('Preparando fragmento de revisión…');
     const clip=await api('/api/review-clip',{at,length});
-    playerSourceOffset=at-clip.seek;playerIsCutPreview=false;
+    playerSourceOffset=at-clip.seek;playerIsCutPreview=false;reviewClip=true;
     v.src=clip.url;
     v.ontimeupdate=null;
     v.onloadedmetadata=()=>{v.currentTime=Math.max(0,length?clip.seek:clip.seek-1);v.play().catch(()=>{});notice('');};
   } else {
-    playerSourceOffset=0;playerIsCutPreview=false;
+    playerSourceOffset=0;playerIsCutPreview=false;reviewClip=true;
     v.src='/api/video?d='+Date.now();
     v.ontimeupdate=length?()=>{if(v.currentTime>=at+length)v.pause();}:null;
     v.onloadedmetadata=()=>{v.currentTime=Math.max(0,length?at:at-1);v.play().catch(()=>{});notice('');};
@@ -342,11 +343,12 @@ function hideScrubThumb(){const img=$('scrubThumb');if(img)img.classList.remove(
 function scrubEndAt(clientX){const v=$('video');if(!v){hideScrubThumb();return;}let src;try{src=outToSource(tlOutFromX(clientX));}catch{src=v.currentTime;}
   const done=()=>{hideScrubThumb();v.removeEventListener('seeked',done);};v.addEventListener('seeked',done);setTimeout(done,500);
   try{v.currentTime=src;}catch{hideScrubThumb();}positionHead();updateTlTime();}
-function tlSeekFromX(clientX){const inner=tlInner();if(!inner)return;const o=tlOutFromX(clientX);const src=outToSource(o);const v=$('video');if(v){try{if(tlDrag){v.pause();showScrubThumb(src);if(v.fastSeek){v.fastSeek(src);}else{v.currentTime=src;}}else{v.currentTime=src;}}catch{}}positionHead();updateTlTime();}
+function tlSeekFromX(clientX){reviewClip=false;const inner=tlInner();if(!inner)return;const o=tlOutFromX(clientX);const src=outToSource(o);const v=$('video');if(v){try{if(tlDrag){v.pause();showScrubThumb(src);if(v.fastSeek){v.fastSeek(src);}else{v.currentTime=src;}}else{v.currentTime=src;}}catch{}}positionHead();updateTlTime();}
 function updateTlTime(){const v=$('video'),el=$('tlTime');if(!el)return;const src=(v?.currentTime||0)+(playerSourceOffset||0);let o=sourceToOut(src);if(o==null)o=0;el.textContent=fmt(o)+' / '+fmt(totalOut());}
 // Reproducción EDITADA: al reproducir, salta automáticamente los huecos borrados.
 let editPlayGuard=0;
 function editedPlaybackTick(){
+  if(reviewClip)return; // reproduciendo un Short/fragmento: no saltar huecos de la edición (evita el play/pausa trabado)
   const v=$('video');if(!v||v.paused||!clips||clips.length<2)return;
   const src=(v.currentTime||0)+(playerSourceOffset||0);
   if(sourceToOut(src)==null){
@@ -460,7 +462,7 @@ function render() {
   if(p?.videoPath!==lastSourceVideo){lastSourceVideo=p?.videoPath||'';selected=new Set();selectedPauses=new Set();matchFingerprint='';selectionHydrated=false;}
   if(p?.videoPath!==clipsVideo){clipsVideo=p?.videoPath||'';selectedClipIdx=-1;clipUndo=[];clips=null;loadClips();}
   if(!selectionHydrated){selectedPauses=new Set(state.selection?.selectedPauseIds||[]);selectionHydrated=true;}
-  if(videoKey!==lastVideo){lastVideo=videoKey;playerSourceOffset=0;playerIsCutPreview=false;const unsupported=p&&!p.previewPath&&/\.(mpg|mpeg|mkv|avi)$/i.test(p.videoPath||'');if(unsupported){$('video').removeAttribute('src');$('playerEmpty').textContent='Preparando la vista previa de este formato… aparecerá en unos momentos.';}else{$('video').src=p?'/api/video?d='+Date.now():'';$('playerEmpty').textContent='Aquí podrás revisar el video y saltar a cada coincidencia.';}$('video').parentElement.classList.toggle('ready',!!p&&!unsupported);$('videoPath').value=p?.videoPath||'';}
+  if(videoKey!==lastVideo){lastVideo=videoKey;playerSourceOffset=0;playerIsCutPreview=false;reviewClip=false;const unsupported=p&&!p.previewPath&&/\.(mpg|mpeg|mkv|avi)$/i.test(p.videoPath||'');if(unsupported){$('video').removeAttribute('src');$('playerEmpty').textContent='Preparando la vista previa de este formato… aparecerá en unos momentos.';}else{$('video').src=p?'/api/video?d='+Date.now():'';$('playerEmpty').textContent='Aquí podrás revisar el video y saltar a cada coincidencia.';}$('video').parentElement.classList.toggle('ready',!!p&&!unsupported);$('videoPath').value=p?.videoPath||'';}
   $('termCount').textContent=`${state.dictionary.filter(d=>d.enabled).length} activas`;
   $('matchCount').textContent=`${state.matches.length} coincidencias`;
   buildTranscript();
