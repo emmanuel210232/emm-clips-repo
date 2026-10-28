@@ -1,6 +1,6 @@
 {
-  "version": "1.21.0",
-  "notes": "SHORTS NIVEL OPUSCLIP: en el Paso 3 ahora puedes elegir motor Nube (Opus/Sonnet/Haiku). Con la nube, la IA LEE TODO el directo + las reacciones del audio y elige los mejores momentos virales de 30-60s con gancho (mucho mejor que el modo local). Los cortes se ajustan solos a pausas naturales (no cortan a media palabra). Los subtitulos ahora RESALTAN las palabras clave en verde (look OpusClip). El modo Local sigue disponible gratis.",
+  "version": "1.21.1",
+  "notes": "Arreglo: al 'Elegir video' del explorador, si el nombre tenia acentos, ñ o emojis (ej. 'Llegué a Orlando 🔥.mpg') la app decia 'no encuentro el archivo' porque la ruta se corrompia al pasar de Windows a la app. Ahora se maneja en UTF-8 y abre cualquier nombre. (Igual para Guardar como.)",
   "files": [
     "server.js",
     "app.js",

@@ -125,16 +125,18 @@ function nativeDialog(kind, defaultName='') {
     const safeDefault=String(defaultName).replace(/'/g,"''");
     // Formulario dueño invisible y TopMost: fuerza a que el explorador salga ENCIMA de todo
     // (si no, Windows lo abre detrás del navegador porque node corre oculto).
-    const owner = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $o=New-Object System.Windows.Forms.Form; $o.StartPosition='CenterScreen'; $o.Size=New-Object System.Drawing.Size(1,1); $o.Opacity=0; $o.ShowInTaskbar=$false; $o.TopMost=$true; $o.Show(); $o.Activate(); [System.Windows.Forms.Application]::DoEvents();`;
+    // Forzar UTF-8 en la salida: si el nombre/ruta tiene acentos, ñ o emojis, PowerShell los escribiría en la codificación
+    // del sistema y Node (que lee UTF-8) los recibiría corruptos → la ruta "no existe". Con esto se devuelve tal cual.
+    const owner = `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $o=New-Object System.Windows.Forms.Form; $o.StartPosition='CenterScreen'; $o.Size=New-Object System.Drawing.Size(1,1); $o.Opacity=0; $o.ShowInTaskbar=$false; $o.TopMost=$true; $o.Show(); $o.Activate(); [System.Windows.Forms.Application]::DoEvents();`;
     const ps = kind==='save'
       ? `${owner} $f=New-Object System.Windows.Forms.SaveFileDialog; $f.Filter='Video MP4|*.mp4|Todos los archivos|*.*'; $f.FileName='${safeDefault}'; $f.Title='Guardar video como'; $f.OverwritePrompt=$true; $r=$f.ShowDialog($o); $o.Close(); if($r -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}`
       : `${owner} $f=New-Object System.Windows.Forms.OpenFileDialog; $f.Filter='Videos|*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v;*.mpg;*.mpeg|Todos los archivos|*.*'; $f.Title='Elige el video del directo'; $r=$f.ShowDialog($o); $o.Close(); if($r -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.FileName)}`;
     const child=spawn('powershell.exe',['-NoProfile','-STA','-Command',ps],{windowsHide:true});
-    let out=''; child.stdout.on('data',b=>out+=b.toString()); child.on('error',()=>resolve('')); child.on('close',()=>resolve(out.trim()));
+    const chunks=[]; child.stdout.on('data',b=>chunks.push(b)); child.on('error',()=>resolve('')); child.on('close',()=>resolve(Buffer.concat(chunks).toString('utf8').trim()));
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.21.0';
+const APP_VERSION = '1.21.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
