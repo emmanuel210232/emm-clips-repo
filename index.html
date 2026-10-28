@@ -178,8 +178,19 @@
       <h2 class="stepTitle">Paso 3 · Encuentra y crea tus Shorts</h2>
       <p class="stepLead">La IA busca los momentos más virales (30–60 s) y te propone un gancho. O crea uno exacto con los minutos. Los Shorts silencian groserías solos.</p>
       <div class="card"><div class="cardhead"><div><span class="number">3</span><h2>Propuestas de Shorts</h2></div><span id="shortCount" class="status">0 propuestas</span></div>
-        <p class="hint">La IA de tu PC (Ollama) lee la transcripción, busca los <b>momentos más virales de 30–60 s</b> (humor, pleitos, remates) y te propone un <b>gancho</b> para cada uno. Si Ollama no está, usa el ritmo del audio. Los Shorts <b>ya silencian las groserías</b> del diccionario automáticamente. Revisa subtítulos y encuadre antes de publicar.</p>
-        <div class="row wrap"><button id="suggestShorts" class="primary">🤖 Buscar 5 momentos virales</button><button id="renderAllShorts" class="secondary">Crear los 5 Shorts</button><span class="muted">30–60 s con gancho · o crea uno exacto abajo</span></div>
+        <p class="hint">La IA busca los <b>momentos más virales de 30–60 s</b> (humor, pleitos, remates) y te propone un <b>gancho</b>. Con el motor <b>Nube (Opus)</b> lee <b>TODO el directo</b> y elige como OpusClip (mucho mejor que el local). Los Shorts <b>ya silencian las groserías</b> y resaltan las palabras clave en los subtítulos. Revisa encuadre antes de publicar.</p>
+        <div class="row wrap" style="align-items:center;gap:10px;margin-bottom:10px">
+          <label>🧠 Motor
+            <select id="shortsEngine">
+              <option value="local">Local · gratis (básico)</option>
+              <option value="cloud:claude-opus-5-5">Nube · Opus 5.5 (nivel OpusClip)</option>
+              <option value="cloud:claude-sonnet-5-5">Nube · Sonnet 5.5 (buen valor)</option>
+              <option value="cloud:claude-haiku-4-5">Nube · Haiku (más barato)</option>
+            </select>
+          </label>
+          <span id="shortsEngineStatus" class="muted"></span>
+        </div>
+        <div class="row wrap"><button id="suggestShorts" class="primary">🤖 Buscar momentos virales</button><button id="renderAllShorts" class="secondary">Crear todos los Shorts</button><span class="muted">30–60 s con gancho · o crea uno exacto abajo</span></div>
         <details class="manualEditor" id="manualShortBox"><summary>➕ Crear Short de un momento exacto</summary>
           <p class="hint">Escribe el <b>inicio</b> y el <b>final</b> del momento (en <b>mm:ss</b> como <code>12:00</code>, o en segundos). La app lo hace vertical con subtítulos y zoom. Debe durar entre 10 y 100 s. Aparece arriba en la lista; luego pulsa <b>Crear Short vertical</b>.</p>
           <div class="row wrap"><label>Inicio <input id="msStart" type="text" placeholder="12:00"></label><label>Final <input id="msEnd" type="text" placeholder="12:52"></label></div>

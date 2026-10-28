@@ -1,6 +1,6 @@
 {
-  "version": "1.20.2",
-  "notes": "Exportar mas rapido SIN perder calidad: el fade de entrada/salida ahora se hace en la MISMA pasada que el corte/transiciones (antes era una 2a barra 'aplicar animacion'). Como el video se reencodea UNA sola vez en vez de dos, ademas de ser mas rapido queda con MEJOR calidad (menos perdida por doble reencode).",
+  "version": "1.21.0",
+  "notes": "SHORTS NIVEL OPUSCLIP: en el Paso 3 ahora puedes elegir motor Nube (Opus/Sonnet/Haiku). Con la nube, la IA LEE TODO el directo + las reacciones del audio y elige los mejores momentos virales de 30-60s con gancho (mucho mejor que el modo local). Los cortes se ajustan solos a pausas naturales (no cortan a media palabra). Los subtitulos ahora RESALTAN las palabras clave en verde (look OpusClip). El modo Local sigue disponible gratis.",
   "files": [
     "server.js",
     "app.js",

@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const { spawn, spawnSync } = require('node:child_process');
 const { normalize, findMatches, buildCuts, keptIntervals, adjustedCuts, parseSrt, parseWhisperJson, tokenizeTranscript } = require('./lib/core');
-const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS } = require('./lib/shorts');
+const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS, nearestPause } = require('./lib/shorts');
 const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/editorial');
 const { detectSubjectX, smoothTrack, cropExpression, zoomExpression } = require('./lib/framing');
 const channelStyle = require('./channel_style.json');
@@ -134,7 +134,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.20.2';
+const APP_VERSION = '1.21.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -773,22 +773,101 @@ function detectSilences(opts){
   return {started:true};
 }
 function fmtSec(s){s=Math.max(0,Math.round(s));return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
-async function proposeShorts() {
+// SELECCIÓN DE SHORTS POR NUBE (Opus/Sonnet/Haiku) — estilo OpusClip: la IA LEE TODO el directo + la energía del audio
+// y elige los mejores momentos virales de 30-60s con gancho, en vez del algoritmo por ritmo + modelo chico.
+async function cloudShorts(model, want, onProgress){
+  const bin=readiness().ffmpeg;
+  const dur=await durationOf(project.videoPath).catch(()=>0);
+  // 1) energía del audio (reacciones/risas/gritos)
+  job.message='Midiendo reacciones (audio)…'; job.percent=6;
+  let out='';
+  await run(bin,['-hide_banner','-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],s=>{
+    out=(out+s).slice(-6000000);
+    if(dur>0){ const mm=String(s).match(/pts_time:([\d.]+)/g); if(mm&&mm.length){ const last=+mm[mm.length-1].split(':')[1]; job.percent=6+Math.min(16,Math.round(last/dur*16)); } }
+  });
+  const energy=[]; let curT=null;
+  for(const line of out.split(/\r?\n/)){ const mt=line.match(/pts_time:([\d.]+)/); if(mt){curT=Number(mt[1]);continue;} const mr=line.match(/RMS_level=(-?[\d.]+|-?inf|nan)/i); if(mr&&curT!=null){ let db=Number(mr[1]); if(!Number.isFinite(db))db=-120; energy.push({t:curT,db}); curT=null; } }
+  let emin=Infinity,emax=-Infinity; for(const e of energy){ if(e.db<emin)emin=e.db; if(e.db>emax)emax=e.db; } if(!Number.isFinite(emin)){emin=-60;emax=-20;} const span=(emax-emin)||1;
+  // 2) bloques ~10s con texto + pico de energía
+  job.message='Preparando la transcripción…'; job.percent=24;
+  const build=(sec)=>{const o=[];let cur=null;for(const s of transcript){const t=Number(s.start);const tx=String(s.text||'').trim();if(!Number.isFinite(t)||!tx)continue;if(!cur||t-cur.t>=sec){cur={t,text:tx};o.push(cur);}else cur.text+=' '+tx;}return o;};
+  let sec=10, chunks=build(sec); while(chunks.length>1800 && sec<3600){ sec=Math.ceil(sec*1.5)+3; chunks=build(sec); }
+  if(chunks.length<2) throw Error('La transcripción es muy corta para Shorts.');
+  for(const c of chunks){ let peak=emin; for(const e of energy){ if(e.t>=c.t&&e.t<c.t+sec&&e.db>peak)peak=e.db; } c.e10=Math.round((peak-emin)/span*10); }
+  const fmt=s=>{const m=Math.floor(s/60),x=Math.round(s%60);return `${m}:${String(x).padStart(2,'0')}`;};
+  const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|e${c.e10}] ${c.text.replace(/\s+/g,' ').slice(0,400)}`).join('\n');
+  // 3) la nube elige los mejores SHORTS virales
+  job.message='La nube está eligiendo los mejores momentos para Shorts…'; job.percent=30;
+  const prompt=`DIRECTO de un streamer mexicano (bloques [SEGUNDOS|m:ss|eN] texto; eN alto = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, elige los ${want} MEJORES momentos para SHORTS VIRALES (TikTok/Reels/YouTube Shorts). Cada Short:\n- dura de 30 a 60 segundos\n- es AUTO-CONTENIDO (se entiende solo, sin contexto previo)\n- tiene un GANCHO fuerte en los primeros 3 segundos (gracioso, polemico, sorprendente, tierno o con reaccion fuerte)\n- el "ini" cae donde EMPIEZA el momento (el setup), NO a media frase\nEvita relleno, saludos y logistica aburrida. Reparte los momentos a lo largo del directo.\nResponde SOLO este JSON, sin texto extra: {"shorts":[{"ini":<segundos del bloque>,"dur":<30-60>,"gancho":"<TITULO CORTO EN MAYUSCULAS, max 40 caracteres>","por":"<por que es viral, 1 frase>","score":<1-10>}]}`;
+  const txt=await cloudPick(prompt, model, onProgress);
+  let arr=[]; try{ const pj=JSON.parse(txt); arr=Array.isArray(pj)?pj:(pj.shorts||pj.momentos||[]); }catch{}
+  if(!arr.length){ const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} } }
+  const words=tokenizeTranscript(transcript);
+  const cands=[];
+  for(const o of (Array.isArray(arr)?arr:[])){
+    let ini=Math.max(0,Number(o.ini)); let d=Math.max(20,Math.min(75,Number(o.dur)||45));
+    if(!Number.isFinite(ini)||ini>=dur-5) continue;
+    // Ajuste de bordes a PAUSAS naturales (no cortar a media palabra)
+    let start=words.length?nearestPause(words,ini,3):ini;
+    let end=words.length?nearestPause(words,Math.min(dur,ini+d),3):Math.min(dur,ini+d);
+    start=Math.max(0,start); end=Math.min(dur,end);
+    if(end-start<15) end=Math.min(dur,start+Math.max(20,d));
+    if(end-start>90) end=start+90;
+    if(end-start<12) continue;
+    const win=energy.filter(e=>e.t>=start&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
+    cands.push({ start:+start.toFixed(2), end:+end.toFixed(2), gancho:String(o.gancho||'').slice(0,40), por:String(o.por||'').slice(0,140), score:Math.max(1,Math.min(10,Number(o.score)||6)), energia:Math.round((peak-emin)/span*10) });
+  }
+  cands.sort((a,b)=> b.score-a.score || b.energia-a.energia);
+  const picked=[];
+  for(const c of cands){ if(picked.every(p=>c.start>=p.end-1||c.end<=p.start+1)) picked.push(c); }
+  picked.sort((a,b)=>a.start-b.start);
+  return picked;
+}
+async function proposeShorts(opts) {
   if (!project?.videoPath || !transcript.length) throw Error('Abre y transcribe un video primero.');
   if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  const engine=((opts&&opts.engine)||'local'); const useCloud=engine==='cloud'&&!!cloud.key;
+  const cloudModel=(opts&&opts.model)||cloud.model||'claude-opus-5-5';
+  if(engine==='cloud'&&!cloud.key) throw Error('Elegiste la nube pero falta la API key. Pégala en 🎬 Resumen del directo → Motor de IA.');
   const duration=await durationOf(project.videoPath);
-  const candidates=suggestShorts(transcript,duration,16,{min:30,max:60});
-  if (!candidates.length) throw Error('La transcripción no tiene suficientes momentos para Shorts.');
+  // conserva lo que el usuario ya ajustó (gancho/correcciones/encuadre) por id
   const hooksById=new Map(shorts.map(s=>[s.id,s.hook||'']));
   const correctionsById=new Map(shorts.map(s=>[s.id,s.captionCorrections||[]]));
   const settingsById=new Map(shorts.map(s=>[s.id,{framingMode:s.framingMode||'auto',cropCenter:s.cropCenter??.5,zoomEnabled:s.zoomEnabled!==false,captionStyle:s.captionStyle||'verde'}]));
+  const tok=tokenizeTranscript(transcript);
+  const mk=(c,i,method,reason)=>{ const id='s'+Math.round(c.start*10)+'_'+Math.round(c.end*10);
+    const opening=tok.filter(x=>x.start>=c.start&&x.start<Math.min(c.end,c.start+10)).slice(0,20).map(x=>x.text.trim()).join(' ').replace(/\s+/g,' ').trim();
+    const set=settingsById.get(id)||{};
+    return { id, start:c.start, end:c.end, opening:opening||c.opening||'(momento)', score:c.score||0, editorialScore:c.editorialScore??(c.score?c.score*10:0), reason, method, gancho:c.gancho||'', por:c.por||'',
+      hook:hooksById.get(id)||c.gancho||'', captionCorrections:correctionsById.get(id)||[],
+      framingMode:set.framingMode||'auto', cropCenter:set.cropCenter??.5, zoomEnabled:set.zoomEnabled!==false, captionStyle:set.captionStyle||'verde', format:'vertical', rank:i+1 }; };
+  if(useCloud){
+    const modShort=cloudModel.replace('claude-','').replace(/-/g,' ');
+    job={status:'running',message:`Analizando el directo con la nube (${modShort}) para Shorts…`,progress:'',percent:0,cancelRequested:false};
+    (async()=>{
+      try{
+        const want=Math.max(5,Math.min(12,Math.round(duration/420)+5));
+        const expect=Math.max(1200, want*120);
+        const picked=await cloudShorts(cloudModel, want, (len)=>{ if(job.cancelRequested)return; job.percent=30+Math.min(58,Math.round(len/expect*58)); });
+        if(!picked.length) throw Error('La nube no devolvió momentos válidos. Intenta de nuevo o usa el modo local.');
+        job.percent=92;
+        shorts=picked.map((c,i)=>mk({...c,editorialScore:Math.round((c.score||6)*10)}, i, 'nube '+modShort, c.por||'Elegido por la IA (nube)'));
+        writeJson(files.shorts,shorts);
+        job={status:'done',message:`${shorts.length} Shorts elegidos por la nube (${modShort}). Revisa y crea los que gusten.`,progress:'',percent:100};
+      }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
+    })();
+    return {started:true};
+  }
+  // ---- LOCAL (como antes: ritmo + gemma3) ----
+  const candidates=suggestShorts(transcript,duration,16,{min:30,max:60});
+  if (!candidates.length) throw Error('La transcripción no tiene suficientes momentos para Shorts.');
   job={status:'running',message:'Evaluando escenas con un modelo local…',progress:'',percent:0,cancelRequested:false};
   (async()=>{
     try {
       const model=process.env.EDITOR_IRL_MODEL||'gemma3:4b';
       const tags=await fetch('http://127.0.0.1:11434/api/tags',{signal:AbortSignal.timeout(3000)}).then(r=>r.json());
       if (!tags.models?.some(m=>m.name===model)) throw Error('Modelo local no disponible');
-      const words=tokenizeTranscript(transcript);
+      const words=tok;
       const evaluated=[];
       for (let i=0;i<candidates.length;i++) {
         if(job.cancelRequested) throw Error('__CANCELLED__');
@@ -796,7 +875,7 @@ async function proposeShorts() {
         const excerpt=words.filter(w=>w.start>=candidate.start&&w.start<candidate.end).map(w=>w.text.trim()).join(' ');
         let criteria=null, gancho='';
         try { const r=await assessCandidate(model,excerpt); criteria=r.criteria; gancho=r.gancho; } catch(err) { /* una escena mala no tumba el lote */ }
-        if (criteria) { const summary=summarizeAssessment(criteria); evaluated.push({...candidate,criteria,editorialScore:summary.score,reason:summary.reason,gancho,method:'modelo local'}); }
+        if (criteria) { const summary=summarizeAssessment(criteria); evaluated.push({...candidate,editorialScore:summary.score,reason:summary.reason,gancho,method:'modelo local'}); }
         else { evaluated.push({...candidate,editorialScore:candidate.score,reason:'por ritmo (la IA no evaluó esta)',gancho:'',method:'ritmo'}); }
         job.percent=Math.round((i+1)/candidates.length*100);
         job.progress=`${i+1}/${candidates.length} escenas evaluadas`;
@@ -807,12 +886,12 @@ async function proposeShorts() {
         if (picks.every(p=>Math.abs(p.start-item.start)>=90)) picks.push(item);
         if (picks.length===5) break;
       }
-      shorts=picks.map((s,i)=>({...s,hook:hooksById.get(s.id)||s.gancho||'',captionCorrections:correctionsById.get(s.id)||[],...settingsById.get(s.id),framingMode:settingsById.get(s.id)?.framingMode||'auto',zoomEnabled:settingsById.get(s.id)?.zoomEnabled!==false,captionStyle:settingsById.get(s.id)?.captionStyle||'verde',rank:i+1}));
+      shorts=picks.map((s,i)=>mk(s,i,s.method,s.reason));
       writeJson(files.shorts,shorts);
-      job={status:'done',message:`${shorts.length} propuestas evaluadas con ${model}. Revisa cada escena antes de publicarla.`,progress:'',percent:100};
+      job={status:'done',message:`${shorts.length} propuestas evaluadas con ${model}. Para mejores Shorts usa el motor de Nube (arriba).`,progress:'',percent:100};
     } catch(e) {
       if(job.cancelRequested){job={status:'cancelled',message:'Proceso cancelado por el usuario.',progress:'',percent:0};return;}
-      shorts=candidates.slice(0,5).map((s,i)=>({...s,hook:hooksById.get(s.id)||'',captionCorrections:correctionsById.get(s.id)||[],...settingsById.get(s.id),framingMode:settingsById.get(s.id)?.framingMode||'auto',zoomEnabled:settingsById.get(s.id)?.zoomEnabled!==false,captionStyle:settingsById.get(s.id)?.captionStyle||'verde',rank:i+1,method:'ritmo'}));
+      shorts=candidates.slice(0,5).map((s,i)=>mk(s,i,'ritmo','por ritmo del audio'));
       writeJson(files.shorts,shorts);
       job={status:'done',message:`${shorts.length} propuestas por ritmo. Modelo local no disponible: ${e.message}`,progress:'',percent:100};
     }
@@ -1375,7 +1454,7 @@ const server=http.createServer(async (req,res) => {
       selection={selectedIds:[...new Set(body.selectedIds)].filter(id=>matchIds.has(id)),selectedPauseIds:[...new Set(body.selectedPauseIds)].filter(id=>pauseIds.has(id))};
       writeJson(files.selection,selection);return respond(res,200,{saved:true});
     }
-    if (req.method==='POST' && url.pathname==='/api/shorts/suggest') return respond(res,202,await proposeShorts());
+    if (req.method==='POST' && url.pathname==='/api/shorts/suggest') { const body=await jsonBody(req).catch(()=>({})); return respond(res,202,await proposeShorts(body||{})); }
     if (req.method==='POST' && url.pathname==='/api/shorts/manual') {
       if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
       if (!project?.videoPath) throw Error('Abre un video primero.');
