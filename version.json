@@ -1,6 +1,6 @@
 {
-  "version": "1.20.1",
-  "notes": "Abrir un video ahora es UNA sola espera: la vista previa (solo si el formato no se ve en el navegador) es la unica barra; las miniaturas de la linea de tiempo se generan en SEGUNDO PLANO y aparecen solas sin bloquear (adios segunda barra). Se quito la onda de audio que se generaba sin usarse (era tiempo perdido). Ademas ya puedes CORTAR/editar clips mientras transcribe (sin el aviso de 'espera a que termine').",
+  "version": "1.20.2",
+  "notes": "Exportar mas rapido SIN perder calidad: el fade de entrada/salida ahora se hace en la MISMA pasada que el corte/transiciones (antes era una 2a barra 'aplicar animacion'). Como el video se reencodea UNA sola vez en vez de dos, ademas de ser mas rapido queda con MEJOR calidad (menos perdida por doble reencode).",
   "files": [
     "server.js",
     "app.js",

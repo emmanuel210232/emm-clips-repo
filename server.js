@@ -134,7 +134,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.20.1';
+const APP_VERSION = '1.20.2';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -458,6 +458,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   };
   const filter = [];
   let vLabel, aLabel;
+  let smoothTotal = keptTotal; // duración REAL de salida con crossfade (los crossfades la acortan); para el fade de entrada/salida en 1 pasada
   // Zoom (punch-in) por segmento marcado con .zoom. Zoom ESTÁTICO (crop+scale): fiable, instantáneo
   // y sin colgarse (el zoompan de este ffmpeg se desboca generando miles de frames). Recorta ~1.12x al centro.
   const hasZoom = keep.some(k=>k.zoom);
@@ -485,7 +486,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
       filter.push(`${ap}[a${i}]acrossfade=d=${d.toFixed(3)}[ax${i}]`);
       vp=`[vx${i}]`; ap=`[ax${i}]`; L=L+(keep[i].end-keep[i].start)-d;
     }
-    vLabel=vp; aLabel=ap;
+    vLabel=vp; aLabel=ap; smoothTotal=L; // L = largo real tras los crossfades
     if(stdEnhance){ filter.push(`${ap}${audioChain}[aout]`); aLabel='[aout]'; }
     if(q.scale){ filter.push(`${vLabel}${q.scale}[vout]`); vLabel='[vout]'; }
   } else {
@@ -502,10 +503,12 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   }
   // Efecto de entrada/salida fundido en el MISMO paso (una sola barra), salvo con crossfade o reescalado.
   let cutFxIn=clipIn, cutFxOut=clipOut, cutExtraInputs=[];
-  if(((clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none')) && !q.scale && !canSmooth){
+  // Fade de entrada/salida en la MISMA pasada (una sola barra), también CON transiciones/crossfade (antes eso forzaba una 2ª pasada).
+  // Solo se difiere si hay reescalado (q.scale), caso raro.
+  if(((clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none')) && !q.scale){
     const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath);
     filter.push(`${vLabel}settb=AVTB,fps=${efps},format=yuv420p,setsar=1[vnorm]`); // normaliza antes del xfade
-    const fxg=clipFxParts('[vnorm]', keptTotal, clipIn, clipOut, clipDur, EW, EH, efps, 1);
+    const fxg=clipFxParts('[vnorm]', canSmooth?smoothTotal:keptTotal, clipIn, clipOut, clipDur, EW, EH, efps, 1);
     if(fxg.applied){ fxg.parts.forEach(p=>filter.push(p)); vLabel=fxg.label; cutExtraInputs=fxg.inputs; cutFxIn='none'; cutFxOut='none'; }
     else { filter.pop(); } // no se aplicó efecto: quita la normalización que ya no se usa
   }
