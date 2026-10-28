@@ -1,6 +1,6 @@
 {
-  "version": "1.21.1",
-  "notes": "Arreglo: al 'Elegir video' del explorador, si el nombre tenia acentos, ñ o emojis (ej. 'Llegué a Orlando 🔥.mpg') la app decia 'no encuentro el archivo' porque la ruta se corrompia al pasar de Windows a la app. Ahora se maneja en UTF-8 y abre cualquier nombre. (Igual para Guardar como.)",
+  "version": "1.21.2",
+  "notes": "Arreglo importante: al cerrar y volver a abrir la app, el 'Iniciar Emm Clips.cmd' NO mataba la instancia vieja (seguia ocupando el puerto 4177), asi que la app se quedaba corriendo la version VIEJA aunque actualizaras. Ahora el lanzador cierra la instancia vieja antes de arrancar, para que reiniciar SI tome la version nueva.",
   "files": [
     "server.js",
     "app.js",
