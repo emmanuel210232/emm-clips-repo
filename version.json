@@ -1,6 +1,6 @@
 {
-  "version": "1.21.2",
-  "notes": "Arreglo importante: al cerrar y volver a abrir la app, el 'Iniciar Emm Clips.cmd' NO mataba la instancia vieja (seguia ocupando el puerto 4177), asi que la app se quedaba corriendo la version VIEJA aunque actualizaras. Ahora el lanzador cierra la instancia vieja antes de arrancar, para que reiniciar SI tome la version nueva.",
+  "version": "1.21.3",
+  "notes": "Exportar en UNA sola pasada tambien con calidad 1080p/60fps o Comprimido. Antes, al elegir esas calidades CON animacion de clip, se hacia una 2a pasada ('aplicando animacion') que reencodeaba todo otra vez (doble espera). Ahora el fundido se aplica a resolucion original y el reescalado va al final, todo junto. Mas rapido, misma calidad. (Tip: la calidad 'Original' ya era 1 pasada y para un directo 1080p es la mejor opcion.)",
   "files": [
     "server.js",
     "app.js",

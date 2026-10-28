@@ -136,7 +136,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.21.2';
+const APP_VERSION = '1.21.3';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -490,7 +490,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     }
     vLabel=vp; aLabel=ap; smoothTotal=L; // L = largo real tras los crossfades
     if(stdEnhance){ filter.push(`${ap}${audioChain}[aout]`); aLabel='[aout]'; }
-    if(q.scale){ filter.push(`${vLabel}${q.scale}[vout]`); vLabel='[vout]'; }
+    // (el reescalado se aplica AL FINAL, después del fade, para que todo quede en 1 pasada)
   } else {
     keep.forEach((k,i) => {
       filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${normOf(k)}[v${i}]`);
@@ -501,19 +501,21 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     aLabel = stdEnhance ? '[aout]' : '[a]';
     if (stdEnhance) filter.push(`[a]${audioChain}[aout]`);
     vLabel='[v]';
-    if(!q.copy && (q.scale||q.fps)){const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(',');filter.push(`[v]${vf}[vout]`);vLabel='[vout]';}
+    // (el reescalado/fps se aplica AL FINAL, después del fade, para que todo quede en 1 pasada)
   }
-  // Efecto de entrada/salida fundido en el MISMO paso (una sola barra), salvo con crossfade o reescalado.
+  // Fade de entrada/salida en la MISMA pasada que el corte (una sola barra), SIEMPRE — también con transiciones
+  // y con 1080p/60 o comprimido. Se aplica a la resolución ORIGINAL (antes del reescalado) para que los fotogramas
+  // de color del fundido coincidan; el reescalado va después. (Antes, con reescalado, esto forzaba una 2ª barra.)
   let cutFxIn=clipIn, cutFxOut=clipOut, cutExtraInputs=[];
-  // Fade de entrada/salida en la MISMA pasada (una sola barra), también CON transiciones/crossfade (antes eso forzaba una 2ª pasada).
-  // Solo se difiere si hay reescalado (q.scale), caso raro.
-  if(((clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none')) && !q.scale){
+  if((clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none')){
     const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath);
     filter.push(`${vLabel}settb=AVTB,fps=${efps},format=yuv420p,setsar=1[vnorm]`); // normaliza antes del xfade
     const fxg=clipFxParts('[vnorm]', canSmooth?smoothTotal:keptTotal, clipIn, clipOut, clipDur, EW, EH, efps, 1);
     if(fxg.applied){ fxg.parts.forEach(p=>filter.push(p)); vLabel=fxg.label; cutExtraInputs=fxg.inputs; cutFxIn='none'; cutFxOut='none'; }
     else { filter.pop(); } // no se aplicó efecto: quita la normalización que ya no se usa
   }
+  // Reescalado/fps AL FINAL (después del fade): el fade usa la resolución original y todo sale en 1 sola pasada.
+  if(!q.copy && (q.scale||q.fps)){ const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(','); filter.push(`${vLabel}${vf}[vout]`); vLabel='[vout]'; }
   const cutCrf=String(q.crf||18);
   // Render rápido cuando gpu=true: intenta GPU (NVENC) y, si el driver no lo soporta, cae solo a CPU veryfast.
   const cutVx264 = ['-c:v','libx264','-pix_fmt','yuv420p','-preset',gpu?'veryfast':'medium','-crf',cutCrf];
