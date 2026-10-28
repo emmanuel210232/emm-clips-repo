@@ -80,6 +80,28 @@ function resolveWhisper() {
 }
 function readiness() { const preferred=path.join(ROOT,'tools','ggml-large-v3-turbo-q5_0.bin'), fallback=path.join(ROOT,'tools','ggml-small.bin'); const whisper=resolveWhisper(); return { ffmpeg: executable(config.ffmpeg, 'ffmpeg'), ffprobe: executable(config.ffprobe, 'ffprobe'), whisper, whisperGpu: whisper.includes('tools-gpu'), model: config.model && fs.existsSync(config.model) ? config.model : fs.existsSync(preferred) ? preferred : fs.existsSync(fallback) ? fallback : '' }; }
 function listExports() { return fs.readdirSync(EXPORTS).filter(name=>/\.(mp4|png|jpe?g)$/i.test(name)).map(name=>({name,modified:fs.statSync(path.join(EXPORTS,name)).mtimeMs})).sort((a,b)=>b.modified-a.modified).slice(0,24); }
+// Reporte de REQUISITOS para la pantalla de comprobación (handoff): qué hay listo y qué falta en ESTA PC.
+async function requirementsReport(){
+  const r=readiness();
+  const out={
+    version:APP_VERSION,
+    ffmpeg:!!r.ffmpeg, ffprobe:!!r.ffprobe,
+    whisper:!!r.whisper, whisperGpu:!!r.whisperGpu,
+    model:!!r.model, modelName:r.model?path.basename(r.model):'',
+    deepfilter:dfReady(),
+    cloudKey:!!cloud.key,
+    ollama:false, gemma3:false, moondream:false, qwen:false
+  };
+  try{
+    const resp=await fetch('http://127.0.0.1:11434/api/tags',{signal:AbortSignal.timeout(2500)});
+    if(resp.ok){ out.ollama=true; const j=await resp.json(); const names=(j.models||[]).map(m=>String(m.name||''));
+      out.gemma3=names.some(n=>n.startsWith('gemma3'));
+      out.moondream=names.some(n=>n.startsWith('moondream'));
+      out.qwen=names.some(n=>n.startsWith('qwen2.5:14b'));
+    }
+  }catch{}
+  return out;
+}
 // CACHÉ de groserías: findMatches sobre transcripciones enormes (directos largos = decenas de miles de segmentos)
 // cuesta mucho; recalcularlo en CADA /api/state (cada segundo) colgaba el servidor. Se recalcula solo si cambian transcripción o diccionario.
 let _mCache={sig:null,val:[]};
@@ -112,7 +134,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.19.4';
+const APP_VERSION = '1.20.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -1129,6 +1151,7 @@ const server=http.createServer(async (req,res) => {
     if (![`127.0.0.1:${PORT}`,`localhost:${PORT}`,`[::1]:${PORT}`].includes(hostHdr)) return error(res,'Host no permitido.',403);
     const url=new URL(req.url,`http://127.0.0.1:${PORT}`);
     if (req.method==='GET' && url.pathname==='/api/state') return respond(res,200,state());
+    if (req.method==='GET' && url.pathname==='/api/requirements') return respond(res,200,await requirementsReport());
     // Endpoint LIGERO: solo el progreso del trabajo (para poder sondear cada segundo sin mandar la transcripción enorme).
     if (req.method==='GET' && url.pathname==='/api/job') return respond(res,200,{job, bestofReady: bestofScan?bestofScan.scannedAt:0, version:APP_VERSION});
     if (req.method==='GET' && url.pathname==='/api/video') return sendVideo(req,res);

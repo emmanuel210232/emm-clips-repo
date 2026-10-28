@@ -560,6 +560,7 @@ function moveClipTo(fromIdx,targetOut){const b=clipOutBounds();let ins=b.findInd
 (function(){const bar=$('timeline');if(!bar)return;
   let marquee=null;
   bar.addEventListener('mousedown',e=>{
+    reviewClip=false; // interactuar con la timeline = estoy editando → reactiva el salto de huecos al reproducir
     if(e.target.closest('.tl-cutx'))return;
     if(e.target.closest('.tl-ruler')){ dragMode='scrub'; tlDrag=true; tlSeekFromX(e.clientX); e.preventDefault(); return; }
     const block=e.target.closest('.tl-clip');
@@ -789,6 +790,68 @@ $('export').onclick=safe(async()=>{await selectionSave;
   notice(edited?`Exportando tu edición (${segments.length} clip${segments.length>1?'s':''}). El archivo aparecerá en exports.`:(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`));});
 $('cancelJob').onclick=safe(async()=>{await api('/api/job/cancel',{});notice('Cancelando el proceso…');});
 $('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};
+// ====== COMPROBACIÓN DE REQUISITOS (para saber si esta PC tiene todo) ======
+function reqItemEl(it){
+  const ok=it.ok, essential=it.essential;
+  const row=document.createElement('div'); row.className='reqItem '+(ok?'ok':(essential?'miss':'opt'));
+  const ico=document.createElement('div'); ico.className='reqIco'; ico.textContent=ok?'✅':(essential?'❌':'⬜');
+  const body=document.createElement('div'); body.className='reqBody';
+  const name=document.createElement('div'); name.className='reqName'; name.textContent=it.name;
+  const tag=document.createElement('span'); tag.className='reqTag'+(essential?'':' optional'); tag.textContent=essential?'esencial':'opcional'; name.append(tag);
+  const desc=document.createElement('div'); desc.className='reqDesc'; desc.textContent=it.desc;
+  body.append(name,desc);
+  if(!ok && (it.fix||it.cmd||it.link)){
+    const fix=document.createElement('div'); fix.className='reqFix';
+    if(it.fix) fix.append(document.createTextNode(it.fix+' '));
+    if(it.cmd){ const code=document.createElement('code'); code.textContent=it.cmd; const cp=document.createElement('button'); cp.className='copyBtn'; cp.type='button'; cp.textContent='Copiar'; cp.style.marginLeft='7px'; cp.onclick=()=>copyText(it.cmd,cp); fix.append(code,cp); }
+    if(it.link){ const a=document.createElement('a'); a.href=it.link; a.target='_blank'; a.rel='noopener'; a.textContent=' '+(it.linkText||it.link); fix.append(a); }
+    body.append(fix);
+  } else if(ok && it.okNote){ const n=document.createElement('div'); n.className='reqDesc'; n.textContent=it.okNote; body.append(n); }
+  row.append(ico,body);
+  return row;
+}
+async function loadRequirements(){
+  const box=$('reqList'); if(box){box.replaceChildren();const p=document.createElement('p');p.className='muted';p.textContent='Comprobando…';box.append(p);}
+  let d; try{ d=await (await fetch('/api/requirements')).json(); }catch{ if(box){box.replaceChildren();const p=document.createElement('p');p.className='muted';p.textContent='No se pudo comprobar (¿el servidor está abierto?).';box.append(p);} return null; }
+  if($('reqVersion')) $('reqVersion').textContent='Versión '+(d.version||'?');
+  if(!box) return d;
+  box.replaceChildren();
+  const groups=[
+    {title:'Esencial · para abrir, editar y exportar', items:[
+      {name:'FFmpeg', essential:true, ok:d.ffmpeg, desc:'Procesa, corta y exporta el video.', fix:'Viene con la app; si falta, reinstala Emm Clips o indica su ruta en ⚙️ Configuración de motores.'},
+      {name:'FFprobe', essential:true, ok:d.ffprobe, desc:'Lee la duración y el tamaño del video.', fix:'Viene con la app; si falta, reinstala o indica su ruta en ⚙️ Configuración de motores.'},
+      {name:'Transcripción (Whisper + modelo de voz)', essential:true, ok:d.whisper&&d.model, desc:'Convierte el audio en texto para cortar groserías y hallar momentos.', okNote:(d.whisper&&d.model)?('Modelo: '+(d.modelName||'listo')+(d.whisperGpu?' · usa tu GPU ⚡ (rápido)':' · usa CPU (más lento en directos largos)')):'', fix:'Viene con la app; si falta, reinstala Emm Clips.'},
+    ]},
+    {title:'IA local · opcional (gratis, en tu PC) — Resumen del directo, Shorts, transiciones y escáner sensible', items:[
+      {name:'Ollama abierto', essential:false, ok:d.ollama, desc:'Es el programa que corre los modelos de IA locales. Debe estar instalado y abierto.', fix:'Descarga Ollama, instálalo y ábrelo:', link:'https://ollama.com/download', linkText:'ollama.com/download'},
+      {name:'Modelo gemma3:4b', essential:false, ok:d.gemma3, desc:'Shorts automáticos, transiciones por tema y escáner sensible local.', fix:d.ollama?'Con Ollama abierto, ejecuta en la terminal:':'Primero abre Ollama; luego ejecuta:', cmd:'ollama pull gemma3:4b'},
+      {name:'Modelo moondream', essential:false, ok:d.moondream, desc:'Acelera el escáner sensible local (filtra rápido antes de confirmar).', fix:d.ollama?'Con Ollama abierto, ejecuta:':'Primero abre Ollama; luego ejecuta:', cmd:'ollama pull moondream'},
+      {name:'Modelo qwen2.5:14b-instruct', essential:false, ok:d.qwen, desc:'Resumen del directo (best-of) en local. Pesa ~9 GB.', fix:d.ollama?'Con Ollama abierto, ejecuta:':'Primero abre Ollama; luego ejecuta:', cmd:'ollama pull qwen2.5:14b-instruct'},
+    ]},
+    {title:'IA en la nube · opcional (de pago por uso, mejor calidad)', items:[
+      {name:'API key de Claude', essential:false, ok:d.cloudKey, desc:'Best-of y escáner sensible con Claude (mucho más preciso que el local). Se paga por uso.', fix:'Pega tu llave en 🎬 Resumen del directo → 🧠 Motor de IA. Obtén una en', link:'https://console.anthropic.com/settings/keys', linkText:'console.anthropic.com'},
+    ]},
+    {title:'Voz estudio · opcional', items:[
+      {name:'DeepFilterNet', essential:false, ok:d.deepfilter, desc:'Realza la voz a nivel estudio (IA local).', fix:'Actívalo con el botón “Activar voz Estudio (25 MB)” en el Paso 4 → Audio.'},
+    ]},
+  ];
+  for(const g of groups){ const h=document.createElement('div'); h.className='reqGroup'; h.textContent=g.title; box.append(h); for(const it of g.items) box.append(reqItemEl(it)); }
+  return d;
+}
+function openRequirements(){ const m=$('reqModal'); if(m){m.hidden=false; loadRequirements();} }
+function closeRequirements(){ const m=$('reqModal'); if(m)m.hidden=true; }
+if($('reqOpen')) $('reqOpen').onclick=openRequirements;
+if($('reqClose')) $('reqClose').onclick=closeRequirements;
+if($('reqRecheck')) $('reqRecheck').onclick=()=>loadRequirements();
+if($('reqModal')) $('reqModal').addEventListener('mousedown',e=>{ if(e.target===$('reqModal')) closeRequirements(); });
+window.addEventListener('keydown',e=>{ if(e.key==='Escape'&&$('reqModal')&&!$('reqModal').hidden) closeRequirements(); });
+// Al abrir la app: si falta algo ESENCIAL, abre la pantalla de requisitos; si solo falta Ollama, avisa una vez.
+async function checkRequirementsOnStart(){
+  let d; try{ d=await (await fetch('/api/requirements')).json(); }catch{ return; }
+  const essentialMissing = !d.ffmpeg||!d.ffprobe||!d.whisper||!d.model;
+  if(essentialMissing){ openRequirements(); return; }
+  if(!d.ollama){ let seen=false; try{ seen=localStorage.getItem('eirl_req_seen')==='1'; }catch{} if(!seen){ try{localStorage.setItem('eirl_req_seen','1');}catch{} openRequirements(); } }
+}
 // Asistente por pasos (wizard)
 function goStep(n){n=Math.max(1,Math.min(4,Number(n)||1));document.querySelectorAll('.step').forEach(s=>{s.hidden=Number(s.dataset.step)!==n;});document.querySelectorAll('.wstep').forEach(b=>{const bn=Number(b.dataset.step);b.classList.toggle('active',bn===n);b.classList.toggle('done',bn<n);});try{localStorage.setItem('eirl_step',String(n));}catch{}window.scrollTo({top:0,behavior:'smooth'});if(n===1){const tl=document.getElementById('timeline');if(tl)tl.dataset.fp='';setTimeout(()=>{try{buildTimeline();}catch{}},90);}}
 document.querySelectorAll('.wstep').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.step)));
@@ -796,4 +859,5 @@ document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=
 goStep(1); // siempre empezar en el paso 1 (como CapCut), no en el último
 try{ if(localStorage.getItem('eirl_mode')==='bestof') switchMode('bestof'); }catch{}
 refresh().catch(e=>notice(e.message,true));
+checkRequirementsOnStart();
 setInterval(()=>{if(state?.job&&state.job.status==='running')pollJob().catch(()=>{});},1000);

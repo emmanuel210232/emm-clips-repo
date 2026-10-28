@@ -10,7 +10,23 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><div class="topbarRight"><button id="modeToggle" class="modeToggle" type="button" title="Cambiar entre el editor de cortos y el Resumen del directo">🎬 Resumen del directo</button><button id="themeToggle" class="themeToggle" type="button" title="Cambiar entre tema claro y oscuro" aria-label="Cambiar tema">🌙</button><span class="badge">Asistente</span></div></header>
+  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><div class="topbarRight"><button id="reqOpen" class="modeToggle" type="button" title="Comprobar que esta PC tiene todo lo necesario">🧰 Requisitos</button><button id="modeToggle" class="modeToggle" type="button" title="Cambiar entre el editor de cortos y el Resumen del directo">🎬 Resumen del directo</button><button id="themeToggle" class="themeToggle" type="button" title="Cambiar entre tema claro y oscuro" aria-label="Cambiar tema">🌙</button><span class="badge">Asistente</span></div></header>
+
+  <!-- COMPROBACIÓN DE REQUISITOS (para saber si esta PC tiene todo lo necesario) -->
+  <div id="reqModal" class="reqModal" hidden>
+    <div class="reqCard" role="dialog" aria-modal="true" aria-labelledby="reqTitle">
+      <div class="reqHead">
+        <h2 id="reqTitle">🧰 Comprobación de requisitos</h2>
+        <button id="reqClose" class="reqClose" type="button" aria-label="Cerrar">✕</button>
+      </div>
+      <p class="reqLead">Esto revisa que tu PC tenga lo necesario para cada función. Lo <b>esencial</b> ya viene con la app. La <b>IA local</b> y la <b>nube</b> son opcionales: habilitan funciones extra.</p>
+      <div id="reqList" class="reqList"><p class="muted">Comprobando…</p></div>
+      <div class="reqFoot">
+        <button id="reqRecheck" class="secondary" type="button">🔄 Volver a comprobar</button>
+        <span id="reqVersion" class="muted"></span>
+      </div>
+    </div>
+  </div>
   <main>
     <nav class="wizard" id="wizard" aria-label="Pasos">
       <button type="button" class="wstep" data-step="1"><span class="wnum">1</span><span class="wlbl">Abrir</span></button>

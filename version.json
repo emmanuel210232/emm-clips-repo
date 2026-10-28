@@ -1,6 +1,6 @@
 {
-  "version": "1.19.4",
-  "notes": "Arreglo: en Mejores momentos > ver clip completo (Short), la vista previa se quedaba trabada en play/pausa (un tirón por segundo). El motor que salta los huecos de la edicion se metia con la reproduccion del Short. Ahora al ver un Short se reproduce normal; el salto de huecos solo actua al reproducir la linea de tiempo del editor.",
+  "version": "1.20.0",
+  "notes": "Nueva pantalla 🧰 Comprobación de requisitos (boton arriba): revisa que la PC tenga todo (FFmpeg, transcripcion, GPU, Ollama + modelos, API key, voz estudio) y dice que falta y como arreglarlo. Se abre sola si falta algo esencial, o la 1a vez si Ollama esta cerrado. Util para pasarle la app a alguien. Ademas: arreglo fino del salto de huecos al volver a editar tras ver un Short.",
   "files": [
     "server.js",
     "app.js",
