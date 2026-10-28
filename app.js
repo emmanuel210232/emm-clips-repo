@@ -35,12 +35,25 @@ function updateJobBar(){
   const jb=$('jobBar'); if(jb)jb.hidden=!running;
   if(running){const pct=Math.max(0,Math.min(100,j.percent||0));$('jobFill').style.width=(pct||4)+'%';$('jobFill').classList.toggle('indeterminate',pct===0);$('jobPct').textContent=pct===0?'…':pct+'%';$('jobLabel').textContent=j.message||'Procesando…';$('cancelJob').disabled=!!j.cancelRequested;$('cancelJob').textContent=j.cancelRequested?'Cancelando…':'Cancelar';}
 }
+let _stripSeen=false;
 async function pollJob(){
   try{
     const r=await fetch('/api/job'); if(!r.ok)return; const d=await r.json();
     const prev=(state&&state.job)?state.job.status:'';
     if(state)state.job=d.job; else state={job:d.job};
     updateJobBar();
+    // Miniaturas en SEGUNDO PLANO: aparecen conforme se generan, sin bloquear ni segunda barra de carga.
+    if(state){
+      const lb=$('tlLoadStrip'); if(lb) lb.textContent=d.stripBuilding?'⏳ Miniaturas…':'🎞️ Miniaturas';
+      const cur=state.filmstrip?state.filmstrip.count:-1;
+      if((d.stripBuilding||_stripSeen) && d.stripCount!==cur){
+        const interval=d.stripInterval||(state.filmstrip&&state.filmstrip.interval)||0;
+        state.filmstrip={count:d.stripCount,interval,wave:false,building:!!d.stripBuilding};
+        const tl=$('timeline'); if(tl)tl.dataset.fp=''; buildTimeline();
+      }
+      if(d.stripBuilding) _stripSeen=true;
+      else if(_stripSeen){ _stripSeen=false; await refresh(); } // terminó: trae el estado final
+    }
     if(d.job&&d.job.status!=='running'&&prev==='running'){ await refresh(); } // terminó: trae resultados una sola vez
   }catch{}
 }
@@ -376,7 +389,7 @@ function buildTimeline(){
   for(let o=0;o<=T+0.1;o+=nice){const tick=document.createElement('div');tick.className='tl-tick';tick.style.left=outX(o)+'px';const lab=document.createElement('span');lab.textContent=fmt(o).replace(/^0:/,'');tick.append(lab);ruler.append(tick);}
   inner.append(ruler);
   // Clips como BLOQUES separados, cada uno con su rebanada de miniaturas
-  const N=state.filmstrip?state.filmstrip.count:0, interval=N?dur/N:0, bounds=clipOutBounds();
+  const N=state.filmstrip?state.filmstrip.count:0, interval=(state.filmstrip&&state.filmstrip.interval)||(N?dur/N:0), bounds=clipOutBounds();
   clips.forEach((c,i)=>{
     const L=outX(bounds[i].outStart), R=outX(bounds[i].outEnd), W=Math.max(6,R-L-3);
     const block=document.createElement('div');block.className='tl-clip'+(i===selectedClipIdx?' selected':'')+(c.zoom?' haszoom':'')+(c.trans?' hastrans':'')+(c.join?' welded':'');
@@ -545,7 +558,7 @@ $('tlFwdF').onclick=()=>frameStep(1/30);
 $('tlBack1s').onclick=()=>frameStep(-1);
 $('tlFwd1s').onclick=()=>frameStep(1);
 $('tlPlay').onclick=()=>{const v=$('video');if(!v)return;v.paused?v.play().catch(()=>{}):v.pause();};
-$('tlLoadStrip').onclick=safe(async()=>{if(!state.project)throw Error('Abre un video primero.');await api('/api/filmstrip',{});notice('Generando miniaturas y onda de audio… (puedes cancelar arriba)');});
+$('tlLoadStrip').onclick=safe(async()=>{if(!state.project)throw Error('Abre un video primero.');await api('/api/filmstrip',{});notice('🎞️ Generando miniaturas en segundo plano… aparecen solas, puedes seguir trabajando.');});
 // Interacciones de clips: arrastrar el cuerpo = MOVER/reordenar · arrastrar el borde = RECORTAR (trim) · clic = seleccionar+ir · regla = scrub.
 let dragMode=null, trimState=null, moveState=null;
 function edgeHit(block,clientX){const r=block.getBoundingClientRect();if(clientX-r.left<=9)return 'L';if(r.right-clientX<=9)return 'R';return null;}
@@ -860,4 +873,5 @@ goStep(1); // siempre empezar en el paso 1 (como CapCut), no en el último
 try{ if(localStorage.getItem('eirl_mode')==='bestof') switchMode('bestof'); }catch{}
 refresh().catch(e=>notice(e.message,true));
 checkRequirementsOnStart();
-setInterval(()=>{if(state?.job&&state.job.status==='running')pollJob().catch(()=>{});},1000);
+// Sondea mientras haya un trabajo corriendo O se estén generando miniaturas en segundo plano (barato: ~0.1 KB).
+setInterval(()=>{if(state?.project && (state.job?.status==='running' || _stripSeen || state.filmstrip?.building))pollJob().catch(()=>{});},1000);

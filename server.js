@@ -134,7 +134,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.20.0';
+const APP_VERSION = '1.20.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -990,23 +990,51 @@ async function buildFilmstripFiles(bin){
   await run(bin,['-y','-i',project.videoPath,'-filter_complex','showwavespic=s=1800x58:colors=0x18FC53','-frames:v','1',path.join(DATA,'wave.png')]).catch(()=>{});
   filmstrip={count:n, interval:+interval.toFixed(3), wave:fs.existsSync(path.join(DATA,'wave.png'))};
 }
-// Deja el proyecto LISTO al abrirlo (como CapCut): vista previa si hace falta + miniaturas + onda, en un solo paso.
+// Spawn liviano para tareas EN SEGUNDO PLANO (miniaturas): NO toca activeProc, así no interfiere
+// con el Cancelar de un trabajo real ni lo bloquea. Puede correr a la par de transcribir/editar.
+function runBG(exe,args){ return new Promise((resolve,reject)=>{ const c=spawn(exe,args,{windowsHide:true,cwd:ROOT}); let err=''; c.stderr.on('data',b=>{err=(err+b.toString()).slice(-800);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('bg '+code))); }); }
+// Miniaturas de la línea de tiempo EN SEGUNDO PLANO: el video ya se puede usar mientras se generan
+// (no hay segunda barra de carga). Se exponen por /api/job (stripBuilding) para que el frontend las muestre al terminar.
+// (La onda de audio se quitó: el frontend nunca la dibujaba, solo gastaba tiempo de carga.)
+let stripGen=0;
+async function buildFilmstripBG(input){
+  const myGen=++stripGen; // un BG nuevo (otro video / regenerar) invalida el anterior
+  const bin=readiness().ffmpeg; if(!bin||!input) return;
+  filmstrip={count:0,interval:0,wave:false,building:true};
+  try{
+    const dur=await durationOf(input).catch(()=>0);
+    if(!dur||myGen!==stripGen||project?.videoPath!==input){ if(myGen===stripGen&&filmstrip) filmstrip={...filmstrip,building:false}; return; }
+    const n=Math.max(20,Math.min(45,Math.round(dur/40)||20)); // menos miniaturas = aparecen más rápido
+    const interval=dur/n;
+    const stripDir=path.join(DATA,'strip');
+    await fsp.rm(stripDir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(stripDir,{recursive:true});
+    filmstrip={count:0,interval:+interval.toFixed(3),wave:false,building:true};
+    for(let i=0;i<n;i++){
+      if(myGen!==stripGen||project?.videoPath!==input) return; // abortado (otro video o regenerar)
+      const t=((i+0.5)*interval).toFixed(2);
+      await runBG(bin,['-y','-ss',String(t),'-i',input,'-frames:v','1','-vf','scale=160:-2','-q:v','6',path.join(stripDir,`t${String(i+1).padStart(4,'0')}.jpg`)]).catch(()=>{});
+      if(myGen!==stripGen||project?.videoPath!==input) return;
+      filmstrip={count:i+1,interval:+interval.toFixed(3),wave:false,building:true}; // progresivo: aparecen conforme se generan
+    }
+    filmstrip={count:n,interval:+interval.toFixed(3),wave:false,building:false};
+  }catch{ if(myGen===stripGen&&filmstrip) filmstrip={...filmstrip,building:false}; }
+}
+// Deja el proyecto LISTO al abrirlo (como CapCut): la ÚNICA espera es la vista previa (solo si el formato no se ve
+// en el navegador); las miniaturas van en segundo plano y no bloquean. El video queda usable lo antes posible.
 function prepareProject(){
   const bin=readiness().ffmpeg;
   if(!bin||!project?.videoPath) return;
-  if(job.status==='running') return;
   const input=project.videoPath;
+  const needPrev = needsPreview(input) && !(project.previewPath&&fs.existsSync(project.previewPath));
+  if(!needPrev){ buildFilmstripBG(input); return; } // el video ya se ve → solo miniaturas en segundo plano
+  if(job.status==='running') return;
   job={status:'running',message:'Preparando el video…',progress:'',percent:0,cancelRequested:false};
   (async()=>{
     try{
-      if(needsPreview(input) && !(project.previewPath&&fs.existsSync(project.previewPath))){
-        job.message='Preparando vista previa para reproducir…';
-        await buildPreviewFile(bin);
-        if(project?.videoPath!==input){ job={status:'done',message:'',percent:100}; return; }
-      }
-      job.message='Generando línea de tiempo (miniaturas y onda)…'; job.percent=0;
-      await buildFilmstripFiles(bin);
+      await buildPreviewFile(bin);
+      if(project?.videoPath!==input){ job={status:'done',message:'',percent:100}; return; }
       job={status:'done',message:'Video listo. ✅',progress:'',percent:100};
+      buildFilmstripBG(input); // miniaturas en segundo plano (sin segunda barra)
     }catch(e){ job={status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0}; }
   })();
 }
@@ -1153,7 +1181,7 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='GET' && url.pathname==='/api/state') return respond(res,200,state());
     if (req.method==='GET' && url.pathname==='/api/requirements') return respond(res,200,await requirementsReport());
     // Endpoint LIGERO: solo el progreso del trabajo (para poder sondear cada segundo sin mandar la transcripción enorme).
-    if (req.method==='GET' && url.pathname==='/api/job') return respond(res,200,{job, bestofReady: bestofScan?bestofScan.scannedAt:0, version:APP_VERSION});
+    if (req.method==='GET' && url.pathname==='/api/job') return respond(res,200,{job, bestofReady: bestofScan?bestofScan.scannedAt:0, version:APP_VERSION, stripBuilding: !!(filmstrip&&filmstrip.building), stripCount: filmstrip?filmstrip.count:0, stripInterval: filmstrip?filmstrip.interval||0:0});
     if (req.method==='GET' && url.pathname==='/api/video') return sendVideo(req,res);
     if (req.method==='GET' && url.pathname==='/api/export-file') {
       const name=String(url.searchParams.get('name')||'');
@@ -1268,14 +1296,7 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/filmstrip') {
       const bin=readiness().ffmpeg;
       if(!bin||!project?.videoPath) throw Error('Abre un video primero.');
-      if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
-      job={status:'running',message:'Generando miniaturas de la línea de tiempo…',progress:'',percent:0,cancelRequested:false};
-      (async()=>{
-        try{
-          await buildFilmstripFiles(bin);
-          job={status:'done',message:`Miniaturas listas (${filmstrip?filmstrip.count:0}).`,progress:'',percent:100};
-        }catch(e){ job={status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0}; }
-      })();
+      buildFilmstripBG(project.videoPath); // segundo plano: no bloquea, aparecen conforme se generan
       return respond(res,202,{started:true});
     }
     if (req.method==='GET' && url.pathname==='/api/strip') {
@@ -1334,8 +1355,8 @@ const server=http.createServer(async (req,res) => {
       manualCuts=manualCuts.filter(c=>c.id!==id);writeJson(files.manualCuts,manualCuts);return respond(res,200,state());
     }
     // Reemplaza TODOS los cortes manuales de un jalón (lo usa el editor de clips tipo CapCut al borrar/restaurar con ripple).
+    // NO se bloquea aunque haya un proceso corriendo (transcribir, etc.): solo escribe un JSON chico → puedes cortar MIENTRAS transcribe.
     if (req.method==='POST' && url.pathname==='/api/cuts/manual/set') {
-      if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
       if (!project?.videoPath) throw Error('Abre un video primero.');
       const body=await jsonBody(req), arr=Array.isArray(body.cuts)?body.cuts:[];
       if (arr.length>2000) throw Error('Demasiados cortes.');
