@@ -136,7 +136,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.21.3';
+const APP_VERSION = '1.22.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -802,7 +802,7 @@ async function cloudShorts(model, want, onProgress){
   const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|e${c.e10}] ${c.text.replace(/\s+/g,' ').slice(0,400)}`).join('\n');
   // 3) la nube elige los mejores SHORTS virales
   job.message='La nube está eligiendo los mejores momentos para Shorts…'; job.percent=30;
-  const prompt=`DIRECTO de un streamer mexicano (bloques [SEGUNDOS|m:ss|eN] texto; eN alto = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, elige los ${want} MEJORES momentos para SHORTS VIRALES (TikTok/Reels/YouTube Shorts). Cada Short:\n- dura de 30 a 60 segundos\n- es AUTO-CONTENIDO (se entiende solo, sin contexto previo)\n- tiene un GANCHO fuerte en los primeros 3 segundos (gracioso, polemico, sorprendente, tierno o con reaccion fuerte)\n- el "ini" cae donde EMPIEZA el momento (el setup), NO a media frase\nEvita relleno, saludos y logistica aburrida. Reparte los momentos a lo largo del directo.\nResponde SOLO este JSON, sin texto extra: {"shorts":[{"ini":<segundos del bloque>,"dur":<30-60>,"gancho":"<TITULO CORTO EN MAYUSCULAS, max 40 caracteres>","por":"<por que es viral, 1 frase>","score":<1-10>}]}`;
+  const prompt=`DIRECTO de un streamer mexicano (bloques [SEGUNDOS|m:ss|eN] texto; eN alto = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, elige los ${want} MEJORES momentos para SHORTS VIRALES (TikTok/Reels/YouTube Shorts). Cada Short:\n- dura de 30 a 60 segundos\n- es AUTO-CONTENIDO (se entiende solo, sin contexto previo)\n- tiene un GANCHO fuerte en los primeros 3 segundos (gracioso, polemico, sorprendente, tierno o con reaccion fuerte)\n- el "ini" cae donde EMPIEZA el momento (el setup), NO a media frase\nEvita relleno, saludos y logistica aburrida. Reparte los momentos a lo largo del directo.\nAdemas, califica el GANCHO: que tan fuerte agarran los PRIMEROS 3 SEGUNDOS (10 = enganchas de inmediato, 1 = arranque lento/aburrido).\nResponde SOLO este JSON, sin texto extra: {"shorts":[{"ini":<segundos del bloque>,"dur":<30-60>,"gancho":"<TITULO CORTO EN MAYUSCULAS, max 40 caracteres>","por":"<por que es viral, 1 frase>","score":<1-10>,"gscore":<1-10 fuerza del gancho en los primeros 3s>}]}`;
   const txt=await cloudPick(prompt, model, onProgress);
   let arr=[]; try{ const pj=JSON.parse(txt); arr=Array.isArray(pj)?pj:(pj.shorts||pj.momentos||[]); }catch{}
   if(!arr.length){ const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} } }
@@ -819,9 +819,9 @@ async function cloudShorts(model, want, onProgress){
     if(end-start>90) end=start+90;
     if(end-start<12) continue;
     const win=energy.filter(e=>e.t>=start&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
-    cands.push({ start:+start.toFixed(2), end:+end.toFixed(2), gancho:String(o.gancho||'').slice(0,40), por:String(o.por||'').slice(0,140), score:Math.max(1,Math.min(10,Number(o.score)||6)), energia:Math.round((peak-emin)/span*10) });
+    cands.push({ start:+start.toFixed(2), end:+end.toFixed(2), gancho:String(o.gancho||'').slice(0,40), por:String(o.por||'').slice(0,140), score:Math.max(1,Math.min(10,Number(o.score)||6)), gscore:Math.max(1,Math.min(10,Number(o.gscore)||Number(o.score)||6)), energia:Math.round((peak-emin)/span*10) });
   }
-  cands.sort((a,b)=> b.score-a.score || b.energia-a.energia);
+  cands.sort((a,b)=> b.score-a.score || b.gscore-a.gscore || b.energia-a.energia); // desempate: gancho más fuerte primero
   const picked=[];
   for(const c of cands){ if(picked.every(p=>c.start>=p.end-1||c.end<=p.start+1)) picked.push(c); }
   picked.sort((a,b)=>a.start-b.start);
@@ -842,7 +842,7 @@ async function proposeShorts(opts) {
   const mk=(c,i,method,reason)=>{ const id='s'+Math.round(c.start*10)+'_'+Math.round(c.end*10);
     const opening=tok.filter(x=>x.start>=c.start&&x.start<Math.min(c.end,c.start+10)).slice(0,20).map(x=>x.text.trim()).join(' ').replace(/\s+/g,' ').trim();
     const set=settingsById.get(id)||{};
-    return { id, start:c.start, end:c.end, opening:opening||c.opening||'(momento)', score:c.score||0, editorialScore:c.editorialScore??(c.score?c.score*10:0), reason, method, gancho:c.gancho||'', por:c.por||'',
+    return { id, start:c.start, end:c.end, opening:opening||c.opening||'(momento)', score:c.score||0, editorialScore:c.editorialScore??(c.score?c.score*10:0), gscore:c.gscore||0, reason, method, gancho:c.gancho||'', por:c.por||'',
       hook:hooksById.get(id)||c.gancho||'', captionCorrections:correctionsById.get(id)||[],
       framingMode:set.framingMode||'auto', cropCenter:set.cropCenter??.5, zoomEnabled:set.zoomEnabled!==false, captionStyle:set.captionStyle||'verde', format:'vertical', rank:i+1 }; };
   if(useCloud){

@@ -1,6 +1,6 @@
 {
-  "version": "1.21.3",
-  "notes": "Exportar en UNA sola pasada tambien con calidad 1080p/60fps o Comprimido. Antes, al elegir esas calidades CON animacion de clip, se hacia una 2a pasada ('aplicando animacion') que reencodeaba todo otra vez (doble espera). Ahora el fundido se aplica a resolucion original y el reescalado va al final, todo junto. Mas rapido, misma calidad. (Tip: la calidad 'Original' ya era 1 pasada y para un directo 1080p es la mejor opcion.)",
+  "version": "1.22.0",
+  "notes": "Ahora la app AVISA SOLA cuando hay version nueva (banner arriba con boton Actualizar), asi a quien ya instalo le llegan los arreglos sin tener que buscarlos. Ademas, la seleccion de Shorts por Nube ahora da un SCORE DEL GANCHO (que tan fuerte agarra los primeros 3 segundos) y ordena por el gancho mas fuerte.",
   "files": [
     "server.js",
     "app.js",
