@@ -1,6 +1,6 @@
 {
-  "version": "1.22.0",
-  "notes": "Ahora la app AVISA SOLA cuando hay version nueva (banner arriba con boton Actualizar), asi a quien ya instalo le llegan los arreglos sin tener que buscarlos. Ademas, la seleccion de Shorts por Nube ahora da un SCORE DEL GANCHO (que tan fuerte agarra los primeros 3 segundos) y ordena por el gancho mas fuerte.",
+  "version": "1.23.0",
+  "notes": "NUEVO: pestaña 🔍 Investigar (botón arriba). Analiza los canales que resuben a Shifu: qué videos pegaron más de lo normal, a qué hora se subieron, qué tienen en común sus títulos, miniaturas y hashtags. La IA saca la fórmula del nicho y te escribe títulos, descripción y prompt de miniatura para tu video. Necesita una API key gratis de YouTube (la guía viene en la pestaña).",
   "files": [
     "server.js",
     "app.js",
@@ -12,6 +12,9 @@
     "lib/framing.js",
     "package.json",
     "COMPROBAR_PC.ps1",
-    "Iniciar Emm Clips.cmd"
+    "Iniciar Emm Clips.cmd",
+    "investigar.js",
+    "lib/research.js",
+    "lib/youtube.js"
   ]
 }

@@ -136,7 +136,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.22.0';
+const APP_VERSION = '1.23.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -1256,7 +1256,229 @@ function scanSensitive(opts){
     }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
   })();
 }
-const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css' };
+// ===== INVESTIGAR COMPETENCIA (canales que resuben a Shifu) =====
+// Datos PÚBLICOS de YouTube (API key gratis del usuario, guardada SOLO en data/youtube.json) + análisis local
+// (lib/research.js) + la nube de Claude para la "fórmula del nicho" y para generar título/desc/miniatura.
+const research = require('./lib/research');
+const { createClient } = require('./lib/youtube');
+const RESEARCH_FILE = path.join(DATA, 'research.json');
+const YT_FILE = path.join(DATA, 'youtube.json');
+let ytConf = readJson(YT_FILE, { key: '' });
+let rs = readJson(RESEARCH_FILE, null) || {};
+rs = { channels: [], videos: {}, history: {}, analysis: null, insights: null, generated: null, quota: { date: '', units: 0 }, refreshedAt: 0, ...rs };
+let researchJob = { status: 'idle', message: '', percent: 0 };
+function saveResearch() { writeJson(RESEARCH_FILE, rs); }
+// La cuota de YouTube se reinicia a medianoche hora del Pacífico.
+function quotaDay() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()); }
+function addUnits(n) { const d = quotaDay(); if (rs.quota.date !== d) rs.quota = { date: d, units: 0 }; rs.quota.units += n; }
+function yt() { return createClient(ytConf.key, addUnits); }
+function researchState() {
+  const d = quotaDay();
+  return {
+    keySet: !!ytConf.key, quota: { units: rs.quota.date === d ? rs.quota.units : 0, limit: 10000 },
+    channels: rs.channels, refreshedAt: rs.refreshedAt, analysis: rs.analysis, insights: rs.insights, generated: rs.generated,
+    job: researchJob, cloud: { keySet: !!cloud.key, model: cloud.model },
+    video: project?.videoPath ? path.basename(project.videoPath) : '', hasTranscript: Array.isArray(transcript) && transcript.length > 0,
+  };
+}
+function runResearch(label, fn) {
+  if (researchJob.status === 'running') throw Error('Ya hay una investigación en curso. Espera a que termine.');
+  researchJob = { status: 'running', message: label, percent: 0 };
+  (async () => {
+    try { const msg = await fn(p => { Object.assign(researchJob, p); }); researchJob = { status: 'done', message: msg || 'Listo.', percent: 100 }; }
+    catch (e) { researchJob = { status: 'error', message: String(e.message || e), percent: 0 }; }
+    finally { saveResearch(); }
+  })();
+  return researchState();
+}
+function upsertChannel(c, extra = {}) {
+  const i = rs.channels.findIndex(x => x.id === c.id);
+  if (i >= 0) rs.channels[i] = { ...rs.channels[i], ...c, ...extra, status: extra.status || rs.channels[i].status };
+  else rs.channels.push({ status: 'pending', hits: 0, ...c, ...extra });
+  return rs.channels.find(x => x.id === c.id);
+}
+const DEFAULT_QUERIES = [['Adriano Zendejas', 'relevance'], ['Maestro Shifu', 'relevance'], ['Maestro Shifu', 'viewCount'], ['Shifu Kick', 'relevance'], ['Adriano Zendejas Kick', 'date']];
+async function discoverChannels(progress) {
+  const client = yt(); const hits = new Map();
+  for (let i = 0; i < DEFAULT_QUERIES.length; i++) {
+    const [q, order] = DEFAULT_QUERIES[i];
+    progress({ message: `Buscando "${q}" en YouTube…`, percent: Math.round(i / DEFAULT_QUERIES.length * 70) });
+    for (const r of await client.searchChannels(q, order)) {
+      const h = hits.get(r.channelId) || { n: 0, samples: [] }; h.n++; if (h.samples.length < 3) h.samples.push(r.title); hits.set(r.channelId, h);
+    }
+  }
+  progress({ message: 'Leyendo los canales encontrados…', percent: 80 });
+  const details = await client.channelsByIds([...hits.keys()]);
+  let added = 0;
+  for (const c of details) {
+    const h = hits.get(c.id); const isNew = !rs.channels.some(x => x.id === c.id);
+    const auto = research.SHIFU_RE.test(c.title) || research.SHIFU_RE.test(c.description) || h.n >= 3;
+    upsertChannel(c, { hits: h.n, samples: h.samples, ...(isNew ? { status: auto ? 'track' : 'pending' } : {}) });
+    if (isNew) added++;
+  }
+  rs.channels.sort((a, b) => ((b.mine ? 1 : 0) - (a.mine ? 1 : 0)) || ((b.status === 'track') - (a.status === 'track')) || (b.hits || 0) - (a.hits || 0));
+  return `Encontré ${details.length} canales (${added} nuevos). Revisa la lista: los marcados "Seguir" entran al análisis.`;
+}
+async function refreshResearch(progress, maxPerChannel = 150) {
+  const client = yt();
+  const list = rs.channels.filter(c => c.status === 'track' || c.mine);
+  if (!list.length) throw Error('No hay canales marcados para seguir. Busca canales o agrega uno.');
+  progress({ message: 'Actualizando datos de los canales…', percent: 3 });
+  for (const c of await client.channelsByIds(list.map(c => c.id))) upsertChannel(c);
+  const now = Date.now(); let i = 0;
+  for (const c of list) {
+    progress({ message: `Leyendo videos de ${c.title} (${++i}/${list.length})…`, percent: 5 + Math.round(i / list.length * 85) });
+    const cur = rs.channels.find(x => x.id === c.id);
+    if (!cur || !cur.uploads) continue;
+    const ids = await client.uploadIds(cur.uploads, maxPerChannel);
+    const vids = await client.videosByIds(ids);
+    rs.videos[c.id] = vids;
+    for (const v of vids) { const h = rs.history[v.id] || []; if (!h.length || now - h[h.length - 1][0] > 6 * 3600e3) h.push([now, v.views]); rs.history[v.id] = h.slice(-12); }
+  }
+  // Limpia videos (e historial) de canales que ya no se siguen.
+  const keep = new Set(rs.channels.filter(c => c.status === 'track' || c.mine).map(c => c.id));
+  for (const id of Object.keys(rs.videos)) if (!keep.has(id)) delete rs.videos[id];
+  const live = new Set(Object.values(rs.videos).flat().map(v => v.id));
+  for (const id of Object.keys(rs.history)) if (!live.has(id)) delete rs.history[id];
+  progress({ message: 'Analizando patrones…', percent: 95 });
+  rs.analysis = research.analyze(rs.channels, rs.videos, now);
+  rs.refreshedAt = now;
+  const a = rs.analysis;
+  return `Listo: ${a.totals.videos} videos analizados (${a.totals.long} largos, ${a.totals.short} Shorts) de ${a.channels.length} canales.`;
+}
+function looseJson(txt) {
+  const s = String(txt || '').replace(/```(?:json)?/g, '');
+  const a = s.indexOf('{'), b = s.lastIndexOf('}');
+  if (a < 0 || b < a) throw Error('La IA no devolvió un resultado válido. Intenta otra vez.');
+  return JSON.parse(s.slice(a, b + 1));
+}
+async function thumbBlock(url) {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) }); if (!r.ok) return null;
+    const type = (r.headers.get('content-type') || 'image/jpeg').split(';')[0];
+    if (!/^image\/(jpeg|png|webp)$/.test(type)) return null;
+    return { type: 'image', source: { type: 'base64', media_type: type, data: Buffer.from(await r.arrayBuffer()).toString('base64') } };
+  } catch { return null; }
+}
+const fmtV = v => ({ titulo: v.title, canal: v.channelTitle, vistas: v.views, score: v.score, vistasPorDia: v.vpd, dia: v.day, horaCDMX: v.hour, duracionMin: +(v.duration / 60).toFixed(1), hashtags: v.hashtags, tags: (v.tags || []).slice(0, 10), descripcion: (v.description || '').slice(0, 300) });
+function statsDigest(f) {
+  return { videos: f.count, medianaVistas: f.medianViews, titulosQuePegan: f.titles.top, titulosResto: f.titles.rest, titulosMios: f.titles.mine, palabrasQuePegan: f.words.slice(0, 15), hashtags: f.hashtags.slice(0, 15), mejoresVentanasCDMX: f.time.bestWindows, porDia: f.time.byDay, duraciones: f.durations, misHorasDeSubida: f.mineTime, misVideos: f.mineCount, miMedianaVistas: f.mineMedianViews };
+}
+async function buildInsights(progress, model) {
+  const a = rs.analysis; if (!a || !a.totals.videos) throw Error('Primero actualiza los datos de los canales.');
+  const content = [];
+  const intro = `Eres analista de YouTube experto en el nicho de "resubidas" de streamers IRL mexicanos. Analizo canales que resuben clips de Adriano Zendejas "El Maestro Shifu" (streamer IRL de Kick, México). Mi canal resube con permiso del equipo de Shifu, censura groserías y le pone edición; YouTube me rechazó la monetización por "contenido reutilizado", así que también necesito VALOR ORIGINAL (títulos/miniaturas/narrativa propios).
+
+"score" = vistas ÷ mediana de vistas del propio canal en ese formato (score 5 = 5× lo normal de ese canal). Es la métrica principal de "qué pegó". Las horas están en hora de CDMX.
+
+DATOS AGREGADOS (largos):
+${JSON.stringify(statsDigest(a.long))}
+
+DATOS AGREGADOS (Shorts):
+${JSON.stringify(statsDigest(a.short))}
+
+VIDEOS LARGOS QUE MÁS PEGARON:
+${JSON.stringify(a.long.outliers.slice(0, 25).map(fmtV))}
+VIDEOS LARGOS QUE PEOR LES FUE (contraste):
+${JSON.stringify(a.long.flops.slice(0, 10).map(fmtV))}
+SHORTS QUE MÁS PEGARON:
+${JSON.stringify(a.short.outliers.slice(0, 20).map(fmtV))}
+${a.mineVideos.length ? 'MIS VIDEOS RECIENTES:\n' + JSON.stringify(a.mineVideos.slice(0, 15).map(fmtV)) : ''}
+
+A continuación van las MINIATURAS de los videos largos que más pegaron y luego de los que peor (etiquetadas).`;
+  content.push({ type: 'text', text: intro });
+  const tops = a.long.outliers.slice(0, 12), flops = a.long.flops.slice(0, 4);
+  let k = 0; const total = tops.length + flops.length;
+  for (const [list, label] of [[tops, 'PEGÓ'], [flops, 'NO PEGÓ']]) {
+    for (const v of list) {
+      progress({ message: `Descargando miniaturas para que la IA las vea (${++k}/${total})…`, percent: Math.round(k / total * 30) });
+      const img = await thumbBlock(v.thumb || v.thumbSmall); if (!img) continue;
+      content.push({ type: 'text', text: `Miniatura [${label}] score ×${v.score} · ${v.views.toLocaleString('es-MX')} vistas · "${v.title}"` }, img);
+    }
+  }
+  content.push({ type: 'text', text: `Con TODO esto, encuentra los patrones reales (no consejos genéricos de YouTube: basa cada punto en los datos y ejemplos de arriba, cita títulos o scores cuando ayude). Si hay pocos datos para algo, dilo. Responde SOLO un JSON válido, en español de México, con esta forma:
+{"resumen":"3-4 frases: qué está funcionando en este nicho y por qué",
+ "titulos":{"patrones":["patrón concreto + ejemplo real"],"plantillas":["plantilla con [huecos]"],"evitar":["..."]},
+ "miniaturas":{"patrones":["qué tienen en común las que pegan: cara/expresión, texto (cuántas palabras, color), personas, objetos, colores, composición"],"evitar":["..."],"promptBase":"prompt base reutilizable para ChatGPT que replique el estilo ganador, con [huecos]"},
+ "horarios":{"mejores":["día/hora CDMX concreta + por qué"],"explicacion":"..."},
+ "descripcion":{"estructura":["..."],"ejemplo":"descripción ejemplo corta"},
+ "hashtags":["#..."],
+ "duracion":{"largos":"duración ideal y por qué","shorts":"..."},
+ "temas":["tipos de momento/tema que más pegan (invitados, lugares, dinero, peleas...)"],
+ "monetizacion":["cómo diferenciarnos para que YouTube vea valor original"],
+ "comparacionMiCanal":["qué hago distinto vs lo que pega (si hay datos míos)"],
+ "oportunidades":["huecos que nadie está aprovechando"]}` });
+  progress({ message: 'La IA está analizando títulos, miniaturas y horarios…', percent: 35 });
+  const txt = await cloudPick(content, model, n => progress({ message: `La IA está escribiendo la fórmula… (${(n / 1000).toFixed(1)}k caracteres)`, percent: Math.min(98, 35 + Math.round(n / 120)) }));
+  rs.insights = { ...looseJson(txt), createdAt: Date.now(), model, basedOn: a.totals.videos };
+  return 'Fórmula del nicho lista.';
+}
+async function generateForVideo(progress, opts) {
+  const a = rs.analysis;
+  const format = opts.format === 'short' ? 'short' : 'long';
+  const notes = String(opts.notes || '').slice(0, 3000);
+  const useT = opts.useTranscript !== false && Array.isArray(transcript) && transcript.length > 0;
+  if (!useT && !notes.trim()) throw Error('Abre un video transcrito o escribe de qué trata el video.');
+  const tx = useT ? research.compactTranscript(transcript, 60000) : '';
+  const totalMin = useT ? Math.round((transcript[transcript.length - 1].end || 0) / 60) : 0;
+  const ref = a ? a[format] : null;
+  const ins = rs.insights;
+  const prompt = `Eres el mejor estratega de YouTube del nicho de streamers IRL mexicanos. Mi canal resube (con permiso) clips de Adriano Zendejas "El Maestro Shifu" (Kick IRL). Necesito para ${format === 'short' ? 'un SHORT' : 'un VIDEO LARGO (16:9, 15-30 min)'}: títulos, descripción, hashtags, tags y prompt de miniatura para ChatGPT.
+
+${ins ? 'FÓRMULA DEL NICHO (sacada de analizar a la competencia; síguela):\n' + JSON.stringify({ titulos: ins.titulos, miniaturas: ins.miniaturas, horarios: ins.horarios, descripcion: ins.descripcion, hashtags: ins.hashtags, monetizacion: ins.monetizacion }) : ''}
+${ref && ref.outliers.length ? 'TÍTULOS DE LA COMPETENCIA QUE MÁS PEGARON (score = veces lo normal de su canal):\n' + ref.outliers.slice(0, 15).map(v => `- ×${v.score} "${v.title}"`).join('\n') + '\nMEJORES HORAS (CDMX): ' + JSON.stringify(ref.time.bestWindows) : ''}
+
+${notes ? 'NOTAS MÍAS SOBRE EL VIDEO:\n' + notes + '\n' : ''}${tx ? `TRANSCRIPCIÓN (el video dura ${totalMin} min; cada línea empieza con su minuto [Nm]; puede tener errores de reconocimiento de voz):\n` + tx : ''}
+
+Reglas: títulos en el estilo que pega en este nicho pero ORIGINALES (no copies títulos de la competencia); no inventes cosas que no pasen en el video; el gancho debe ser lo más fuerte o sorprendente que SÍ pasó. Prompt de miniatura listo para pegar en ChatGPT junto con capturas del video (que mantenga la cara idéntica). Descripción con resumen enganchador, capítulos si es video largo (usa los minutos [Nm] REALES de la transcripción, repartidos en todo el video${totalMin ? ` de 0 a ${totalMin} min` : ''}; avisa que se ajustan tras recortar) y hashtags al final.
+
+Responde SOLO un JSON válido, español de México:
+{"resumen":"de qué trata en 1-2 frases","titulos":[{"titulo":"...","porque":"qué patrón usa"}],"recomendado":0,"descripcion":"...","hashtags":["#..."],"tags":["..."],"miniaturaPrompt":"...","miniaturaAlternativa":"otra idea de gancho visual en 1-2 frases","textoMiniatura":["2-4 opciones de texto corto para la mini"],"horaSugerida":"día y hora CDMX + por qué","shorts":["momentos del video que servirían de Short (con minuto)"]}
+Da 5 títulos.`;
+  progress({ message: 'La IA está escribiendo títulos, descripción y miniatura…', percent: 10 });
+  const txt = await cloudPick(prompt, opts.model, n => progress({ percent: Math.min(98, 10 + Math.round(n / 60)) }));
+  rs.generated = { ...looseJson(txt), createdAt: Date.now(), format, video: useT && project?.videoPath ? path.basename(project.videoPath) : '', usedInsights: !!ins };
+  return 'Propuesta lista.';
+}
+function pickModel(m) { return typeof m === 'string' && /^claude-/.test(m) ? m : (cloud.model || 'claude-opus-5-5'); }
+async function researchRoute(req, res, url) {
+  if (req.method === 'GET' && url.pathname === '/api/research') return respond(res, 200, researchState());
+  if (req.method !== 'POST') return false;
+  const p = url.pathname;
+  if (p === '/api/research/key') {
+    const b = await jsonBody(req);
+    if (b.clear) ytConf.key = '';
+    else if (typeof b.key === 'string' && b.key.trim()) {
+      const key = b.key.trim();
+      await createClient(key, addUnits).get('videos', { part: 'id', id: 'dQw4w9WgXcQ' }); // prueba barata (1 u) para validar la llave
+      ytConf.key = key;
+    }
+    writeJson(YT_FILE, ytConf); saveResearch(); return respond(res, 200, researchState());
+  }
+  if (p === '/api/research/discover') return respond(res, 202, runResearch('Buscando canales…', discoverChannels));
+  if (p === '/api/research/channel') {
+    const b = await jsonBody(req); const ref = research.parseChannelInput(b.input);
+    if (!ref) throw Error('No reconozco ese canal. Pega el link del canal o su @usuario.');
+    const c = await yt().resolveChannel(ref); if (!c) throw Error('No encontré ese canal en YouTube.');
+    if (b.mine) rs.channels.forEach(x => { if (x.id !== c.id) x.mine = false; });
+    upsertChannel(c, { status: 'track', ...(b.mine ? { mine: true } : {}) }); saveResearch();
+    return respond(res, 200, researchState());
+  }
+  if (p === '/api/research/channel/status') {
+    const b = await jsonBody(req); const c = rs.channels.find(x => x.id === b.id); if (!c) throw Error('Canal no encontrado.');
+    if (['track', 'ignore', 'pending'].includes(b.status)) c.status = b.status;
+    if (typeof b.mine === 'boolean') { if (b.mine) rs.channels.forEach(x => { x.mine = false; }); c.mine = b.mine; if (b.mine) c.status = 'track'; }
+    if (rs.analysis) rs.analysis = research.analyze(rs.channels, rs.videos); // recalcula al instante, sin gastar cuota
+    saveResearch(); return respond(res, 200, researchState());
+  }
+  if (p === '/api/research/refresh') { const b = await jsonBody(req).catch(() => ({})); const max = Math.max(50, Math.min(500, Number(b.max) || 150)); return respond(res, 202, runResearch('Actualizando…', pr => refreshResearch(pr, max))); }
+  const needCloud = () => { if (!cloud.key) throw Error('Falta la API key de la nube (Claude). Pégala en 🎬 Resumen del directo → Motor de IA.'); };
+  if (p === '/api/research/insights') { needCloud(); const b = await jsonBody(req).catch(() => ({})); return respond(res, 202, runResearch('Preparando análisis…', pr => buildInsights(pr, pickModel(b.model)))); }
+  if (p === '/api/research/generate') { needCloud(); const b = await jsonBody(req).catch(() => ({})); return respond(res, 202, runResearch('Preparando…', pr => generateForVideo(pr, { ...b, model: pickModel(b.model) }))); }
+  return false;
+}
+
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
   try {
@@ -1264,6 +1486,7 @@ const server=http.createServer(async (req,res) => {
     const hostHdr=(req.headers.host||'').toLowerCase();
     if (![`127.0.0.1:${PORT}`,`localhost:${PORT}`,`[::1]:${PORT}`].includes(hostHdr)) return error(res,'Host no permitido.',403);
     const url=new URL(req.url,`http://127.0.0.1:${PORT}`);
+    if (url.pathname.startsWith('/api/research')) { const handled=await researchRoute(req,res,url); if(handled!==false) return; }
     if (req.method==='GET' && url.pathname==='/api/state') return respond(res,200,state());
     if (req.method==='GET' && url.pathname==='/api/requirements') return respond(res,200,await requirementsReport());
     // Endpoint LIGERO: solo el progreso del trabajo (para poder sondear cada segundo sin mandar la transcripción enorme).

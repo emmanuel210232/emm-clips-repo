@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><div class="topbarRight"><button id="reqOpen" class="modeToggle" type="button" title="Comprobar que esta PC tiene todo lo necesario">🧰 Requisitos</button><button id="modeToggle" class="modeToggle" type="button" title="Cambiar entre el editor de cortos y el Resumen del directo">🎬 Resumen del directo</button><button id="themeToggle" class="themeToggle" type="button" title="Cambiar entre tema claro y oscuro" aria-label="Cambiar tema">🌙</button><span class="badge">Asistente</span></div></header>
+  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><div class="topbarRight"><button id="reqOpen" class="modeToggle" type="button" title="Comprobar que esta PC tiene todo lo necesario">🧰 Requisitos</button><button id="researchToggle" class="modeToggle researchToggle" type="button" title="Investigar a los canales que resuben a Shifu: qué pega, a qué hora, títulos y miniaturas">🔍 Investigar</button><button id="modeToggle" class="modeToggle" type="button" title="Cambiar entre el editor de cortos y el Resumen del directo">🎬 Resumen del directo</button><button id="themeToggle" class="themeToggle" type="button" title="Cambiar entre tema claro y oscuro" aria-label="Cambiar tema">🌙</button><span class="badge">Asistente</span></div></header>
 
   <!-- COMPROBACIÓN DE REQUISITOS (para saber si esta PC tiene todo lo necesario) -->
   <div id="reqModal" class="reqModal" hidden>
@@ -278,6 +278,15 @@
       </div>
     </section>
 
+    <!-- SECCIÓN APARTE: INVESTIGAR COMPETENCIA (canales que resuben a Shifu) -->
+    <section id="researchSection" class="researchSection" hidden>
+      <div class="bestofHero">
+        <h2 class="stepTitle">🔍 Investigar competencia</h2>
+        <p class="stepLead">Junta los videos de los canales que resuben a Shifu y encuentra <b>qué pegó más de lo normal</b>, a qué hora se subió y qué tienen en común sus títulos, miniaturas y hashtags. Luego la IA usa eso para escribir los tuyos.</p>
+      </div>
+      <div id="rsRoot"></div>
+    </section>
+
     <details class="card settings" id="configFooter"><summary>⚙️ Configuración de motores</summary><p class="hint">La transcripción local usa whisper.cpp y un modelo multilingüe. El corte usa FFmpeg. Puedes indicar sus rutas aquí o poner los ejecutables en PATH.</p>
       <label>FFmpeg <input id="ffmpegPath" type="text" placeholder="Ruta de ffmpeg.exe"></label>
       <label>FFprobe <input id="ffprobePath" type="text" placeholder="Ruta de ffprobe.exe"></label>
@@ -292,5 +301,6 @@
     </details>
   </main>
   <script src="/app.js"></script>
+  <script src="/investigar.js"></script>
 </body>
 </html>

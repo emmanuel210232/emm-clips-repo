@@ -652,12 +652,16 @@ $('themeToggle').onclick=toggleTheme; applyThemeIcon();
 let bestofItems=null, bestofScannedAt=0, bestofPendingAnalyze=false, bestofPendingCount=12;
 function inBestof(){return document.body.classList.contains('bestof-mode');}
 function switchMode(mode){
-  const bestof = mode==='bestof';
+  const bestof = mode==='bestof', research = mode==='research';
   document.body.classList.toggle('bestof-mode', bestof);
+  document.body.classList.toggle('research-mode', research);
   const sec=$('bestofSection'); if(sec) sec.hidden=!bestof;
+  const rsec=$('researchSection'); if(rsec) rsec.hidden=!research;
   const btn=$('modeToggle'); if(btn) btn.textContent = bestof?'✂️ Editor de cortos':'🎬 Resumen del directo';
+  const rbtn=$('researchToggle'); if(rbtn) rbtn.textContent = research?'✂️ Editor de cortos':'🔍 Investigar';
   try{ localStorage.setItem('eirl_mode', mode); }catch{}
   if(bestof) buildBestof();
+  if(research && typeof openResearch==='function') openResearch();
   window.scrollTo(0,0);
 }
 function bfmt(s){return `${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}`;}
@@ -714,6 +718,7 @@ function updateBestofCounts(){
   const sel=$('bestofSel'); if(sel) sel.textContent=on.length+' aprobados · total ~'+bfmt(on.reduce((a,c)=>a+(c.end-c.start),0));
 }
 $('modeToggle').onclick=()=>switchMode(inBestof()?'cortos':'bestof');
+if($('researchToggle')) $('researchToggle').onclick=()=>switchMode(document.body.classList.contains('research-mode')?'cortos':'research');
 $('bestofPick').onclick=safe(async()=>{notice('Elige el directo en el explorador…');const r=await api('/api/pick-video',{});if(r.cancelled){notice('Cancelado.');return;}await api('/api/project/open',{path:r.path});await refresh();buildBestof();notice('Directo abierto. Pulsa “Procesar directo”.');});
 $('bestofEngine').onchange=safe(async()=>{
   const v=$('bestofEngine').value;
@@ -880,7 +885,7 @@ function goStep(n){n=Math.max(1,Math.min(4,Number(n)||1));document.querySelector
 document.querySelectorAll('.wstep').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.step)));
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.go)));
 goStep(1); // siempre empezar en el paso 1 (como CapCut), no en el último
-try{ if(localStorage.getItem('eirl_mode')==='bestof') switchMode('bestof'); }catch{}
+try{ const m=localStorage.getItem('eirl_mode'); if(m==='bestof'||m==='research') switchMode(m); }catch{}
 // Aviso AUTOMÁTICO de versión nueva al abrir: así a quien ya instaló le llegan los arreglos sin tener que buscarlos.
 let _updLatest='';
 async function checkUpdatesOnStart(){
