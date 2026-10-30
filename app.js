@@ -107,14 +107,20 @@ function addShortControls(row,s) {
   const centerLabel=document.createElement('label');centerLabel.textContent='Posición';centerLabel.append(center);
   const zoom=document.createElement('input');zoom.type='checkbox';zoom.checked=s.zoomEnabled!==false;
   const zoomLabel=document.createElement('label');zoomLabel.className='inlineCheck';zoomLabel.append(zoom,document.createTextNode(' Zooms suaves'));
-  const styleSel=document.createElement('select');for(const cs of (state.captionStyles||[])){const o=document.createElement('option');o.value=cs.id;o.textContent=cs.label;styleSel.append(o);}styleSel.value=s.captionStyle||'verde';
+  const styleSel=document.createElement('select');for(const cs of (state.captionStyles||[])){const o=document.createElement('option');o.value=cs.id;o.textContent=cs.label;styleSel.append(o);}styleSel.value=s.captionStyle||'opus';
   const styleLabel=document.createElement('label');styleLabel.textContent='Subtítulos';styleLabel.append(styleSel);
   const fmtSel=document.createElement('select');for(const [val,lbl] of [['vertical','Vertical 9:16 (Shorts)'],['square','Cuadrado 1:1'],['horizontal','Horizontal 16:9']]){const o=document.createElement('option');o.value=val;o.textContent=lbl;fmtSel.append(o);}fmtSel.value=s.format||'vertical';
   const fmtLabel=document.createElement('label');fmtLabel.textContent='Formato';fmtLabel.append(fmtSel);
+  // Gancho al inicio (como Opus): la frase más fuerte se pone primero y luego el Short completo. Segundos desde el inicio del Short.
+  const rel=v=>Number.isFinite(v)?+(v-s.start).toFixed(1):'';
+  const hookOn=document.createElement('input');hookOn.type='checkbox';hookOn.checked=!!s.hookFirst;
+  const hookA=document.createElement('input');hookA.type='number';hookA.step='0.1';hookA.min='0';hookA.style.width='64px';hookA.value=rel(s.hookStart);hookA.placeholder='desde';
+  const hookB=document.createElement('input');hookB.type='number';hookB.step='0.1';hookB.min='0';hookB.style.width='64px';hookB.value=rel(s.hookEnd);hookB.placeholder='hasta';
+  const hookLabel=document.createElement('label');hookLabel.className='inlineCheck';hookLabel.title='Pone primero la frase más fuerte (2-6 s) y luego el Short completo, como OpusClip. Segundos contados desde el inicio del Short.';hookLabel.append(hookOn,document.createTextNode(' Empezar con la frase gancho, seg. '),hookA,document.createTextNode(' a '),hookB);
   const save=document.createElement('button');save.className='secondary';save.textContent='Guardar estilo';
   const update=()=>{const vert=fmtSel.value==='vertical';mode.disabled=!vert;centerLabel.hidden=(mode.value!=='manual'||!vert);zoomLabel.hidden=mode.value==='blur'};mode.onchange=update;fmtSel.onchange=update;update();
-  save.onclick=safe(async()=>{await api('/api/shorts/settings',{id:s.id,framingMode:mode.value,cropCenter:Number(center.value)/100,zoomEnabled:zoom.checked,captionStyle:styleSel.value,format:fmtSel.value});notice('Formato y estilo guardados. Vuelve a crear el Short para verlo.');});
-  framing.append(mode,fmtLabel,styleLabel,centerLabel,zoomLabel,save);
+  save.onclick=safe(async()=>{await api('/api/shorts/settings',{id:s.id,framingMode:mode.value,cropCenter:Number(center.value)/100,zoomEnabled:zoom.checked,captionStyle:styleSel.value,format:fmtSel.value,hookFirst:hookOn.checked,hookStart:hookA.value===''?null:s.start+Number(hookA.value),hookEnd:hookB.value===''?null:s.start+Number(hookB.value)});notice('Formato y estilo guardados. Vuelve a crear el Short para verlo.');});
+  framing.append(mode,fmtLabel,styleLabel,centerLabel,zoomLabel,hookLabel,save);
   const hint=document.createElement('p');hint.textContent='Auto sigue zonas de piel visibles. Si pierde al sujeto, usa Manual o Fondo desenfocado. El recorte vertical se ve en el MP4 terminado.';
   details.append(summary,timing,framing,hint);row.insertBefore(details,row.querySelector('.shortActions'));
 }

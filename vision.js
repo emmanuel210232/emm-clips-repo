@@ -56,8 +56,26 @@ async function analyzeShortVision(clip, onProgress = () => {}) {
     const bmp = await next;
     if (i < info.count) next = frameBitmap(clip.id, i + 1); // el siguiente se descarga mientras se analiza este
     const p = pose.detect(bmp), f = face.detect(bmp);
+    const people = p.landmarks.map(personOf), faces = f.faceLandmarks.map(faceOf);
+    // SEGUNDO VISTAZO: caras chicas (lejos, de noche) no salen en la imagen completa. Para cada persona sin cara,
+    // se recorta y agranda la zona de su cabeza y se busca ahí (la cara llena el detector).
+    for (const per of people) {
+      if (faces.some(fc => Math.abs(fc.cx - per.hx) < 0.08 && Math.abs(fc.cy - per.hy) < 0.15)) continue;
+      const W = bmp.width, H = bmp.height;
+      const side = Math.round(Math.min(H, Math.max(per.sw * 2.4 * W, 0.16 * H)));
+      const sx = Math.round(Math.max(0, Math.min(W - side, per.hx * W - side / 2))), sy = Math.round(Math.max(0, Math.min(H - side, per.hy * H - side * 0.45)));
+      try {
+        const crop = await createImageBitmap(bmp, sx, sy, side, side, { resizeWidth: 320, resizeHeight: 320, resizeQuality: 'high' });
+        const fr = face.detect(crop); crop.close && crop.close();
+        for (const lm of fr.faceLandmarks) {
+          const mapped = lm.map(q => ({ x: (sx + q.x * side) / W, y: (sy + q.y * side) / H }));
+          const fc = faceOf(mapped);
+          if (!faces.some(o => Math.abs(o.cx - fc.cx) < 0.04 && Math.abs(o.cy - fc.cy) < 0.06)) faces.push(fc);
+        }
+      } catch {}
+    }
     bmp.close && bmp.close();
-    frames.push({ t: +((i - 1) / info.fps).toFixed(2), people: p.landmarks.map(personOf), faces: f.faceLandmarks.map(faceOf) });
+    frames.push({ t: +((i - 1) / info.fps).toFixed(2), people, faces });
     if (i % 10 === 0 || i === info.count) onProgress(`Viendo quién habla en el Short ${clip.rank}… ${Math.round(i / info.count * 100)}%`);
   }
   return api('/api/shorts/vision', { id: clip.id, frames });
@@ -118,10 +136,11 @@ function drawShotEditor(clip, panel, plan) {
     const seg = document.createElement('button'); seg.type = 'button'; seg.className = 'shotSeg' + (s.layout === 'split' ? ' split' : '');
     seg.style.flexGrow = Math.max(0.2, s.end - s.start);
     if (s.layout === 'split') { seg.style.setProperty('--c', color(s.ids[0])); seg.style.setProperty('--c2', color(s.ids[1])); seg.textContent = '◫'; }
+    else if (s.layout === 'wide') { seg.style.setProperty('--c', '#6b7280'); seg.textContent = '▭'; }
     else { seg.style.setProperty('--c', color(s.id)); seg.textContent = 'P' + (num.get(s.id) || '?'); }
     const manual = (plan.overrides || []).some(o => o.start <= s.start + 0.05 && o.end >= s.end - 0.05);
     if (manual) seg.classList.add('manual');
-    seg.title = `${fmtS(s.start)}–${fmtS(s.end)} · ${s.layout === 'split' ? 'Pantalla dividida (P' + s.ids.map(i => num.get(i)).join(' arriba, P') + ' abajo)' : 'Persona ' + (num.get(s.id) || '?')}${manual ? ' · cambiado por ti' : ''}. Clic para cambiar.`;
+    seg.title = `${fmtS(s.start)}–${fmtS(s.end)} · ${s.layout === 'split' ? 'Pantalla dividida (P' + s.ids.map(i => num.get(i)).join(' arriba, P') + ' abajo)' : s.layout === 'wide' ? 'Toma abierta (imagen completa)' : 'Persona ' + (num.get(s.id) || '?')}${manual ? ' · cambiado por ti' : ''}. Clic para cambiar.`;
     seg.onclick = () => openShotMenu(clip, panel, plan, s, seg, menu);
     bar.append(seg);
   }
@@ -130,7 +149,8 @@ function drawShotEditor(clip, panel, plan) {
   const foot = document.createElement('div'); foot.className = 'shotFoot';
   const splits = plan.shots.filter(s => s.layout === 'split').length;
   const info = document.createElement('span'); info.className = 'muted';
-  info.textContent = `${plan.shots.length} toma(s)${splits ? ` · ${splits} con pantalla dividida` : ''}. Clic en una toma para cambiar a quién se ve.`;
+  const wides = plan.shots.filter(s => s.layout === 'wide').length;
+  info.textContent = `${plan.shots.length} toma(s)${splits ? ` · ${splits} con pantalla dividida` : ''}${wides ? ` · ${wides} abierta(s)` : ''}. Clic en una toma para cambiar a quién se ve.`;
   foot.append(info);
   if ((plan.overrides || []).length) {
     const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'secondary compact'; reset.textContent = '↺ Volver a lo automático';
@@ -146,6 +166,7 @@ function openShotMenu(clip, panel, plan, shot, seg, menu) {
   const opt = (label, ov) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'secondary compact'; b.textContent = label; b.onclick = () => { menu.hidden = true; const rest = (plan.overrides || []).filter(o => o.end <= shot.start + 0.05 || o.start >= shot.end - 0.05); saveOverrides(clip, panel, ov ? [...rest, { start: shot.start, end: shot.end, ...ov }] : rest); }; menu.append(b); };
   for (const p of plan.people) opt('Persona ' + p.n, { mode: 'person', id: p.id });
   if (plan.people.length >= 2) opt('◫ Pantalla dividida', { mode: 'split' });
+  opt('▭ Toma abierta', { mode: 'wide' });
   opt('Automático', null);
   menu.hidden = false;
   menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' });

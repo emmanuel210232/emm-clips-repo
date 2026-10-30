@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.26.1';
+const APP_VERSION = '1.27.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -722,7 +722,7 @@ async function detectBestMoments(opts){
       if(!Number.isFinite(ini)||ini>=dur-2) continue;
       const end=Math.min(dur,ini+d); if(end-ini<12) continue;
       const win=energy.filter(e=>e.t>=ini&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
-      cands.push({start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,40),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)});
+      cands.push({start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,70),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)});
     }
     // Selección QUALITY-FIRST: los momentos del modelo son SUS mejores; se toman por score, sin solaparse.
     // La duración es un TOPE máximo, NO un mínimo: si solo hay pocos momentos buenos, se dejan pocos — NO se fuerza relleno.
@@ -806,7 +806,7 @@ async function cloudShorts(model, want, onProgress){
   const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|e${c.e10}] ${c.text.replace(/\s+/g,' ').slice(0,400)}`).join('\n');
   // 3) la nube elige los mejores SHORTS virales
   job.message='La nube está eligiendo los mejores momentos para Shorts…'; job.percent=30;
-  const prompt=`DIRECTO de un streamer mexicano (bloques [SEGUNDOS|m:ss|eN] texto; eN alto = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, elige los ${want} MEJORES momentos para SHORTS VIRALES (TikTok/Reels/YouTube Shorts). Cada Short:\n- dura de 30 a 60 segundos\n- es AUTO-CONTENIDO (se entiende solo, sin contexto previo)\n- tiene un GANCHO fuerte en los primeros 3 segundos (gracioso, polemico, sorprendente, tierno o con reaccion fuerte)\n- el "ini" cae donde EMPIEZA el momento (el setup), NO a media frase\nEvita relleno, saludos y logistica aburrida. Reparte los momentos a lo largo del directo.\nAdemas, califica el GANCHO: que tan fuerte agarran los PRIMEROS 3 SEGUNDOS (10 = enganchas de inmediato, 1 = arranque lento/aburrido).\nResponde SOLO este JSON, sin texto extra: {"shorts":[{"ini":<segundos del bloque>,"dur":<30-60>,"gancho":"<TITULO CORTO EN MAYUSCULAS, max 40 caracteres>","por":"<por que es viral, 1 frase>","score":<1-10>,"gscore":<1-10 fuerza del gancho en los primeros 3s>}]}`;
+  const prompt=`DIRECTO de un streamer mexicano (bloques [SEGUNDOS|m:ss|eN] texto; eN alto = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, elige los ${want} MEJORES momentos para SHORTS VIRALES (TikTok/Reels/YouTube Shorts). Cada Short:\n- dura de 30 a 60 segundos\n- es AUTO-CONTENIDO (se entiende solo, sin contexto previo)\n- tiene un GANCHO fuerte en los primeros 3 segundos (gracioso, polemico, sorprendente, tierno o con reaccion fuerte)\n- el "ini" cae donde EMPIEZA el momento (el setup), NO a media frase\nEvita relleno, saludos y logistica aburrida. Reparte los momentos a lo largo del directo.\nAdemas, califica el GANCHO: que tan fuerte agarran los PRIMEROS 3 SEGUNDOS (10 = enganchas de inmediato, 1 = arranque lento/aburrido).\nResponde SOLO este JSON, sin texto extra: {"shorts":[{"ini":<segundos del bloque>,"dur":<30-60>,"gancho":"<TITULO CORTO EN MAYUSCULAS, max 40 caracteres>","por":"<por que es viral, 1 frase>","score":<1-10>,"gscore":<1-10 fuerza del gancho en los primeros 3s>,"frase":<segundos donde EMPIEZA la frase MÁS fuerte/graciosa/polémica DENTRO del momento (se pondrá también al inicio como gancho, como OpusClip); null si el momento ya arranca con ella>,"frase_dur":<2-6>}]}`;
   const txt=await cloudPick(prompt, model, onProgress);
   let arr=[]; try{ const pj=JSON.parse(txt); arr=Array.isArray(pj)?pj:(pj.shorts||pj.momentos||[]); }catch{}
   if(!arr.length){ const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} } }
@@ -823,7 +823,10 @@ async function cloudShorts(model, want, onProgress){
     if(end-start>90) end=start+90;
     if(end-start<12) continue;
     const win=energy.filter(e=>e.t>=start&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
-    cands.push({ start:+start.toFixed(2), end:+end.toFixed(2), gancho:String(o.gancho||'').slice(0,40), por:String(o.por||'').slice(0,140), score:Math.max(1,Math.min(10,Number(o.score)||6)), gscore:Math.max(1,Math.min(10,Number(o.gscore)||Number(o.score)||6)), energia:Math.round((peak-emin)/span*10) });
+    // Frase gancho (como Opus: la línea más fuerte se repite al inicio). Se ajusta a pausas para no cortar palabras.
+    let hookStart=null, hookEnd=null; const fr=Number(o.frase), fd=Math.max(2,Math.min(6,Number(o.frase_dur)||4));
+    if(o.frase!=null&&Number.isFinite(fr)&&fr>=start+3&&fr<end-1){ hookStart=words.length?nearestPause(words,fr,1.5):fr; hookEnd=words.length?nearestPause(words,Math.min(end,hookStart+fd),1.5):Math.min(end,hookStart+fd); if(!(hookEnd-hookStart>=1.5&&hookEnd-hookStart<=7&&hookStart>=start&&hookEnd<=end)){hookStart=hookEnd=null;} }
+    cands.push({ start:+start.toFixed(2), end:+end.toFixed(2), hookStart:hookStart!=null?+hookStart.toFixed(2):null, hookEnd:hookEnd!=null?+hookEnd.toFixed(2):null, gancho:String(o.gancho||'').slice(0,70), por:String(o.por||'').slice(0,140), score:Math.max(1,Math.min(10,Number(o.score)||6)), gscore:Math.max(1,Math.min(10,Number(o.gscore)||Number(o.score)||6)), energia:Math.round((peak-emin)/span*10) });
   }
   cands.sort((a,b)=> b.score-a.score || b.gscore-a.gscore || b.energia-a.energia); // desempate: gancho más fuerte primero
   const picked=[];
@@ -841,14 +844,15 @@ async function proposeShorts(opts) {
   // conserva lo que el usuario ya ajustó (gancho/correcciones/encuadre) por id
   const hooksById=new Map(shorts.map(s=>[s.id,s.hook||'']));
   const correctionsById=new Map(shorts.map(s=>[s.id,s.captionCorrections||[]]));
-  const settingsById=new Map(shorts.map(s=>[s.id,{framingMode:s.framingMode||'auto',cropCenter:s.cropCenter??.5,zoomEnabled:s.zoomEnabled!==false,captionStyle:s.captionStyle||'verde'}]));
+  const settingsById=new Map(shorts.map(s=>[s.id,{framingMode:s.framingMode||'auto',cropCenter:s.cropCenter??.5,zoomEnabled:s.zoomEnabled!==false,captionStyle:s.captionStyle||'opus',hookFirst:s.hookFirst}]));
   const tok=tokenizeTranscript(transcript);
   const mk=(c,i,method,reason)=>{ const id='s'+Math.round(c.start*10)+'_'+Math.round(c.end*10);
     const opening=tok.filter(x=>x.start>=c.start&&x.start<Math.min(c.end,c.start+10)).slice(0,20).map(x=>x.text.trim()).join(' ').replace(/\s+/g,' ').trim();
     const set=settingsById.get(id)||{};
     return { id, start:c.start, end:c.end, opening:opening||c.opening||'(momento)', score:c.score||0, editorialScore:c.editorialScore??(c.score?c.score*10:0), gscore:c.gscore||0, reason, method, gancho:c.gancho||'', por:c.por||'',
       hook:hooksById.get(id)||c.gancho||'', captionCorrections:correctionsById.get(id)||[],
-      framingMode:set.framingMode||'auto', cropCenter:set.cropCenter??.5, zoomEnabled:set.zoomEnabled!==false, captionStyle:set.captionStyle||'verde', format:'vertical', rank:i+1 }; };
+      framingMode:set.framingMode||'auto', cropCenter:set.cropCenter??.5, zoomEnabled:set.zoomEnabled!==false, captionStyle:set.captionStyle||'opus', format:'vertical', rank:i+1,
+      hookStart:c.hookStart??null, hookEnd:c.hookEnd??null, hookFirst:c.hookStart!=null?(set.hookFirst??true):false }; };
   if(useCloud){
     const modShort=cloudModel.replace('claude-','').replace(/-/g,' ');
     job={status:'running',message:`Analizando el directo con la nube (${modShort}) para Shorts…`,progress:'',percent:0,cancelRequested:false};
@@ -909,6 +913,7 @@ async function proposeShorts(opts) {
 // ===== VISIÓN (MediaPipe en el navegador) → DIRECTOR =====
 // El navegador analiza cuadros del clip (5 por segundo, sacados del ORIGINAL) y manda lo que vio; aquí se guarda
 // por Short y, al renderizar, lib/director.js decide quién habla y arma las tomas.
+const VISION_VERSION=2; // sube cuando el análisis mejora: los análisis viejos se rehacen solos
 const VISION_FPS=5; // calibrado con video real: a 10 cuadros/s el temblor del detector hace que una sonrisa parezca hablar
 const visionFile=id=>path.join(DATA,`vision_${String(id).replace(/[^\w-]/g,'')}.json`);
 const visionDir=id=>path.join(DATA,'vision',String(id).replace(/[^\w-]/g,''));
@@ -917,13 +922,13 @@ async function extractVisionFrames(clip){
   const dir=visionDir(clip.id);
   await fsp.rm(dir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(dir,{recursive:true});
   const dur=clip.end-clip.start;
-  await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-loglevel','error','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-vf',`fps=${VISION_FPS},scale=640:-2`,'-q:v','4',path.join(dir,'f%04d.jpg')],{windowsHide:true}); let err=''; c.stderr.on('data',b=>{err=(err+b).slice(-500);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('No pude sacar los cuadros: '+err))); });
+  await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-loglevel','error','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-vf',`fps=${VISION_FPS},scale='min(960,iw)':-2`,'-q:v','3',path.join(dir,'f%04d.jpg')],{windowsHide:true}); let err=''; c.stderr.on('data',b=>{err=(err+b).slice(-500);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('No pude sacar los cuadros: '+err))); });
   const count=fs.readdirSync(dir).filter(f=>/^f\d+\.jpg$/.test(f)).length;
   return {count,fps:VISION_FPS};
 }
 function visionFor(clip){
   const v=readJson(visionFile(clip.id),null);
-  if(!v||Math.abs(v.start-clip.start)>0.05||Math.abs(v.end-clip.end)>0.05||!Array.isArray(v.frames)) return null; // análisis viejo o de otro tramo
+  if(!v||(v.version||1)<VISION_VERSION||Math.abs(v.start-clip.start)>0.05||Math.abs(v.end-clip.end)>0.05||!Array.isArray(v.frames)) return null; // análisis viejo o de otro tramo
   return v;
 }
 function directedFraming(clip,width,height,energy){
@@ -957,6 +962,13 @@ function splitFilterParts(splits,width,height,OW,OH){
     enable,
   };
 }
+// Tipografía del estilo Opus (Luckiest Guy, licencia libre de Google Fonts). Se baja UNA vez a data/fonts.
+// Si no hay internet, libass usa la fuente de respaldo y el Short se crea igual.
+async function ensureCaptionFonts(){
+  const dir=path.join(DATA,'fonts'), f=path.join(dir,'LuckiestGuy-Regular.ttf');
+  if(fs.existsSync(f)) return;
+  try{ await fsp.mkdir(dir,{recursive:true}); const r=await fetch('https://raw.githubusercontent.com/google/fonts/main/apache/luckiestguy/LuckiestGuy-Regular.ttf',{signal:AbortSignal.timeout(20000)}); if(r.ok){ const b=Buffer.from(await r.arrayBuffer()); if(b.length>10000) await fsp.writeFile(f,b); } }catch{}
+}
 // Energía del audio del clip cada 0.1 s (para decidir dónde van los zooms).
 async function clipEnergy(bin,start,dur){
   let out=''; await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-ss',String(start),'-t',String(dur),'-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=1600,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],{windowsHide:true}); c.stdout.on('data',b=>{out+=b.toString();}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('energía '+code))); });
@@ -969,7 +981,10 @@ async function renderOneShort(clip,bin) {
   const groserias=findMatches(transcript,dictionary).filter(m=>m.end>clip.start&&m.start<clip.end);
   const censorRanges=groserias.map(m=>({start:m.start,end:m.end}));
   const assFile=path.join(DATA,`captions_${clip.id}.ass`);
-  await fsp.writeFile(assFile,makeAss(transcript,{...clip,censorRanges,brandHandle:config.brandHandle ?? channelStyle.brandHandle,brandMark:config.brandMark ?? channelStyle.brandMark}),'utf8');
+  // GANCHO AL INICIO (como Opus): la frase más fuerte se pone primero y luego el Short completo.
+  const hs=clip.hookFirst&&Number.isFinite(clip.hookStart)?clip.hookStart-clip.start:null, he=hs!=null?clip.hookEnd-clip.start:null;
+  const hookFirst=hs!=null&&he>hs+1&&hs>=0&&he<=dur;
+  await fsp.writeFile(assFile,makeAss(transcript,{...clip,...(hookFirst?{hook:''}:{}),censorRanges,brandHandle:config.brandHandle ?? channelStyle.brandHandle,brandMark:config.brandMark ?? channelStyle.brandMark}),'utf8');
   const output=path.join(EXPORTS,`short_${clip.rank}_${Date.now()}.mp4`);
   const temporary=path.join(DATA,`short_${crypto.randomUUID()}.mp4`);
   // Salida en 1080p (como Opus; YouTube da más calidad a Shorts 1080×1920). Los subtítulos (.ass) siguen medidos en 720×1280
@@ -977,16 +992,20 @@ async function renderOneShort(clip,bin) {
   const SHORT_OUT={vertical:[1080,1920],square:[1080,1080],horizontal:[1920,1080]};
   const [OW,OH]=SHORT_OUT[clip.format]||SHORT_OUT.vertical;
   const {width,height}=videoDimensions(project.videoPath);
-  const captions=`ass=data/captions_${clip.id}.ass`;
+  // Mismos cuadros por segundo que el original (hasta 60): los directos de Kick son de 60 y antes se forzaban a 30.
+  const SFPS=Math.max(24,Math.min(60,Math.round(videoFps(project.videoPath))||30));
+  const captions=`ass=data/captions_${clip.id}.ass:fontsdir=data/fonts`;
+  await ensureCaptionFonts(); // tipografía tipo cómic del estilo Opus (se baja una vez)
   // Zooms estilo Opus: golpes donde la voz sube de verdad (gritos/risas), sin temblor (ver lib/framing.js).
   job.message=`Escuchando la voz del Short ${clip.rank}…`;
   const energy=await clipEnergy(bin,clip.start,dur).catch(()=>[]); // sirve para los zooms Y para saber quién habla
-  const zoom=clip.zoomEnabled!==false?zoomCurve(planZooms(energy,dur),dur):'1';
+  const punches=clip.zoomEnabled!==false?planZooms(energy,dur):[];
+  let zoom=clip.zoomEnabled!==false?zoomCurve(punches,dur):'1';
   let filter;
   if(clip.format && clip.format!=='vertical') {
     // Cuadrado (1:1) u horizontal (16:9): escalar para cubrir + recorte centrado (sin reencuadre de cara).
     job.message=`Creando Short ${clip.rank} (${clip.format})…`;
-    filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${OW}:${OH},${zoomFilter(OW,OH,zoom,0.42)},${captions}[v]`;
+    filter=`[0:v]fps=${SFPS},setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${OW}:${OH},${zoomFilter(OW,OH,zoom,0.42)},${captions}[v]`;
   } else {
     let framing=null;
     if(clip.framingMode!=='blur') {
@@ -997,18 +1016,31 @@ async function renderOneShort(clip,bin) {
       if(!framing) framing=await framingForClip(clip,bin,width,height);
     }
     if(framing) {
-      const pan=zoomFilter(OW,OH,zoom,framing.fy??0.38);
-      if(framing.portrait) filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${OW}:${OH},${pan},${captions}[v]`;
-      else if(framing.splits?.length){
-        // Tomas normales + PANTALLA DIVIDIDA encima solo en sus tramos; los subtítulos van al final sobre todo.
-        const sp=splitFilterParts(framing.splits,width,height,OW,OH);
-        filter=`[0:v]fps=30,setpts=PTS-STARTPTS,split=3[m0][m1][m2];[m0]crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan}[main];${sp.panels};[main][sp]overlay=0:0:enable='${sp.enable}',${captions}[v]`;
+      // Con el director: acercamiento por toma según el tamaño de la cara + cabeza a 1/3 de altura (como Opus).
+      if(framing.framing?.length) zoom=zoomCurve(punches,dur,{base:framing.framing,drift:clip.zoomEnabled!==false?0.04:0});
+      const pan=zoomFilter(OW,OH,zoom,framing.fy??0.38,framing.framing);
+      if(framing.portrait) filter=`[0:v]fps=${SFPS},setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${OW}:${OH},${pan},${captions}[v]`;
+      else if(framing.splits?.length||framing.wides?.length){
+        // Tomas normales + PANTALLA DIVIDIDA y/o TOMA ABIERTA encima solo en sus tramos; subtítulos al final sobre todo.
+        const sp=framing.splits?.length?splitFilterParts(framing.splits,width,height,OW,OH):null;
+        const wd=framing.wides?.length?framing.wides.map(s=>`between(t\\,${s.start}\\,${s.end})`).join('+'):null;
+        const outs=['[m0]',...(sp?['[m1]','[m2]']:[]),...(wd?['[m3]']:[])];
+        const parts=[`[0:v]fps=${SFPS},setpts=PTS-STARTPTS,split=${outs.length}${outs.join('')}`,`[m0]crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan}[main]`];
+        let cur='[main]';
+        if(sp){ parts.push(sp.panels); parts.push(`${cur}[sp]overlay=0:0:enable='${sp.enable}'[o1]`); cur='[o1]'; }
+        if(wd){
+          const fh=Math.max(2,Math.round((OW*height/width)/2)*2);
+          parts.push(`[m3]split=2[wb][wf]`,`[wb]scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},boxblur=20:2[wbb]`,`[wf]scale=${OW}:${fh}:flags=lanczos[wff]`,`[wbb][wff]overlay=(W-w)/2:(H-h)/2[wide]`);
+          parts.push(`${cur}[wide]overlay=0:0:enable='${wd}'[o2]`); cur='[o2]';
+        }
+        parts.push(`${cur}${captions}[v]`);
+        filter=parts.join(';');
       }
-      else filter=`[0:v]fps=30,setpts=PTS-STARTPTS,crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan},${captions}[v]`;
+      else filter=`[0:v]fps=${SFPS},setpts=PTS-STARTPTS,crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan},${captions}[v]`;
     } else {
       job.message=`Usando fondo desenfocado en Short ${clip.rank}…`;
       const frontHeight=Math.max(2,Math.round((OW*height/width)/2)*2);
-      filter=`[0:v]fps=30,setpts=PTS-STARTPTS,split=2[bg][fg];[bg]scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},boxblur=15:2[back];[fg]scale=${OW}:${frontHeight}:flags=lanczos,${zoomFilter(OW,frontHeight,zoom,0.45)}[front];[back][front]overlay=(W-w)/2:(H-h)/2,${captions}[v]`;
+      filter=`[0:v]fps=${SFPS},setpts=PTS-STARTPTS,split=2[bg][fg];[bg]scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},boxblur=15:2[back];[fg]scale=${OW}:${frontHeight}:flags=lanczos,${zoomFilter(OW,frontHeight,zoom,0.45)}[front];[back][front]overlay=(W-w)/2:(H-h)/2,${captions}[v]`;
     }
   }
   job.message=`Creando Short ${clip.rank}…`; job.percent=0;
@@ -1020,8 +1052,19 @@ async function renderOneShort(clip,bin) {
     audioMap=['-map','[a]'];
   }
   try {
-    await run(bin,['-y','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r','30','-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf','18','-c:a','aac','-b:a','160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
-    await fsp.rename(temporary,output);
+    await run(bin,['-y','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r',String(SFPS),'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',hookFirst?'12':'18','-c:a','aac','-b:a',hookFirst?'256k':'160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
+    if(hookFirst){
+      // Segunda pasada: [frase gancho] + [Short completo], y el recuadro del título encima del gancho.
+      // (La primera pasada fue casi sin pérdida —crf 12— para que la calidad final sea la misma.)
+      job.message=`Poniendo el gancho al inicio del Short ${clip.rank}…`;
+      const titleFile=path.join(DATA,`title_${clip.id}.ass`);
+      await fsp.writeFile(titleFile,makeAss([],{...clip,start:0,end:Math.max(3.2,he-hs),brandHandle:'',censorRanges:[]}),'utf8');
+      const final=path.join(DATA,`short_${crypto.randomUUID()}.mp4`);
+      const fc=`[0:v]split[a][b];[0:a]asplit[c][d];[a]trim=${hs.toFixed(3)}:${he.toFixed(3)},setpts=PTS-STARTPTS[hv];[c]atrim=${hs.toFixed(3)}:${he.toFixed(3)},asetpts=PTS-STARTPTS[ha];[b]setpts=PTS-STARTPTS[mv];[d]asetpts=PTS-STARTPTS[ma];[hv][ha][mv][ma]concat=n=2:v=1:a=1[cv][ca];[cv]ass=data/title_${clip.id}.ass:fontsdir=data/fonts[vo]`;
+      try{ await run(bin,['-y','-i',temporary,'-filter_complex',fc,'-map','[vo]','-map','[ca]','-r',String(SFPS),'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf','18','-c:a','aac','-b:a','160k','-movflags','+faststart',final],progress(dur+(he-hs),`Short ${clip.rank} · gancho`)); }
+      finally{ await fsp.unlink(temporary).catch(()=>{}); }
+      await fsp.rename(final,output);
+    } else await fsp.rename(temporary,output);
   } catch(e) {await fsp.unlink(temporary).catch(()=>{});throw e;}
   return output;
 }
@@ -1778,7 +1821,7 @@ const server=http.createServer(async (req,res) => {
       const words=tokenizeTranscript(transcript);
       const opening=words.filter(w=>w.start>=start&&w.start<Math.min(end,start+10)).slice(0,20).map(w=>w.text.trim()).join(' ').replace(/\s+/g,' ').trim();
       const id='m'+Math.round(start*10)+'_'+Math.round(end*10);
-      const clip={id,start:+start.toFixed(2),end:+end.toFixed(2),opening:opening||'(momento elegido por ti)',score:0,editorialScore:0,reason:'Momento elegido por ti',method:'manual',hook:String(body.hook||'').trim().slice(0,40),captionCorrections:[],framingMode:'auto',cropCenter:.5,zoomEnabled:true,captionStyle:'verde',format:'vertical'};
+      const clip={id,start:+start.toFixed(2),end:+end.toFixed(2),opening:opening||'(momento elegido por ti)',score:0,editorialScore:0,reason:'Momento elegido por ti',method:'manual',hook:String(body.hook||'').trim().slice(0,70),captionCorrections:[],framingMode:'auto',cropCenter:.5,zoomEnabled:true,captionStyle:'opus',format:'vertical'};
       shorts=[clip,...shorts.filter(s=>s.id!==id)].slice(0,30).map((s,i)=>({...s,rank:i+1}));
       writeJson(files.shorts,shorts);
       return respond(res,200,state());
@@ -1797,7 +1840,7 @@ const server=http.createServer(async (req,res) => {
       if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
       const body=await jsonBody(req), clip=shorts.find(s=>s.id===String(body.id||''));
       if (!clip) throw Error('No encuentro esa propuesta de Short.');
-      clip.hook=String(body.hook||'').trim().slice(0,40);
+      clip.hook=String(body.hook||'').trim().slice(0,70);
       writeJson(files.shorts,shorts);
       return respond(res,200,{short:clip});
     }
@@ -1811,6 +1854,14 @@ const server=http.createServer(async (req,res) => {
       clip.framingMode=body.framingMode;clip.cropCenter=center;clip.zoomEnabled=Boolean(body.zoomEnabled);
       if(body.captionStyle && CAPTION_STYLES[body.captionStyle]) clip.captionStyle=body.captionStyle;
       if(body.format && FORMATS[body.format]) clip.format=body.format;
+      if(typeof body.hookFirst==='boolean'){
+        const a=Number(body.hookStart), b=Number(body.hookEnd);
+        if(body.hookStart!=null&&body.hookEnd!=null&&Number.isFinite(a)&&Number.isFinite(b)){
+          if(!(a>=clip.start&&b<=clip.end&&b-a>=1&&b-a<=8)) throw Error('La frase gancho debe durar 1 a 8 segundos y estar dentro del Short.');
+          clip.hookStart=+a.toFixed(2); clip.hookEnd=+b.toFixed(2);
+        }
+        clip.hookFirst=body.hookFirst&&Number.isFinite(clip.hookStart);
+      }
       writeJson(files.shorts,shorts);return respond(res,200,{short:clip});
     }
     if (req.method==='POST' && url.pathname==='/api/shorts/timing') {
@@ -1821,6 +1872,7 @@ const server=http.createServer(async (req,res) => {
       if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>duration||end-start<10||end-start>100) throw Error('El Short debe durar entre 10 y 100 segundos dentro del video.');
       if(Math.abs(clip.start-start)>0.05||Math.abs(clip.end-end)>0.05) clip.shotOverrides=[]; // otro tramo: los cambios de tomas ya no aplican (el análisis se rehace solo)
       clip.start=+start.toFixed(2);clip.end=+end.toFixed(2);
+      if(Number.isFinite(clip.hookStart)&&(clip.hookStart<clip.start||clip.hookEnd>clip.end)){ clip.hookFirst=false; clip.hookStart=clip.hookEnd=null; } // la frase gancho quedó fuera del nuevo tramo
       clip.opening=tokenizeTranscript(transcript).filter(w=>w.start>=start&&w.start<Math.min(end,start+10)).slice(0,20).map(w=>w.text.trim()).join(' ');
       writeJson(files.shorts,shorts);return respond(res,200,{short:clip});
     }
@@ -1860,7 +1912,7 @@ const server=http.createServer(async (req,res) => {
         people:(f.people||[]).slice(0,6).map(p=>({hx:r(p.hx),hy:r(p.hy),sw:r(p.sw)})),
         faces:(f.faces||[]).slice(0,6).map(p=>({cx:r(p.cx),cy:r(p.cy),w:r(p.w),mouth:r(p.mouth)}))}));
       const energy=await clipEnergy(readiness().ffmpeg,clip.start,clip.end-clip.start).catch(()=>[]);
-      writeJson(visionFile(clip.id),{start:clip.start,end:clip.end,fps:VISION_FPS,frames,energy,createdAt:Date.now()});
+      writeJson(visionFile(clip.id),{version:VISION_VERSION,start:clip.start,end:clip.end,fps:VISION_FPS,frames,energy,createdAt:Date.now()});
       await fsp.rm(visionDir(clip.id),{recursive:true,force:true}).catch(()=>{}); // los cuadros ya no hacen falta
       const plan=shotPlan(clip);
       return respond(res,200,{ok:true,frames:frames.length,people:plan.people.length,shots:plan.shots.length,splits:plan.shots.filter(s=>s.layout==='split').length,fallback:plan.fallback});
@@ -1873,7 +1925,7 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/shorts/shots') {
       const body=await jsonBody(req); const clip=shorts.find(s=>s.id===String(body.id||'')); if(!clip) throw Error('No encuentro ese Short.');
       const dur=clip.end-clip.start;
-      clip.shotOverrides=(Array.isArray(body.overrides)?body.overrides:[]).slice(0,60).map(o=>({start:Math.max(0,Math.min(dur,+o.start||0)),end:Math.max(0,Math.min(dur,+o.end||0)),mode:['person','split','auto'].includes(o.mode)?o.mode:'auto',id:Number.isFinite(+o.id)?+o.id:undefined})).filter(o=>o.end-o.start>=0.2&&o.mode!=='auto');
+      clip.shotOverrides=(Array.isArray(body.overrides)?body.overrides:[]).slice(0,60).map(o=>({start:Math.max(0,Math.min(dur,+o.start||0)),end:Math.max(0,Math.min(dur,+o.end||0)),mode:['person','split','wide','auto'].includes(o.mode)?o.mode:'auto',id:Number.isFinite(+o.id)?+o.id:undefined})).filter(o=>o.end-o.start>=0.2&&o.mode!=='auto');
       writeJson(files.shorts,shorts);
       return respond(res,200,shotPlan(clip));
     }

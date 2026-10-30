@@ -1,6 +1,6 @@
 {
-  "version": "1.26.1",
-  "notes": "Shorts: ahora sí sigue a QUIEN HABLA. Antes confundía sonreír/reírse con hablar y se iba con el que no hablaba; y si a quien habla se le tapaba la cara (letrero del stream, cabeza agachada) cortaba al otro. Arreglado y probado con video real. No hace falta volver a analizar: dale Crear Short otra vez.",
+  "version": "1.27.0",
+  "notes": "Shorts nivel OpusClip (comparado cuadro a cuadro con clips reales de Opus): se acerca a la cara de quien habla según qué tan lejos está; encuentra caras chicas y de noche (antes fallaba en 95% de los cuadros); cámara fija sin temblor (arregla Shorts que no se creaban); toma abierta con fondo borroso cuando no hay a quién encuadrar; subtítulos estilo Opus (1-2 palabras, letra tipo cómic, clave en amarillo); título del gancho en recuadro blanco 3 s; puede EMPEZAR con la frase más fuerte (la IA la elige); mismos cuadros por segundo que el original (60 en Kick). Los análisis viejos se rehacen solos.",
   "files": [
     "server.js",
     "app.js",
