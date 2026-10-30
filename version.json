@@ -1,6 +1,6 @@
 {
-  "version": "1.23.2",
-  "notes": "ARREGLO IMPORTANTE: si editabas clips en la línea de tiempo y no marcabas la casilla de silenciar, las groserías que marcaste podían salir SIN censurar. Ahora las palabras marcadas en el Paso 2 se silencian SIEMPRE. Incluye: abrir .mpg ~3x más rápido y la pestaña 🔍 Investigar.",
+  "version": "1.24.0",
+  "notes": "Shorts más pro: ahora salen en 1080x1920 (antes 720p) y los zooms caen donde la voz sube de verdad (gritos, risas, remates), con entrada rápida, salida suave y sin temblor. Próximo: seguir a quien está hablando.",
   "files": [
     "server.js",
     "app.js",

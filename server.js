@@ -10,7 +10,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const { normalize, findMatches, buildCuts, keptIntervals, adjustedCuts, parseSrt, parseWhisperJson, tokenizeTranscript } = require('./lib/core');
 const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS, nearestPause } = require('./lib/shorts');
 const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/editorial');
-const { detectSubjectX, smoothTrack, cropExpression, zoomExpression } = require('./lib/framing');
+const { detectSubjectX, smoothTrack, cropExpression, zoomExpression, planZooms, zoomCurve, zoomFilter } = require('./lib/framing');
 const channelStyle = require('./channel_style.json');
 
 const ROOT = __dirname;
@@ -136,7 +136,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.23.2';
+const APP_VERSION = '1.24.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -905,6 +905,13 @@ async function proposeShorts(opts) {
   })();
   return {started:true};
 }
+// Energía del audio del clip cada 0.1 s (para decidir dónde van los zooms).
+async function clipEnergy(bin,start,dur){
+  let out=''; await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-ss',String(start),'-t',String(dur),'-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=1600,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],{windowsHide:true}); c.stdout.on('data',b=>{out+=b.toString();}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('energía '+code))); });
+  const energy=[]; let cur=null;
+  for(const l of out.split(/\r?\n/)){ const mt=l.match(/pts_time:([\d.]+)/); if(mt){cur=+mt[1];continue;} const mr=l.match(/RMS_level=(-?[\d.]+|-?inf|nan)/i); if(mr&&cur!=null){ const v=parseFloat(mr[1]); energy.push({t:cur,db:Number.isFinite(v)?v:-90}); } }
+  return energy;
+}
 async function renderOneShort(clip,bin) {
   const dur=clip.end-clip.start, pad=0.15;
   const groserias=findMatches(transcript,dictionary).filter(m=>m.end>clip.start&&m.start<clip.end);
@@ -913,15 +920,20 @@ async function renderOneShort(clip,bin) {
   await fsp.writeFile(assFile,makeAss(transcript,{...clip,censorRanges,brandHandle:config.brandHandle ?? channelStyle.brandHandle,brandMark:config.brandMark ?? channelStyle.brandMark}),'utf8');
   const output=path.join(EXPORTS,`short_${clip.rank}_${Date.now()}.mp4`);
   const temporary=path.join(DATA,`short_${crypto.randomUUID()}.mp4`);
-  const [OW,OH]=FORMATS[clip.format]||FORMATS.vertical;
+  // Salida en 1080p (como Opus; YouTube da más calidad a Shorts 1080×1920). Los subtítulos (.ass) siguen medidos en 720×1280
+  // y libass los escala solos al tamaño real del video, así que se ven en la misma proporción.
+  const SHORT_OUT={vertical:[1080,1920],square:[1080,1080],horizontal:[1920,1080]};
+  const [OW,OH]=SHORT_OUT[clip.format]||SHORT_OUT.vertical;
   const {width,height}=videoDimensions(project.videoPath);
   const captions=`ass=data/captions_${clip.id}.ass`;
-  const zoom=clip.zoomEnabled===false?'1':zoomExpression(tokenizeTranscript(transcript),clip.start,clip.end);
+  // Zooms estilo Opus: golpes donde la voz sube de verdad (gritos/risas), sin temblor (ver lib/framing.js).
+  let zoom='1';
+  if(clip.zoomEnabled!==false){ job.message=`Buscando los momentos fuertes del Short ${clip.rank}…`; const en=await clipEnergy(bin,clip.start,dur).catch(()=>[]); zoom=zoomCurve(planZooms(en,dur),dur); }
   let filter;
   if(clip.format && clip.format!=='vertical') {
     // Cuadrado (1:1) u horizontal (16:9): escalar para cubrir + recorte centrado (sin reencuadre de cara).
     job.message=`Creando Short ${clip.rank} (${clip.format})…`;
-    filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${OW}x${OH}:fps=30,${captions}[v]`;
+    filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${OW}:${OH},${zoomFilter(OW,OH,zoom,0.42)},${captions}[v]`;
   } else {
     let framing=null;
     if(clip.framingMode!=='blur') {
@@ -929,13 +941,13 @@ async function renderOneShort(clip,bin) {
       framing=await framingForClip(clip,bin,width,height);
     }
     if(framing) {
-      const pan=`zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${OW}x${OH}:fps=30`;
-      if(framing.portrait) filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},${pan},${captions}[v]`;
+      const pan=zoomFilter(OW,OH,zoom);
+      if(framing.portrait) filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${OW}:${OH},${pan},${captions}[v]`;
       else filter=`[0:v]fps=30,setpts=PTS-STARTPTS,crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan},${captions}[v]`;
     } else {
       job.message=`Usando fondo desenfocado en Short ${clip.rank}…`;
       const frontHeight=Math.max(2,Math.round((OW*height/width)/2)*2);
-      filter=`[0:v]fps=30,setpts=PTS-STARTPTS,split=2[bg][fg];[bg]scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},boxblur=15:2[back];[fg]scale=${OW}:-2,zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${OW}x${frontHeight}:fps=30[front];[back][front]overlay=(W-w)/2:(H-h)/2,${captions}[v]`;
+      filter=`[0:v]fps=30,setpts=PTS-STARTPTS,split=2[bg][fg];[bg]scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},boxblur=15:2[back];[fg]scale=${OW}:${frontHeight}:flags=lanczos,${zoomFilter(OW,frontHeight,zoom,0.45)}[front];[back][front]overlay=(W-w)/2:(H-h)/2,${captions}[v]`;
     }
   }
   job.message=`Creando Short ${clip.rank}…`; job.percent=0;
@@ -947,7 +959,7 @@ async function renderOneShort(clip,bin) {
     audioMap=['-map','[a]'];
   }
   try {
-    await run(bin,['-y','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r','30','-c:v','libx264','-pix_fmt','yuv420p','-preset','fast','-crf','20','-c:a','aac','-b:a','160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
+    await run(bin,['-y','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r','30','-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf','18','-c:a','aac','-b:a','160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
     await fsp.rename(temporary,output);
   } catch(e) {await fsp.unlink(temporary).catch(()=>{});throw e;}
   return output;
