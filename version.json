@@ -1,6 +1,6 @@
 {
-  "version": "1.25.0",
-  "notes": "Shorts estilo Opus: la app ahora VE quién está hablando (detecta personas y bocas con IA de Google en tu GPU) y encuadra a esa persona; corta al otro cuando habla, se queda quieta mientras tanto y toma a dos si caben juntos. Ya no cae en fondo desenfocado cuando hay gente. Necesita internet la primera vez para bajar el detector.",
+  "version": "1.26.0",
+  "notes": "Shorts: PANTALLA DIVIDIDA automática cuando dos personas lejos se responden rápido (una arriba y otra abajo), y nuevo botón 🎥 Tomas en cada Short: ves quién sale en cada parte (con su foto) y puedes cambiarlo a mano (persona, dividida o automático) antes de crearlo.",
   "files": [
     "server.js",
     "app.js",

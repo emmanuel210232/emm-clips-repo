@@ -511,3 +511,20 @@ body.research-mode #wizard, body.research-mode section.step, body.research-mode 
 [data-theme="dark"] .rsNotes{background:#2d343c;border-color:#3c454e;color:#e8ebe8}
 [data-theme="dark"] .rsTag{color:#8ef06a}[data-theme="dark"] .rsTag.warn{color:#e0b020}
 @media(max-width:700px){.rsTwo{grid-template-columns:1fr}.rsCh{flex-wrap:wrap}.rsChActs{width:100%;justify-content:flex-end}.rsHeat{grid-template-columns:30px repeat(24,minmax(0,1fr));font-size:8px}.rsHc{font-size:8px;min-height:12px}}
+
+/* ===== 🎥 Vista previa de tomas (Shorts) ===== */
+.shotEditor{margin-top:10px;padding:12px;border:1px solid rgba(128,140,130,.28);border-radius:12px;display:flex;flex-direction:column;gap:10px}
+.shotPeople{display:flex;flex-wrap:wrap;gap:8px}
+.shotPerson{display:grid;grid-template-columns:40px auto;grid-template-rows:auto auto;column-gap:8px;align-items:center;padding:4px 10px 4px 4px;border-radius:10px;border:2px solid var(--c);background:rgba(128,140,130,.06)}
+.shotPerson img{grid-row:1/3;width:40px;height:40px;border-radius:8px;object-fit:cover;background:rgba(128,140,130,.25)}
+.shotPerson b{font-size:13px;color:var(--c)}
+.shotPerson small{font-size:11px;opacity:.65}
+.shotBar{display:flex;gap:2px;height:38px;border-radius:9px;overflow:hidden}
+.shotSeg{flex-basis:0;min-width:18px;border:0;border-radius:0;padding:0;background:var(--c);color:#fff;font-weight:800;font-size:12px;cursor:pointer;text-shadow:0 1px 2px rgba(0,0,0,.4)}
+.shotSeg.split{background:linear-gradient(180deg,var(--c) 0 50%,var(--c2) 50% 100%)}
+.shotSeg.manual{box-shadow:inset 0 0 0 3px rgba(255,255,255,.85)}
+.shotSeg:hover{filter:brightness(1.12)}
+.shotTicks{display:flex;justify-content:space-between;font-size:11px;opacity:.6;margin-top:-6px}
+.shotMenu{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px;border-radius:10px;background:rgba(128,140,130,.1)}
+.shotMenuTitle{flex-basis:100%;font-size:13px;font-weight:700}
+.shotFoot{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}

@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.25.0';
+const APP_VERSION = '1.26.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -921,12 +921,41 @@ async function extractVisionFrames(clip){
   const count=fs.readdirSync(dir).filter(f=>/^f\d+\.jpg$/.test(f)).length;
   return {count,fps:VISION_FPS};
 }
-function directedFraming(clip,width,height,energy){
+function visionFor(clip){
   const v=readJson(visionFile(clip.id),null);
   if(!v||Math.abs(v.start-clip.start)>0.05||Math.abs(v.end-clip.end)>0.05||!Array.isArray(v.frames)) return null; // análisis viejo o de otro tramo
-  const r=direct({frames:v.frames,energy,dur:clip.end-clip.start,srcW:width,srcH:height});
+  return v;
+}
+function directedFraming(clip,width,height,energy){
+  const v=visionFor(clip); if(!v) return null;
+  const r=direct({frames:v.frames,energy:energy||v.energy||[],dur:clip.end-clip.start,srcW:width,srcH:height,overrides:clip.shotOverrides||[]});
   if(!r||r.fallback||!r.track?.length) return null;
   return r;
+}
+// Plan de tomas para la vista previa (mismo cálculo que el render). Personas numeradas 1, 2, 3… por presencia.
+function shotPlan(clip){
+  const dur=+(clip.end-clip.start).toFixed(2);
+  const v=visionFor(clip);
+  if(!v) return {hasVision:false,dur,shots:[],people:[],overrides:clip.shotOverrides||[],fallback:false};
+  const {width,height}=videoDimensions(project.videoPath);
+  const r=direct({frames:v.frames,energy:v.energy||[],dur,srcW:width,srcH:height,overrides:clip.shotOverrides||[]});
+  if(!r||r.fallback) return {hasVision:true,dur,shots:[],people:[],overrides:clip.shotOverrides||[],fallback:true};
+  return {hasVision:true,dur,shots:r.shots,people:r.people.map((p,i)=>({...p,n:i+1})),overrides:clip.shotOverrides||[],fallback:false};
+}
+// Pantalla dividida (1080×1920): dos paneles 1080×958 + línea de 4 px. Cada panel recorta alrededor de la cabeza
+// de su persona (posición fija por toma dividida) y se SUPERPONE a la toma normal solo en esos tramos.
+function splitFilterParts(splits,width,height,OW,OH){
+  const PH=Math.floor((OH-4)/2/2)*2, gap=OH-PH*2;
+  const ph=Math.min(height,Math.round(height*0.82/2)*2), pw=Math.min(width,Math.round(ph*OW/PH/2)*2);
+  const expr=(fn)=>splits.reduceRight((acc,s)=>`if(between(t\\,${s.start}\\,${s.end})\\,${fn(s)}\\,${acc})`,'0');
+  const px=p=>Math.round(Math.max(0,Math.min(width-pw,p.x*width-pw/2)));
+  const py=p=>Math.round(Math.max(0,Math.min(height-ph,p.y*height-ph*0.4)));
+  const enable=splits.map(s=>`between(t\\,${s.start}\\,${s.end})`).join('+');
+  return {
+    panels:`[m1]crop=w=${pw}:h=${ph}:x='${expr(s=>px(s.top))}':y='${expr(s=>py(s.top))}',scale=${OW}:${PH}:flags=lanczos,pad=${OW}:${PH+gap}:0:0:black[top];`+
+           `[m2]crop=w=${pw}:h=${ph}:x='${expr(s=>px(s.bottom))}':y='${expr(s=>py(s.bottom))}',scale=${OW}:${PH}:flags=lanczos[bot];[top][bot]vstack[sp]`,
+    enable,
+  };
 }
 // Energía del audio del clip cada 0.1 s (para decidir dónde van los zooms).
 async function clipEnergy(bin,start,dur){
@@ -970,6 +999,11 @@ async function renderOneShort(clip,bin) {
     if(framing) {
       const pan=zoomFilter(OW,OH,zoom,framing.fy??0.38);
       if(framing.portrait) filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${OW}:${OH},${pan},${captions}[v]`;
+      else if(framing.splits?.length){
+        // Tomas normales + PANTALLA DIVIDIDA encima solo en sus tramos; los subtítulos van al final sobre todo.
+        const sp=splitFilterParts(framing.splits,width,height,OW,OH);
+        filter=`[0:v]fps=30,setpts=PTS-STARTPTS,split=3[m0][m1][m2];[m0]crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan}[main];${sp.panels};[main][sp]overlay=0:0:enable='${sp.enable}',${captions}[v]`;
+      }
       else filter=`[0:v]fps=30,setpts=PTS-STARTPTS,crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan},${captions}[v]`;
     } else {
       job.message=`Usando fondo desenfocado en Short ${clip.rank}…`;
@@ -1785,6 +1819,7 @@ const server=http.createServer(async (req,res) => {
       if(!clip) throw Error('No encuentro esa propuesta de Short.');
       const start=Number(body.start),end=Number(body.end),duration=await durationOf(project.videoPath);
       if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>duration||end-start<10||end-start>100) throw Error('El Short debe durar entre 10 y 100 segundos dentro del video.');
+      if(Math.abs(clip.start-start)>0.05||Math.abs(clip.end-end)>0.05) clip.shotOverrides=[]; // otro tramo: los cambios de tomas ya no aplican (el análisis se rehace solo)
       clip.start=+start.toFixed(2);clip.end=+end.toFixed(2);
       clip.opening=tokenizeTranscript(transcript).filter(w=>w.start>=start&&w.start<Math.min(end,start+10)).slice(0,20).map(w=>w.text.trim()).join(' ');
       writeJson(files.shorts,shorts);return respond(res,200,{short:clip});
@@ -1824,11 +1859,36 @@ const server=http.createServer(async (req,res) => {
       const frames=(Array.isArray(body.frames)?body.frames:[]).slice(0,3000).map(f=>({t:r(f.t),
         people:(f.people||[]).slice(0,6).map(p=>({hx:r(p.hx),hy:r(p.hy),sw:r(p.sw)})),
         faces:(f.faces||[]).slice(0,6).map(p=>({cx:r(p.cx),cy:r(p.cy),w:r(p.w),mouth:r(p.mouth)}))}));
-      writeJson(visionFile(clip.id),{start:clip.start,end:clip.end,fps:VISION_FPS,frames,createdAt:Date.now()});
+      const energy=await clipEnergy(readiness().ffmpeg,clip.start,clip.end-clip.start).catch(()=>[]);
+      writeJson(visionFile(clip.id),{start:clip.start,end:clip.end,fps:VISION_FPS,frames,energy,createdAt:Date.now()});
       await fsp.rm(visionDir(clip.id),{recursive:true,force:true}).catch(()=>{}); // los cuadros ya no hacen falta
-      const {width,height}=videoDimensions(project.videoPath);
-      const plan=direct({frames,energy:[],dur:clip.end-clip.start,srcW:width,srcH:height});
-      return respond(res,200,{ok:true,frames:frames.length,people:plan&&!plan.fallback?plan.tracks:0,shots:plan&&!plan.fallback?plan.shots.length:0,fallback:!!plan?.fallback});
+      const plan=shotPlan(clip);
+      return respond(res,200,{ok:true,frames:frames.length,people:plan.people.length,shots:plan.shots.length,splits:plan.shots.filter(s=>s.layout==='split').length,fallback:plan.fallback});
+    }
+    // VISTA PREVIA DE TOMAS: el plan del director (con los cambios manuales) para mostrarlo y editarlo.
+    if (req.method==='GET' && url.pathname==='/api/shorts/shots') {
+      const clip=shorts.find(s=>s.id===String(url.searchParams.get('id')||'')); if(!clip) throw Error('No encuentro ese Short.');
+      return respond(res,200,shotPlan(clip));
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/shots') {
+      const body=await jsonBody(req); const clip=shorts.find(s=>s.id===String(body.id||'')); if(!clip) throw Error('No encuentro ese Short.');
+      const dur=clip.end-clip.start;
+      clip.shotOverrides=(Array.isArray(body.overrides)?body.overrides:[]).slice(0,60).map(o=>({start:Math.max(0,Math.min(dur,+o.start||0)),end:Math.max(0,Math.min(dur,+o.end||0)),mode:['person','split','auto'].includes(o.mode)?o.mode:'auto',id:Number.isFinite(+o.id)?+o.id:undefined})).filter(o=>o.end-o.start>=0.2&&o.mode!=='auto');
+      writeJson(files.shorts,shorts);
+      return respond(res,200,shotPlan(clip));
+    }
+    if (req.method==='GET' && url.pathname==='/api/shorts/person-thumb') {
+      const clip=shorts.find(s=>s.id===String(url.searchParams.get('id')||'')); if(!clip) return error(res,'No encontrado.',404);
+      const plan=shotPlan(clip); const p=plan.people.find(x=>x.id===Number(url.searchParams.get('p'))); if(!p) return error(res,'No encontrado.',404);
+      const fp=path.join(DATA,'vthumbs',`${String(clip.id).replace(/[^\w-]/g,'')}_${p.id}_${Math.round(p.t*10)}.jpg`);
+      if(!fs.existsSync(fp)){
+        await fsp.mkdir(path.dirname(fp),{recursive:true});
+        const {width,height}=videoDimensions(project.videoPath);
+        const side=Math.round(Math.max(90,Math.min(height,p.size*width*1.5))/2)*2;
+        const x=Math.round(Math.max(0,Math.min(width-side,p.x*width-side/2))), y=Math.round(Math.max(0,Math.min(height-side,p.y*height-side*0.45)));
+        await runBG(readiness().ffmpeg,['-y','-ss',String(clip.start+p.t),'-i',project.videoPath,'-frames:v','1','-vf',`crop=${side}:${side}:${x}:${y},scale=160:160:flags=lanczos`,'-q:v','3',fp]);
+      }
+      return serveMedia(req,res,fp);
     }
     if (req.method==='POST' && url.pathname==='/api/shorts/render') { const body=await jsonBody(req); return respond(res,202,await renderShort(String(body.id||''))); }
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());

@@ -62,9 +62,106 @@ async function analyzeShortVision(clip, onProgress = () => {}) {
   }
   return api('/api/shorts/vision', { id: clip.id, frames });
 }
+// ===== VISTA PREVIA DE TOMAS (editar a quién se ve en cada tramo antes de renderizar) =====
+const shotEditorsOpen = new Set();
+const shotPlans = new Map();
+const PERSON_COLORS = ['#3aa85a', '#3b82f6', '#e0a020', '#d9468a', '#8b5cf6', '#14b8a6'];
+const fmtS = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function usesAutoFraming(clip) { return (clip.framingMode || 'auto') === 'auto' && (!clip.format || clip.format === 'vertical'); }
+function attachShotEditor(clip, row, buttons) {
+  if (!usesAutoFraming(clip)) return;
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'secondary compact'; btn.textContent = shotEditorsOpen.has(clip.id) ? '🎥 Ocultar tomas' : '🎥 Tomas';
+  btn.title = 'Ver y cambiar a quién se ve en cada parte del Short (antes de crearlo)';
+  const panel = document.createElement('div'); panel.className = 'shotEditor'; panel.hidden = !shotEditorsOpen.has(clip.id);
+  btn.onclick = async () => {
+    if (shotEditorsOpen.has(clip.id)) { shotEditorsOpen.delete(clip.id); panel.hidden = true; btn.textContent = '🎥 Tomas'; return; }
+    shotEditorsOpen.add(clip.id); panel.hidden = false; btn.textContent = '🎥 Ocultar tomas';
+    await loadShotPlan(clip, panel);
+  };
+  buttons.prepend(btn); row.append(panel);
+  if (shotEditorsOpen.has(clip.id)) { if (shotPlans.has(clip.id)) drawShotEditor(clip, panel, shotPlans.get(clip.id)); else loadShotPlan(clip, panel); }
+}
+async function loadShotPlan(clip, panel) {
+  panel.innerHTML = '<p class="muted">Cargando tomas…</p>';
+  try {
+    let plan = await (await fetch('/api/shorts/shots?id=' + encodeURIComponent(clip.id))).json();
+    if (plan.error) throw Error(plan.error);
+    if (!plan.hasVision) {
+      panel.innerHTML = '';
+      const go = document.createElement('button'); go.type = 'button'; go.className = 'primary compact'; go.textContent = '🎥 Analizar quién sale y quién habla';
+      const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'La IA revisa el clip (unos segundos) y te muestra las tomas para que las ajustes antes de crear el Short.';
+      go.onclick = async () => { go.disabled = true; try { await analyzeShortVision(clip, m => { go.textContent = '🎥 ' + m; }); await loadShotPlan(clip, panel); } catch (e) { notice('No se pudo analizar: ' + e.message, true); go.disabled = false; go.textContent = '🎥 Reintentar'; } };
+      panel.append(p, go); return;
+    }
+    shotPlans.set(clip.id, plan); drawShotEditor(clip, panel, plan);
+  } catch (e) { panel.innerHTML = ''; const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No se pudieron cargar las tomas: ' + e.message; panel.append(p); }
+}
+function drawShotEditor(clip, panel, plan) {
+  panel.innerHTML = '';
+  if (plan.fallback || !plan.shots.length) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'Casi no se ven personas en este clip: se usará el encuadre de respaldo.'; panel.append(p); return; }
+  const num = new Map(plan.people.map(p => [p.id, p.n]));
+  const color = id => PERSON_COLORS[((num.get(id) || 1) - 1) % PERSON_COLORS.length];
+  // Personas
+  const ppl = document.createElement('div'); ppl.className = 'shotPeople';
+  for (const p of plan.people) {
+    const chip = document.createElement('span'); chip.className = 'shotPerson'; chip.style.setProperty('--c', color(p.id));
+    const img = document.createElement('img'); img.alt = ''; img.src = `/api/shorts/person-thumb?id=${encodeURIComponent(clip.id)}&p=${p.id}`;
+    const lbl = document.createElement('b'); lbl.textContent = 'Persona ' + p.n;
+    const sm = document.createElement('small'); sm.textContent = Math.round(p.seen * 100) + '% del clip';
+    chip.append(img, lbl, sm); ppl.append(chip);
+  }
+  // Barra de tomas (ancho proporcional a la duración)
+  const bar = document.createElement('div'); bar.className = 'shotBar';
+  const menu = document.createElement('div'); menu.className = 'shotMenu'; menu.hidden = true;
+  for (const s of plan.shots) {
+    const seg = document.createElement('button'); seg.type = 'button'; seg.className = 'shotSeg' + (s.layout === 'split' ? ' split' : '');
+    seg.style.flexGrow = Math.max(0.2, s.end - s.start);
+    if (s.layout === 'split') { seg.style.setProperty('--c', color(s.ids[0])); seg.style.setProperty('--c2', color(s.ids[1])); seg.textContent = '◫'; }
+    else { seg.style.setProperty('--c', color(s.id)); seg.textContent = 'P' + (num.get(s.id) || '?'); }
+    const manual = (plan.overrides || []).some(o => o.start <= s.start + 0.05 && o.end >= s.end - 0.05);
+    if (manual) seg.classList.add('manual');
+    seg.title = `${fmtS(s.start)}–${fmtS(s.end)} · ${s.layout === 'split' ? 'Pantalla dividida (P' + s.ids.map(i => num.get(i)).join(' arriba, P') + ' abajo)' : 'Persona ' + (num.get(s.id) || '?')}${manual ? ' · cambiado por ti' : ''}. Clic para cambiar.`;
+    seg.onclick = () => openShotMenu(clip, panel, plan, s, seg, menu);
+    bar.append(seg);
+  }
+  const ticks = document.createElement('div'); ticks.className = 'shotTicks';
+  ticks.innerHTML = `<span>0:00</span><span>${fmtS(plan.dur / 2)}</span><span>${fmtS(plan.dur)}</span>`;
+  const foot = document.createElement('div'); foot.className = 'shotFoot';
+  const splits = plan.shots.filter(s => s.layout === 'split').length;
+  const info = document.createElement('span'); info.className = 'muted';
+  info.textContent = `${plan.shots.length} toma(s)${splits ? ` · ${splits} con pantalla dividida` : ''}. Clic en una toma para cambiar a quién se ve.`;
+  foot.append(info);
+  if ((plan.overrides || []).length) {
+    const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'secondary compact'; reset.textContent = '↺ Volver a lo automático';
+    reset.onclick = () => saveOverrides(clip, panel, []);
+    foot.append(reset);
+  }
+  panel.append(ppl, bar, ticks, menu, foot);
+}
+function openShotMenu(clip, panel, plan, shot, seg, menu) {
+  menu.innerHTML = '';
+  const title = document.createElement('div'); title.className = 'shotMenuTitle'; title.textContent = `Toma ${fmtS(shot.start)}–${fmtS(shot.end)}: ¿qué se ve?`;
+  menu.append(title);
+  const opt = (label, ov) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'secondary compact'; b.textContent = label; b.onclick = () => { menu.hidden = true; const rest = (plan.overrides || []).filter(o => o.end <= shot.start + 0.05 || o.start >= shot.end - 0.05); saveOverrides(clip, panel, ov ? [...rest, { start: shot.start, end: shot.end, ...ov }] : rest); }; menu.append(b); };
+  for (const p of plan.people) opt('Persona ' + p.n, { mode: 'person', id: p.id });
+  if (plan.people.length >= 2) opt('◫ Pantalla dividida', { mode: 'split' });
+  opt('Automático', null);
+  menu.hidden = false;
+  menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+async function saveOverrides(clip, panel, overrides) {
+  try { const plan = await api('/api/shorts/shots', { id: clip.id, overrides }); shotPlans.set(clip.id, plan); drawShotEditor(clip, panel, plan); notice('🎥 Tomas actualizadas. Se aplican al crear el Short.'); }
+  catch (e) { notice(e.message, true); }
+}
 // Si el Short usa encuadre Auto vertical, lo analiza antes de renderizar. Nunca bloquea el render: si falla, avisa.
 async function visionBeforeRender(clip) {
-  if ((clip.framingMode || 'auto') !== 'auto' || (clip.format && clip.format !== 'vertical')) return;
+  if (!usesAutoFraming(clip)) return;
+  try {
+    // Si ya se analizó (p. ej. desde la vista previa de tomas), no se repite: se respetan tus cambios.
+    const plan = await (await fetch('/api/shorts/shots?id=' + encodeURIComponent(clip.id))).json();
+    if (plan.hasVision) return;
+  } catch {}
   try {
     const r = await analyzeShortVision(clip, msg => notice('🎥 ' + msg));
     if (r.fallback) notice(`🎥 Short ${clip.rank}: casi no se ven personas; se usará el encuadre de respaldo.`);
