@@ -11,6 +11,7 @@ const { normalize, findMatches, buildCuts, keptIntervals, adjustedCuts, parseSrt
 const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS, nearestPause } = require('./lib/shorts');
 const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/editorial');
 const { detectSubjectX, smoothTrack, cropExpression, zoomExpression, planZooms, zoomCurve, zoomFilter } = require('./lib/framing');
+const { direct } = require('./lib/director');
 const channelStyle = require('./channel_style.json');
 
 const ROOT = __dirname;
@@ -136,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.24.0';
+const APP_VERSION = '1.25.0';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -905,6 +906,28 @@ async function proposeShorts(opts) {
   })();
   return {started:true};
 }
+// ===== VISIÓN (MediaPipe en el navegador) → DIRECTOR =====
+// El navegador analiza cuadros del clip (5 por segundo, sacados del ORIGINAL) y manda lo que vio; aquí se guarda
+// por Short y, al renderizar, lib/director.js decide quién habla y arma las tomas.
+const VISION_FPS=5;
+const visionFile=id=>path.join(DATA,`vision_${String(id).replace(/[^\w-]/g,'')}.json`);
+const visionDir=id=>path.join(DATA,'vision',String(id).replace(/[^\w-]/g,''));
+async function extractVisionFrames(clip){
+  const bin=readiness().ffmpeg; if(!bin) throw Error('Configura FFmpeg.');
+  const dir=visionDir(clip.id);
+  await fsp.rm(dir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(dir,{recursive:true});
+  const dur=clip.end-clip.start;
+  await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-loglevel','error','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-vf',`fps=${VISION_FPS},scale=640:-2`,'-q:v','4',path.join(dir,'f%04d.jpg')],{windowsHide:true}); let err=''; c.stderr.on('data',b=>{err=(err+b).slice(-500);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('No pude sacar los cuadros: '+err))); });
+  const count=fs.readdirSync(dir).filter(f=>/^f\d+\.jpg$/.test(f)).length;
+  return {count,fps:VISION_FPS};
+}
+function directedFraming(clip,width,height,energy){
+  const v=readJson(visionFile(clip.id),null);
+  if(!v||Math.abs(v.start-clip.start)>0.05||Math.abs(v.end-clip.end)>0.05||!Array.isArray(v.frames)) return null; // análisis viejo o de otro tramo
+  const r=direct({frames:v.frames,energy,dur:clip.end-clip.start,srcW:width,srcH:height});
+  if(!r||r.fallback||!r.track?.length) return null;
+  return r;
+}
 // Energía del audio del clip cada 0.1 s (para decidir dónde van los zooms).
 async function clipEnergy(bin,start,dur){
   let out=''; await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-ss',String(start),'-t',String(dur),'-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=1600,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],{windowsHide:true}); c.stdout.on('data',b=>{out+=b.toString();}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('energía '+code))); });
@@ -927,8 +950,9 @@ async function renderOneShort(clip,bin) {
   const {width,height}=videoDimensions(project.videoPath);
   const captions=`ass=data/captions_${clip.id}.ass`;
   // Zooms estilo Opus: golpes donde la voz sube de verdad (gritos/risas), sin temblor (ver lib/framing.js).
-  let zoom='1';
-  if(clip.zoomEnabled!==false){ job.message=`Buscando los momentos fuertes del Short ${clip.rank}…`; const en=await clipEnergy(bin,clip.start,dur).catch(()=>[]); zoom=zoomCurve(planZooms(en,dur),dur); }
+  job.message=`Escuchando la voz del Short ${clip.rank}…`;
+  const energy=await clipEnergy(bin,clip.start,dur).catch(()=>[]); // sirve para los zooms Y para saber quién habla
+  const zoom=clip.zoomEnabled!==false?zoomCurve(planZooms(energy,dur),dur):'1';
   let filter;
   if(clip.format && clip.format!=='vertical') {
     // Cuadrado (1:1) u horizontal (16:9): escalar para cubrir + recorte centrado (sin reencuadre de cara).
@@ -938,10 +962,13 @@ async function renderOneShort(clip,bin) {
     let framing=null;
     if(clip.framingMode!=='blur') {
       job.message=`Analizando encuadre del Short ${clip.rank}…`;
-      framing=await framingForClip(clip,bin,width,height);
+      // Auto: si la app ya vio el clip con MediaPipe (personas + bocas), el DIRECTOR decide a quién seguir y corta
+      // al que habla. Si no hay análisis (sin internet, etc.), queda el método anterior de respaldo.
+      if(clip.framingMode!=='manual' && width>height*9/16) framing=directedFraming(clip,width,height,energy);
+      if(!framing) framing=await framingForClip(clip,bin,width,height);
     }
     if(framing) {
-      const pan=zoomFilter(OW,OH,zoom);
+      const pan=zoomFilter(OW,OH,zoom,framing.fy??0.38);
       if(framing.portrait) filter=`[0:v]fps=30,setpts=PTS-STARTPTS,scale=${OW}:${OH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${OW}:${OH},${pan},${captions}[v]`;
       else filter=`[0:v]fps=30,setpts=PTS-STARTPTS,crop=w=${framing.cropWidth}:h=ih:x='${cropExpression(framing.track)}':y=0,${pan},${captions}[v]`;
     } else {
@@ -1501,7 +1528,7 @@ async function researchRoute(req, res, url) {
   return false;
 }
 
-const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js' };
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
   try {
@@ -1777,6 +1804,31 @@ const server=http.createServer(async (req,res) => {
       clip.captionCorrections=cleaned;
       writeJson(files.shorts,shorts);
       return respond(res,200,{short:clip});
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/vision/frames') {
+      if(!project?.videoPath) throw Error('Abre un video primero.');
+      const body=await jsonBody(req); const clip=shorts.find(s=>s.id===String(body.id||''));
+      if(!clip) throw Error('No encuentro ese Short.');
+      return respond(res,200,{...await extractVisionFrames(clip),start:clip.start,end:clip.end});
+    }
+    if (req.method==='GET' && url.pathname==='/api/shorts/vision/frame') {
+      const i=parseInt(url.searchParams.get('i')||'-1',10);
+      const fp=path.join(visionDir(url.searchParams.get('id')||''),`f${String(i).padStart(4,'0')}.jpg`);
+      if(!Number.isInteger(i)||i<1||!fs.existsSync(fp)) return error(res,'Cuadro no encontrado.',404);
+      return serveMedia(req,res,fp);
+    }
+    if (req.method==='POST' && url.pathname==='/api/shorts/vision') {
+      const body=await jsonBody(req); const clip=shorts.find(s=>s.id===String(body.id||''));
+      if(!clip) throw Error('No encuentro ese Short.');
+      const r=v=>Number.isFinite(+v)?Math.round(+v*1000)/1000:null;
+      const frames=(Array.isArray(body.frames)?body.frames:[]).slice(0,3000).map(f=>({t:r(f.t),
+        people:(f.people||[]).slice(0,6).map(p=>({hx:r(p.hx),hy:r(p.hy),sw:r(p.sw)})),
+        faces:(f.faces||[]).slice(0,6).map(p=>({cx:r(p.cx),cy:r(p.cy),w:r(p.w),mouth:r(p.mouth)}))}));
+      writeJson(visionFile(clip.id),{start:clip.start,end:clip.end,fps:VISION_FPS,frames,createdAt:Date.now()});
+      await fsp.rm(visionDir(clip.id),{recursive:true,force:true}).catch(()=>{}); // los cuadros ya no hacen falta
+      const {width,height}=videoDimensions(project.videoPath);
+      const plan=direct({frames,energy:[],dur:clip.end-clip.start,srcW:width,srcH:height});
+      return respond(res,200,{ok:true,frames:frames.length,people:plan&&!plan.fallback?plan.tracks:0,shots:plan&&!plan.fallback?plan.shots.length:0,fallback:!!plan?.fallback});
     }
     if (req.method==='POST' && url.pathname==='/api/shorts/render') { const body=await jsonBody(req); return respond(res,202,await renderShort(String(body.id||''))); }
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
