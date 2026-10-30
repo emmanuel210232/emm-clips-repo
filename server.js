@@ -136,7 +136,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.23.0';
+const APP_VERSION = '1.23.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -1043,7 +1043,7 @@ async function reviewCut(id) {
 }
 // Formatos que el navegador NO reproduce → necesitan una vista previa MP4 para verse en la app.
 function needsPreview(p=project?.videoPath){ return ['.mpg','.mpeg','.mkv','.avi'].includes(path.extname(p||'').toLowerCase()); }
-function videoCodec(p){ const bin=readiness().ffprobe; if(!bin) return ''; const o=spawnSync(bin,['-v','error','-select_streams','v:0','-show_entries','stream=codec_name','-of','default=nk=1:nw=1',p],{encoding:'utf8',windowsHide:true}); return String(o.stdout||'').trim().split(/\r?\n/)[0]||''; }
+function videoCodec(p,sel='v:0'){ const bin=readiness().ffprobe; if(!bin) return ''; const o=spawnSync(bin,['-v','error','-select_streams',sel,'-show_entries','stream=codec_name','-of','default=nk=1:nw=1',p],{encoding:'utf8',windowsHide:true}); return String(o.stdout||'').trim().split(/\r?\n/)[0]||''; }
 // Genera la vista previa reproducible en el navegador (solo para VER; el export SIEMPRE usa el original).
 async function buildPreviewFile(bin){
   const input=project.videoPath;
@@ -1053,9 +1053,17 @@ async function buildPreviewFile(bin){
   const output=path.join(DATA,'preview_'+Date.now()+'.mp4');
   const scaled=['-y','-i',input,'-map','0:v:0','-map','0:a:0?','-vf','scale=960:-2','-c:v','libx264','-preset','ultrafast','-crf','32','-c:a','aac','-b:a','96k','-movflags','+faststart',output];
   if(videoCodec(input)==='h264'){
-    // El video ya es H.264 (solo el contenedor .mpg/.mkv no se reproduce) → REMUX a mp4: casi instantáneo y calidad intacta.
-    try{ await run(bin,['-y','-i',input,'-map','0:v:0','-map','0:a:0?','-c:v','copy','-c:a','aac','-b:a','160k','-movflags','+faststart',output],progress(total,'Vista previa')); }
-    catch(e){ await run(bin,scaled,progress(total,'Vista previa')); }
+    // El video ya es H.264 (solo el contenedor .mpg/.mkv no se reproduce) → REMUX a mp4: calidad intacta.
+    // Los .mpg de Kick traen audio AAC → también se COPIA (sin recodificar): ~2.7× más rápido (53 min: 42 s → 16 s)
+    // y el audio de la vista previa queda idéntico al original. Si el audio no es AAC, se convierte como antes.
+    const remux=a=>['-y','-i',input,'-map','0:v:0','-map','0:a:0?','-c:v','copy',...a,'-movflags','+faststart',output];
+    const tries=[];
+    if(videoCodec(input,'a:0')==='aac') tries.push(remux(['-c:a','copy','-bsf:a','aac_adtstoasc']));
+    tries.push(remux(['-c:a','aac','-b:a','160k']), scaled);
+    for(let i=0;i<tries.length;i++){
+      try{ await run(bin,tries[i],progress(total,'Vista previa')); break; }
+      catch(e){ if(job.cancelRequested||i===tries.length-1) throw e; }
+    }
   } else { await run(bin,scaled,progress(total,'Vista previa')); }
   if (project?.videoPath===input) { project.previewPath=output; writeJson(files.project,project); }
 }

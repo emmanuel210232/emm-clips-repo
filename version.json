@@ -1,6 +1,6 @@
 {
-  "version": "1.23.0",
-  "notes": "NUEVO: pestaña 🔍 Investigar (botón arriba). Analiza los canales que resuben a Shifu: qué videos pegaron más de lo normal, a qué hora se subieron, qué tienen en común sus títulos, miniaturas y hashtags. La IA saca la fórmula del nicho y te escribe títulos, descripción y prompt de miniatura para tu video. Necesita una API key gratis de YouTube (la guía viene en la pestaña).",
+  "version": "1.23.1",
+  "notes": "Abrir videos .mpg de Kick ahora es ~3 veces más rápido (\"Preparando el video\"): el audio ya no se vuelve a convertir, se copia tal cual, así que además suena idéntico al original. Incluye la pestaña 🔍 Investigar.",
   "files": [
     "server.js",
     "app.js",
