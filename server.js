@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.26.0';
+const APP_VERSION = '1.26.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -909,7 +909,7 @@ async function proposeShorts(opts) {
 // ===== VISIÓN (MediaPipe en el navegador) → DIRECTOR =====
 // El navegador analiza cuadros del clip (5 por segundo, sacados del ORIGINAL) y manda lo que vio; aquí se guarda
 // por Short y, al renderizar, lib/director.js decide quién habla y arma las tomas.
-const VISION_FPS=5;
+const VISION_FPS=5; // calibrado con video real: a 10 cuadros/s el temblor del detector hace que una sonrisa parezca hablar
 const visionFile=id=>path.join(DATA,`vision_${String(id).replace(/[^\w-]/g,'')}.json`);
 const visionDir=id=>path.join(DATA,'vision',String(id).replace(/[^\w-]/g,''));
 async function extractVisionFrames(clip){

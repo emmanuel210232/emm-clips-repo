@@ -1,6 +1,6 @@
 {
-  "version": "1.26.0",
-  "notes": "Shorts: PANTALLA DIVIDIDA automática cuando dos personas lejos se responden rápido (una arriba y otra abajo), y nuevo botón 🎥 Tomas en cada Short: ves quién sale en cada parte (con su foto) y puedes cambiarlo a mano (persona, dividida o automático) antes de crearlo.",
+  "version": "1.26.1",
+  "notes": "Shorts: ahora sí sigue a QUIEN HABLA. Antes confundía sonreír/reírse con hablar y se iba con el que no hablaba; y si a quien habla se le tapaba la cara (letrero del stream, cabeza agachada) cortaba al otro. Arreglado y probado con video real. No hace falta volver a analizar: dale Crear Short otra vez.",
   "files": [
     "server.js",
     "app.js",
