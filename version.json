@@ -1,6 +1,6 @@
 {
-  "version": "1.23.1",
-  "notes": "Abrir videos .mpg de Kick ahora es ~3 veces más rápido (\"Preparando el video\"): el audio ya no se vuelve a convertir, se copia tal cual, así que además suena idéntico al original. Incluye la pestaña 🔍 Investigar.",
+  "version": "1.23.2",
+  "notes": "ARREGLO IMPORTANTE: si editabas clips en la línea de tiempo y no marcabas la casilla de silenciar, las groserías que marcaste podían salir SIN censurar. Ahora las palabras marcadas en el Paso 2 se silencian SIEMPRE. Incluye: abrir .mpg ~3x más rápido y la pestaña 🔍 Investigar.",
   "files": [
     "server.js",
     "app.js",

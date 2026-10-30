@@ -136,7 +136,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.23.1';
+const APP_VERSION = '1.23.2';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -450,7 +450,10 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   // Censurar groserías DENTRO de los pedazos (modo Cortar + censor=true, p.ej. best-of): silencia por segmento,
   // con los tiempos relativos al inicio de cada pedazo (porque asetpts reinicia a 0).
   const CPAD=0.15;
-  const censorRanges = censor ? (findMatches(transcript, dictionary)||[]).map(m=>({start:Number(m.start),end:Number(m.end)})).filter(r=>Number.isFinite(r.start)&&Number.isFinite(r.end)&&r.end>r.start) : [];
+  // Con clips editados (segments) las palabras marcadas en el Paso 2 YA NO se cortan por separado → sin esto
+  // salían SIN censurar si no se marcaba la casilla. Ahora se silencian siempre las marcadas; la casilla agrega TODAS.
+  const pickedRanges = (Array.isArray(segments) && segments.length && selectedIds.length) ? adjustedCuts(matches, selectedIds, duration, words, adjustments, []) : [];
+  const censorRanges = (censor ? (findMatches(transcript, dictionary)||[]) : pickedRanges).map(m=>({start:Number(m.start),end:Number(m.end)})).filter(r=>Number.isFinite(r.start)&&Number.isFinite(r.end)&&r.end>r.start);
   const censorAf = (s,e)=>{
     if(!censorRanges.length) return '';
     const hits=censorRanges.filter(r=>r.end>s-CPAD && r.start<e+CPAD); if(!hits.length) return '';
