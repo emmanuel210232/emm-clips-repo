@@ -1,6 +1,6 @@
 {
-  "version": "1.27.1",
-  "notes": "Exportar mejores momentos (muchos recortes) mucho más rápido: ahora salta directo a cada recorte en vez de leer el directo completo. Mismo resultado exacto (comparado cuadro por cuadro), ~6 veces más rápido en la prueba.",
+  "version": "1.27.2",
+  "notes": "Arreglo: en Resumen del directo ya no se muestran los mejores momentos de OTRO directo (pasaba si el análisis nuevo fallaba, p. ej. sin saldo en la nube). Ahora cada resumen sabe de qué video es y se borra al abrir otro.",
   "files": [
     "server.js",
     "app.js",

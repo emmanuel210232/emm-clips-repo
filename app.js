@@ -688,7 +688,7 @@ function buildBestof(){
     if(sc.scannedAt!==bestofScannedAt || !bestofItems){ bestofScannedAt=sc.scannedAt; bestofItems=sc.candidates.map(c=>({...c,on:true})); }
     renderBestofList();
     $('bestofPanel').hidden=false;
-  } else { $('bestofPanel').hidden=true; }
+  } else { $('bestofPanel').hidden=true; bestofItems=null; bestofScannedAt=0; } // sin resumen de ESTE video: nada que mandar al editor
 }
 function renderBestofList(){
   const box=$('bestofList'); if(!box||!bestofItems) return; box.replaceChildren();

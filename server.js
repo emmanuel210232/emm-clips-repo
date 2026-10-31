@@ -113,7 +113,7 @@ function cachedMatches(){
   if(_mCache.sig!==sig){ _mCache={sig,val:findMatches(t,dictionary)}; }
   return _mCache.val;
 }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: cachedMatches(), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan, cloud:{engine:cloud.engine,model:cloud.model,keySet:!!cloud.key}, version: APP_VERSION, job }; }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: cachedMatches(), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan:currentBestof(), cloud:{engine:cloud.engine,model:cloud.model,keySet:!!cloud.key}, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.1';
+const APP_VERSION = '1.27.2';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -640,6 +640,10 @@ async function detectTopics(){
 // Modelo pesado SOLO para esta sección (se carga bajo demanda). Combina texto (14B) + energía de audio (risas/gritos).
 const BESTOF_MODEL='qwen2.5:14b-instruct';
 let bestofScan=readJson(path.join(DATA,'bestof.json'), null); // se conserva al reiniciar
+// Los mejores momentos SOLO valen para el video con el que se sacaron: si se abre otro directo (o el resumen es
+// viejo y no dice de qué video es), no se muestran — si no, 'Mandar al editor' usaría minutos de OTRO directo.
+function currentBestof(){ return bestofScan && project?.videoPath && bestofScan.videoPath===project.videoPath ? bestofScan : null; }
+function clearBestof(){ bestofScan=null; fs.rmSync(path.join(DATA,'bestof.json'),{force:true}); }
 // Llama a la API de Claude (nube) en streaming para elegir los mejores momentos. Devuelve el texto (JSON).
 async function cloudPick(prompt, model, onProgress){
   if(!cloud.key) throw Error('Falta la API key de la nube. Pégala en el motor de IA del resumen.');
@@ -749,7 +753,7 @@ async function detectBestMoments(opts){
       }
     }
     picked.sort((a,b)=>a.start-b.start);
-    bestofScan={candidates:picked,scannedAt:Date.now(),model:useCloud?cloudModel:BESTOF_MODEL,engine:useCloud?'cloud':'local',total:dur,count:picked.length,targetMin:Math.round(targetSec/60),durMin:+(tot/60).toFixed(1)};
+    bestofScan={videoPath:project.videoPath,candidates:picked,scannedAt:Date.now(),model:useCloud?cloudModel:BESTOF_MODEL,engine:useCloud?'cloud':'local',total:dur,count:picked.length,targetMin:Math.round(targetSec/60),durMin:+(tot/60).toFixed(1)};
     writeJson(path.join(DATA,'bestof.json'),bestofScan);
     job={status:'done',message:`Resumen listo: ${picked.length} momentos (~${Math.round(tot/60)} min). Revisa y ajusta.`,progress:'',percent:100};
    }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
@@ -1624,7 +1628,7 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='GET' && url.pathname==='/api/state') return respond(res,200,state());
     if (req.method==='GET' && url.pathname==='/api/requirements') return respond(res,200,await requirementsReport());
     // Endpoint LIGERO: solo el progreso del trabajo (para poder sondear cada segundo sin mandar la transcripción enorme).
-    if (req.method==='GET' && url.pathname==='/api/job') return respond(res,200,{job, bestofReady: bestofScan?bestofScan.scannedAt:0, version:APP_VERSION, stripBuilding: !!(filmstrip&&filmstrip.building), stripCount: filmstrip?filmstrip.count:0, stripInterval: filmstrip?filmstrip.interval||0:0});
+    if (req.method==='GET' && url.pathname==='/api/job') return respond(res,200,{job, bestofReady: currentBestof()?bestofScan.scannedAt:0, version:APP_VERSION, stripBuilding: !!(filmstrip&&filmstrip.building), stripCount: filmstrip?filmstrip.count:0, stripInterval: filmstrip?filmstrip.interval||0:0});
     if (req.method==='GET' && url.pathname==='/api/video') return sendVideo(req,res);
     if (req.method==='GET' && url.pathname==='/api/export-file') {
       const name=String(url.searchParams.get('name')||'');
@@ -1651,7 +1655,7 @@ const server=http.createServer(async (req,res) => {
     }
     if (req.method==='POST' && url.pathname==='/api/project/clear') {
       if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
-      project=null; transcript=[]; shorts=[]; adjustments={}; pauses=[]; manualCuts=[]; selection=null; filmstrip=null;
+      project=null; transcript=[]; shorts=[]; adjustments={}; pauses=[]; manualCuts=[]; selection=null; filmstrip=null; clearBestof();
       writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts); writeJson(files.adjustments,adjustments); writeJson(files.pauses,pauses); writeJson(files.manualCuts,manualCuts); writeJson(files.selection,selection);
       return respond(res,200,state());
     }
@@ -1660,7 +1664,7 @@ const server=http.createServer(async (req,res) => {
       const body=await jsonBody(req), videoPath=path.resolve(String(body.path||''));
       if (!fs.existsSync(videoPath) || !fs.statSync(videoPath).isFile()) throw Error('No encuentro ese archivo de video.');
       if (!['.mp4','.mov','.mkv','.webm','.avi','.m4v','.mpg','.mpeg'].includes(path.extname(videoPath).toLowerCase())) throw Error('Formato de video no admitido.');
-      project={videoPath,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null;writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
+      project={videoPath,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null; clearBestof();writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
       prepareProject(); // genera vista previa (si hace falta) + miniaturas + onda automáticamente
       return respond(res,200,state());
     }
@@ -1670,7 +1674,7 @@ const server=http.createServer(async (req,res) => {
       if (!['.mp4','.mov','.mkv','.webm','.avi','.m4v','.mpg','.mpeg'].includes(path.extname(safe).toLowerCase())) throw Error('Formato de video no admitido.');
       const target=path.join(DATA,`${Date.now()}_${safe}`), stream=fs.createWriteStream(target);
       await new Promise((resolve,reject)=>{req.pipe(stream);req.on('error',reject);stream.on('error',reject);stream.on('finish',resolve);});
-      project={videoPath:target,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null;writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
+      project={videoPath:target,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null; clearBestof();writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
       prepareProject(); // genera vista previa (si hace falta) + miniaturas + onda automáticamente
       return respond(res,200,state());
     }
@@ -1954,7 +1958,7 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/suggest-zooms') return respond(res,200,await suggestZooms());
     if (req.method==='POST' && url.pathname==='/api/topics') return respond(res,200,await detectTopics());
     if (req.method==='POST' && url.pathname==='/api/bestof/analyze') { const body=await jsonBody(req); detectBestMoments(body||{}); return respond(res,202,{started:true}); }
-    if (req.method==='GET' && url.pathname==='/api/bestof') return respond(res,200,bestofScan||{candidates:[]});
+    if (req.method==='GET' && url.pathname==='/api/bestof') return respond(res,200,currentBestof()||{candidates:[]});
     if (req.method==='POST' && url.pathname==='/api/bestof/config') { const b=await jsonBody(req)||{};
       if(typeof b.key==='string'&&b.key.trim()) cloud.key=b.key.trim();
       if(b.clearKey) cloud.key='';
