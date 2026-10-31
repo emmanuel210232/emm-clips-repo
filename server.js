@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.0';
+const APP_VERSION = '1.27.1';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -475,14 +475,21 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   const hasTrans = keep.some(k=>k.trans);
   const hasJoin = keep.some(k=>k.join);
   const canSmooth = (smooth||hasTrans||hasJoin) && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
+  // RÁPIDO SIN PERDER CALIDAD: cada pedazo se abre saltando directo a su minuto (-ss/-t por entrada) en vez de
+  // decodificar el directo completo con trim (en un directo de 6 h eso era leer 6 h para usar 25 min).
+  // El resultado es el mismo cuadro por cuadro. Con muchísimos pedazos se usa el método anterior.
+  const SEG = keep.length <= 120;
+  const segInputs = SEG ? keep.flatMap(k=>['-ss',k.start.toFixed(3),'-t',(k.end-k.start).toFixed(3),'-i',project.videoPath]) : ['-i',project.videoPath];
+  const vIn = (k,i) => SEG ? `[${i}:v]setpts=PTS-STARTPTS` : `[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS`;
+  const aIn = (k,i) => SEG ? `[${i}:a]asetpts=PTS-STARTPTS` : `[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS`;
   if (canSmooth) {
     // Crossfade entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
     // d por límite: 0.5s donde cambia el tema (.trans), 0.14s si se pidió suavizar, 0.05s en cortes normales (imperceptible).
     const fpsOut = q.fps || videoFps(project.videoPath);
     const Dxf=0.14;
     keep.forEach((k,i)=>{
-      filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${zoomOf(k)},settb=AVTB,fps=${fpsOut},format=yuv420p,setsar=1[v${i}]`);
-      filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS${censorAf(k.start,k.end)}[a${i}]`);
+      filter.push(`${vIn(k,i)}${zoomOf(k)},settb=AVTB,fps=${fpsOut},format=yuv420p,setsar=1[v${i}]`);
+      filter.push(`${aIn(k,i)}${censorAf(k.start,k.end)}[a${i}]`);
     });
     let vp='[v0]', ap='[a0]', L=keep[0].end-keep[0].start;
     for(let i=1;i<keep.length;i++){
@@ -497,9 +504,9 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     // (el reescalado se aplica AL FINAL, después del fade, para que todo quede en 1 pasada)
   } else {
     keep.forEach((k,i) => {
-      filter.push(`[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS${normOf(k)}[v${i}]`);
+      filter.push(`${vIn(k,i)}${normOf(k)}[v${i}]`);
       const length=k.end-k.start,fade=Math.min(.03,length/3);
-      filter.push(`[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS${censorAf(k.start,k.end)},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
+      filter.push(`${aIn(k,i)}${censorAf(k.start,k.end)},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
     });
     filter.push(keep.map((_,i) => `[v${i}][a${i}]`).join('') + `concat=n=${keep.length}:v=1:a=1[v][a]`);
     aLabel = stdEnhance ? '[aout]' : '[a]';
@@ -514,7 +521,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   if((clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none')){
     const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath);
     filter.push(`${vLabel}settb=AVTB,fps=${efps},format=yuv420p,setsar=1[vnorm]`); // normaliza antes del xfade
-    const fxg=clipFxParts('[vnorm]', canSmooth?smoothTotal:keptTotal, clipIn, clipOut, clipDur, EW, EH, efps, 1);
+    const fxg=clipFxParts('[vnorm]', canSmooth?smoothTotal:keptTotal, clipIn, clipOut, clipDur, EW, EH, efps, SEG?keep.length:1);
     if(fxg.applied){ fxg.parts.forEach(p=>filter.push(p)); vLabel=fxg.label; cutExtraInputs=fxg.inputs; cutFxIn='none'; cutFxOut='none'; }
     else { filter.pop(); } // no se aplicó efecto: quita la normalización que ya no se usa
   }
@@ -532,7 +539,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   job = { status:'running', message:'Exportando video limpio…', progress:'', percent:0, cancelRequested:false };
   (async () => {
     try {
-      const cutBase=['-y','-i',project.videoPath,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
+      const cutBase=['-y',...segInputs,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
       const cutTail=['-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
       try{
         await run(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal,'Exportando'));
