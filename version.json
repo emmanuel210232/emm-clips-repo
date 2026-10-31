@@ -1,6 +1,6 @@
 {
-  "version": "1.27.2",
-  "notes": "Arreglo: en Resumen del directo ya no se muestran los mejores momentos de OTRO directo (pasaba si el análisis nuevo fallaba, p. ej. sin saldo en la nube). Ahora cada resumen sabe de qué video es y se borra al abrir otro.",
+  "version": "1.27.3",
+  "notes": "Exportar con Silenciar: la casilla ⚡ Render rápido ahora sí usa la tarjeta de video cuando hay fundidos de entrada/salida o calidad 1080p (antes siempre usaba el procesador). ~1.5x más rápido y con igual o mejor calidad. Tip: con calidad Original y sin fundidos es lo más rápido (solo copia la imagen).",
   "files": [
     "server.js",
     "app.js",

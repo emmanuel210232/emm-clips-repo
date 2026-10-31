@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.2';
+const APP_VERSION = '1.27.3';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -250,6 +250,9 @@ const QUALITY = {
 function qualityLabels(){ return Object.entries(QUALITY).map(([id,q])=>({id,label:q.label})); }
 // Reencodeo visualmente SIN pérdida (crf 18 = calidad alta, conserva resolución original). Se usa cuando no se puede copiar el stream tal cual.
 const HQ_VIDEO = ['-c:v','libx264','-preset','medium','-crf','18','-pix_fmt','yuv420p'];
+// Render rápido por GPU (NVIDIA NVENC), calidad alta: preset lento de NVENC (p6) + AQ. La escala CQ de NVENC no es la
+// del CRF de x264: medido en video de Kick 1080p60, NVENC cq 23 ≈ SSIM 0.995 (x264 crf 18 ≈ 0.993) y ~1.5× más rápido.
+const nvencArgs = cq => ['-c:v','h264_nvenc','-pix_fmt','yuv420p','-preset','p6','-tune','hq','-rc','vbr','-cq',String(cq),'-b:v','0','-spatial-aq','1'];
 // Plantillas de intro/outro (fondo + color de texto; animación fade). Propias, no de CapCut.
 // Plantillas de intro/outro: cada una combina un LOOK (colores) con un MOVIMIENTO del texto.
 // El clip siempre funde a/desde negro en los bordes → transición suave con el video.
@@ -404,7 +407,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     const temporary = path.join(DATA, `export_${crypto.randomUUID()}.mp4`);
     let videoArgs;
     if(q.copy) videoArgs=['-c:v','copy'];
-    else { const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(','); videoArgs=['-c:v','libx264','-preset','veryfast','-crf',String(q.crf||20),'-pix_fmt','yuv420p',...(vf?['-vf',vf]:[])]; }
+    else { const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(','); videoArgs=gpu?[...nvencArgs((q.crf||20)+3),...(vf?['-vf',vf]:[])]:['-c:v','libx264','-preset','veryfast','-crf',String(q.crf||20),'-pix_fmt','yuv420p',...(vf?['-vf',vf]:[])]; }
     job = { status:'running', message:q.copy?`Silenciando ${ranges.length} ${ranges.length===1?'grosería':'groserías'}…`:`Silenciando y exportando (${q.label})…`, progress:'', percent:0, cancelRequested:false };
     (async () => {
       try {
@@ -416,7 +419,9 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
           const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=videoFps(project.videoPath);
           const fxg=clipFxParts('[m]', duration, clipIn, clipOut, clipDur, EW, EH, efps, 1);
           const parts=[`[0:v]settb=AVTB,fps=${efps},format=yuv420p,setsar=1[m]`, ...fxg.parts, `[0:a]${af}[ao]`];
-          await run(bins.ffmpeg, ['-y','-i',project.videoPath,...fxg.inputs,'-filter_complex',parts.join(';'),'-map',fxg.label,'-map','[ao]',...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary], progress(duration,'Silenciando y aplicando efecto'));
+          const fxArgs=enc=>['-y','-i',project.videoPath,...fxg.inputs,'-filter_complex',parts.join(';'),'-map',fxg.label,'-map','[ao]',...enc,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
+          try{ await run(bins.ffmpeg, fxArgs(gpu?nvencArgs(23):HQ_VIDEO), progress(duration,gpu?'Silenciando y aplicando efecto (GPU)':'Silenciando y aplicando efecto')); }
+          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await run(bins.ffmpeg, fxArgs(HQ_VIDEO), progress(duration,'Silenciando y aplicando efecto')); }
           fxInFinalizeIn='none'; fxInFinalizeOut='none'; // ya aplicado
         } else {
           const base=['-y','-i',project.videoPath,'-map','0:v:0','-map','0:a:0'];
@@ -424,9 +429,12 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
           try {
             await run(bins.ffmpeg, [...base,...videoArgs,...tail], progress(duration,q.copy?'Silenciando':'Exportando'));
           } catch(copyErr) {
-            if(!q.copy||job.cancelRequested) throw copyErr;
-            job.message='Reencodeando en máxima calidad (el formato no permitía copiar)…'; job.percent=0;
-            await run(bins.ffmpeg, [...base,...HQ_VIDEO,...tail], progress(duration,'Exportando (máxima calidad)'));
+            if(job.cancelRequested||(!q.copy&&!gpu)) throw copyErr;
+            // Copia imposible → máxima calidad por CPU. GPU no disponible → la MISMA calidad elegida por CPU (con su escalado).
+            const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(',');
+            const cpuArgs=q.copy?HQ_VIDEO:['-c:v','libx264','-preset','veryfast','-crf',String(q.crf||20),'-pix_fmt','yuv420p',...(vf?['-vf',vf]:[])];
+            job.message=q.copy?'Reencodeando en máxima calidad (el formato no permitía copiar)…':'La GPU no está disponible; exportando por CPU…'; job.percent=0;
+            await run(bins.ffmpeg, [...base,...cpuArgs,...tail], progress(duration,q.copy?'Exportando (máxima calidad)':'Exportando'));
           }
         }
         await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,fxInFinalizeIn,fxInFinalizeOut,clipDur);
