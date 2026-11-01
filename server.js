@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.4';
+const APP_VERSION = '1.27.5';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -658,11 +658,11 @@ let bestofScan=readJson(path.join(DATA,'bestof.json'), null); // se conserva al 
 function currentBestof(){ return bestofScan && project?.videoPath && bestofScan.videoPath===project.videoPath ? bestofScan : null; }
 function clearBestof(){ bestofScan=null; fs.rmSync(path.join(DATA,'bestof.json'),{force:true}); }
 // Llama a la API de Claude (nube) en streaming para elegir los mejores momentos. Devuelve el texto (JSON).
-async function cloudPick(prompt, model, onProgress){
+async function cloudPick(prompt, model, onProgress, maxTokens=8000){
   if(!cloud.key) throw Error('Falta la API key de la nube. Pégala en el motor de IA del resumen.');
   const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal:AbortSignal.timeout(900000),
     headers:{'x-api-key':cloud.key,'anthropic-version':'2023-06-01','content-type':'application/json'},
-    body:JSON.stringify({model:model||'claude-opus-5-5',max_tokens:8000,stream:true,messages:[{role:'user',content:prompt}]})});
+    body:JSON.stringify({model:model||'claude-opus-5-5',max_tokens:maxTokens,stream:true,messages:[{role:'user',content:prompt}]})});
   if(!r.ok){ let t=''; try{t=await r.text();}catch{} throw Error('La nube respondió '+r.status+(t?(': '+t.slice(0,180)):'')); }
   let txt='', buf=''; const dec=new TextDecoder();
   for await (const chunk of r.body){
@@ -679,8 +679,12 @@ async function detectBestMoments(opts){
   if(!project?.videoPath||!bin) throw Error('Abre un video primero.');
   if(!Array.isArray(transcript)||!transcript.length) throw Error('Primero transcribe el video.');
   if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
-  const targetSec=Math.max(180,Math.min(2400,(Number(opts&&opts.minutes)||12)*60)); // objetivo de duración del resumen
-  const want=Math.max(8,Math.min(45,Math.round(targetSec/55)+5)); // cuántos candidatos pedir al modelo
+  // Objetivo de duración del resumen: de 3 a 90 min (resúmenes largos de directos de 6-7 h).
+  let targetSec=Math.max(180,Math.min(5400,(Number(opts&&opts.minutes)||12)*60));
+  // Un "resumen" no puede ser casi todo el directo: máximo 60 % de lo que dura (p. ej. directo de 1 h → hasta 36 min).
+  const srcLen=Number(transcript[transcript.length-1]?.end)||0;
+  if(srcLen>0) targetSec=Math.min(targetSec,Math.max(180,Math.round(srcLen*0.6)));
+  const want=Math.max(8,Math.min(110,Math.round(targetSec/55)+5)); // cuántos candidatos pedir al modelo (~1 por cada 55 s)
   const engine=((opts&&opts.engine)||cloud.engine||'local'); const useCloud=engine==='cloud'&&!!cloud.key;
   const cloudModel=(opts&&opts.model)||cloud.model||'claude-opus-5-5';
   job={status:'running',message:useCloud?'Analizando el directo con la nube…':'Analizando el directo con IA (modelo pesado)…',progress:'',percent:0,cancelRequested:false};
@@ -720,7 +724,8 @@ async function detectBestMoments(opts){
       // NUBE (Claude): lee el directo completo y elige con mejor criterio. Streaming para progreso.
       job.message=`La nube (${cloudModel.replace('claude-','').replace('-',' ')}) está leyendo el directo completo…`; job.percent=32;
       const expect=Math.max(1500, want*110); // estimación de chars de respuesta para la barra
-      txt=await cloudPick(prompt, cloudModel, (len)=>{ job.percent=32+Math.min(55,Math.round(len/expect*55)); job.message='La nube está eligiendo los mejores momentos…'; });
+      // Más momentos = respuesta más larga (más el razonamiento del modelo): el tope crece con lo pedido.
+      txt=await cloudPick(prompt, cloudModel, (len)=>{ job.percent=32+Math.min(55,Math.round(len/expect*55)); job.message='La nube está eligiendo los mejores momentos…'; }, Math.min(64000, 12000+want*300));
     } else {
       // LOCAL (Ollama 14B). num_ctx subido para que quepa todo el directo (Ollama por defecto lo corta).
       const estTok=Math.ceil(prompt.length/3.5)+NP+600;
