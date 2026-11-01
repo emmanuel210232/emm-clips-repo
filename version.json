@@ -1,6 +1,6 @@
 {
-  "version": "1.27.3",
-  "notes": "Exportar con Silenciar: la casilla ⚡ Render rápido ahora sí usa la tarjeta de video cuando hay fundidos de entrada/salida o calidad 1080p (antes siempre usaba el procesador). ~1.5x más rápido y con igual o mejor calidad. Tip: con calidad Original y sin fundidos es lo más rápido (solo copia la imagen).",
+  "version": "1.27.4",
+  "notes": "ARREGLO IMPORTANTE: en videos .mpg de Kick con recortes (mejores momentos o clips editados), desde la 1.27.1 la imagen podía quedar adelantada al audio (labios desfasados, hasta 1.3 s). Ya sale sincronizado y igual de rápido. Si exportaste con 1.27.1-1.27.3, vuelve a exportar esos videos.",
   "files": [
     "server.js",
     "app.js",

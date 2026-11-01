@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.3';
+const APP_VERSION = '1.27.4';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -483,13 +483,18 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   const hasTrans = keep.some(k=>k.trans);
   const hasJoin = keep.some(k=>k.join);
   const canSmooth = (smooth||hasTrans||hasJoin) && keep.length>=2 && keep.length<=200 && keep.every(k=>k.end-k.start>0.25);
-  // RÁPIDO SIN PERDER CALIDAD: cada pedazo se abre saltando directo a su minuto (-ss/-t por entrada) en vez de
-  // decodificar el directo completo con trim (en un directo de 6 h eso era leer 6 h para usar 25 min).
-  // El resultado es el mismo cuadro por cuadro. Con muchísimos pedazos se usa el método anterior.
+  // RÁPIDO SIN PERDER CALIDAD: cada pedazo se abre saltando cerca de su minuto (-ss por entrada) en vez de
+  // decodificar el directo completo (en un directo de 6 h eso era leer 6 h para usar 25 min).
+  // ⚠️ SINCRONÍA: en los .mpg (MPEG-TS) de Kick el salto -ss puede caer DESPUÉS del punto pedido (medido: 0.5-1.3 s);
+  // si luego se "resetean" los tiempos, la imagen queda adelantada al audio. Por eso se salta PRE segundos ANTES y el
+  // corte exacto lo hace trim/atrim sobre los tiempos (que ffmpeg cuenta desde el punto PEDIDO, no desde donde cayó):
+  // así audio e imagen salen del mismo instante aunque el salto sea impreciso. Con muchísimos pedazos: método anterior.
   const SEG = keep.length <= 120;
-  const segInputs = SEG ? keep.flatMap(k=>['-ss',k.start.toFixed(3),'-t',(k.end-k.start).toFixed(3),'-i',project.videoPath]) : ['-i',project.videoPath];
-  const vIn = (k,i) => SEG ? `[${i}:v]setpts=PTS-STARTPTS` : `[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS`;
-  const aIn = (k,i) => SEG ? `[${i}:a]asetpts=PTS-STARTPTS` : `[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS`;
+  const PRE = 15;
+  const pre = k => Math.min(PRE, k.start);
+  const segInputs = SEG ? keep.flatMap(k=>['-ss',(k.start-pre(k)).toFixed(3),'-t',(k.end-k.start+pre(k)).toFixed(3),'-i',project.videoPath]) : ['-i',project.videoPath];
+  const vIn = (k,i) => SEG ? `[${i}:v]trim=start=${pre(k).toFixed(3)}:end=${(pre(k)+k.end-k.start).toFixed(3)},setpts=PTS-STARTPTS` : `[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS`;
+  const aIn = (k,i) => SEG ? `[${i}:a]atrim=start=${pre(k).toFixed(3)}:end=${(pre(k)+k.end-k.start).toFixed(3)},asetpts=PTS-STARTPTS` : `[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS`;
   if (canSmooth) {
     // Crossfade entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
     // d por límite: 0.5s donde cambia el tema (.trans), 0.14s si se pidió suavizar, 0.05s en cortes normales (imperceptible).
