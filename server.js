@@ -140,7 +140,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.8';
+const APP_VERSION = '1.27.9';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -698,9 +698,12 @@ async function cloudPick(prompt, model, onProgress, maxTokens=8000, kind='Nube')
       if(line.startsWith('data:')){ const d=line.slice(5).trim(); if(!d||d==='[DONE]')continue;
         try{ const o=JSON.parse(d); if(o.type==='content_block_delta'&&o.delta&&o.delta.type==='text_delta'){ txt+=o.delta.text; onProgress&&onProgress(txt.length); }
           else if(o.type==='message_start'&&o.message&&o.message.usage) Object.assign(usage,o.message.usage);
-          else if(o.type==='message_delta'&&o.usage) Object.assign(usage,o.usage); }catch{} } }
+          else if(o.type==='message_delta'){ if(o.usage) Object.assign(usage,o.usage); if(o.delta&&o.delta.stop_reason) usage.stop_reason=o.delta.stop_reason; } }catch{} } }
   }
-  } finally { cloudPick.last=recordUsage(kind,usedModel,usage); } // se registra aunque se cancele (lo leído ya se cobró)
+  } finally {
+    cloudPick.last=recordUsage(kind,usedModel,usage); // se registra aunque se cancele (lo leído ya se cobró)
+    try{ fs.writeFileSync(path.join(DATA,'last_cloud_response.txt'),`${new Date().toISOString()} · ${kind} · ${usedModel} · stop: ${usage.stop_reason||'?'}\n\n${txt}`,'utf8'); }catch{}
+  }
   return txt;
 }
 async function detectBestMoments(opts){
@@ -773,8 +776,9 @@ async function detectBestMoments(opts){
       }
     }
     job.percent=88; job.message='Ordenando los momentos…';
-    let arr=[]; try{ const pj=JSON.parse(txt); arr=Array.isArray(pj)?pj:(pj.momentos||pj.moments||[]); }catch{}
-    if(!arr.length){ const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} } }
+    // Lector robusto: la IA a veces agrega texto, bloque de código o corchetes alrededor de la lista, o se corta;
+    // el lector viejo (primer [ al último ]) se rompía con eso y caía en silencio a 6 picos de audio.
+    const arr=research.extractMoments(txt);
     const cands=[];
     for(const o of (Array.isArray(arr)?arr:[])){
       const ini=Math.max(0,Number(o.ini)); let d=Math.max(30,Math.min(130,Number(o.dur)||70));
@@ -789,6 +793,7 @@ async function detectBestMoments(opts){
     const picked=[]; let tot=0;
     for(const c of cands){ if(!picked.every(p=>c.start>=p.end-1||c.end<=p.start+1)) continue; picked.push(c); tot+=c.end-c.start; if(tot>=targetSec) break; }
     // Red de seguridad SOLO si el modelo casi no encontró nada (falló): ofrece unos POCOS picos de audio (máx 6), sin rellenar a la fuerza.
+    if(useCloud && picked.length<3) throw Error(`La IA respondió pero no pude leer su lista de momentos (${arr.length} encontrados). Vuelve a intentar; su respuesta quedó guardada en data\\last_cloud_response.txt para revisarla.`);
     if(picked.length<3){
       const dbs2=energy.map(e=>e.db); const mean2=dbs2.reduce((a,b)=>a+b,0)/(dbs2.length||1);
       const sd2=Math.sqrt(dbs2.reduce((a,b)=>a+(b-mean2)*(b-mean2),0)/(dbs2.length||1))||1;
@@ -868,8 +873,7 @@ async function cloudShorts(model, want, onProgress){
   job.message='La nube está eligiendo los mejores momentos para Shorts…'; job.percent=30;
   const prompt=`DIRECTO de un streamer mexicano (bloques [SEGUNDOS|m:ss|eN] texto; eN alto = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, elige los ${want} MEJORES momentos para SHORTS VIRALES (TikTok/Reels/YouTube Shorts). Cada Short:\n- dura de 30 a 60 segundos\n- es AUTO-CONTENIDO (se entiende solo, sin contexto previo)\n- tiene un GANCHO fuerte en los primeros 3 segundos (gracioso, polemico, sorprendente, tierno o con reaccion fuerte)\n- el "ini" cae donde EMPIEZA el momento (el setup), NO a media frase\nEvita relleno, saludos y logistica aburrida. Reparte los momentos a lo largo del directo.\nAdemas, califica el GANCHO: que tan fuerte agarran los PRIMEROS 3 SEGUNDOS (10 = enganchas de inmediato, 1 = arranque lento/aburrido).\nResponde SOLO este JSON, sin texto extra: {"shorts":[{"ini":<segundos del bloque>,"dur":<30-60>,"gancho":"<TITULO CORTO EN MAYUSCULAS, max 40 caracteres>","por":"<por que es viral, 1 frase>","score":<1-10>,"gscore":<1-10 fuerza del gancho en los primeros 3s>,"frase":<segundos donde EMPIEZA la frase MÁS fuerte/graciosa/polémica DENTRO del momento (se pondrá también al inicio como gancho, como OpusClip); null si el momento ya arranca con ella>,"frase_dur":<2-6>}]}`;
   const txt=await cloudPick(prompt, model, onProgress, 8000, 'Shorts (momentos virales)');
-  let arr=[]; try{ const pj=JSON.parse(txt); arr=Array.isArray(pj)?pj:(pj.shorts||pj.momentos||[]); }catch{}
-  if(!arr.length){ const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} } }
+  const arr=research.extractMoments(txt); // lector robusto (texto/código/corchetes alrededor, respuesta cortada)
   const words=tokenizeTranscript(transcript);
   const cands=[];
   for(const o of (Array.isArray(arr)?arr:[])){

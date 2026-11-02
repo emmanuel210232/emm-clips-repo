@@ -1,6 +1,6 @@
 {
-  "version": "1.27.8",
-  "notes": "La nube usa SOLO Claude Sonnet 5.5 (resumen del directo, Shorts, contenido sensible e Investigar). Se quitaron Opus y Haiku de los selectores. Opción local gratis sigue disponible.",
+  "version": "1.27.9",
+  "notes": "Arreglado: el Resumen del directo a veces daba solo ~6 momentos de 1 minuto (\"MOMENTO FUERTE\"). La IA sí elegía bien, pero la app no lograba leer su lista y rellenaba con picos de audio. Ahora la lee siempre y, si algo falla, avisa en vez de inventar.",
   "files": [
     "server.js",
     "app.js",
