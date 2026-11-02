@@ -44,7 +44,7 @@ let selection = readJson(files.selection, null);
 let sensitiveScan = readJson(files.sensitive, null);
 let silenceScan = null; // resultado transitorio de "quitar silencios"
 // Config de la NUBE para el resumen del directo (API de Claude). La KEY se guarda local y NUNCA se expone en /api/state.
-let cloud = readJson(path.join(DATA,'cloud.json'), {key:'', engine:'local', model:'claude-opus-5-5'});
+let cloud = readJson(path.join(DATA,'cloud.json'), {key:'', engine:'local', model:'claude-sonnet-5-5'});
 let job = { status: 'idle', message: '', progress: '', percent: 0 };
 let activeProc = null; // proceso ffmpeg/whisper en curso (para poder cancelar)
 let filmstrip = null; // {count, interval, wave} de la línea de tiempo del video actual
@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.6';
+const APP_VERSION = '1.27.7';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -684,9 +684,9 @@ async function cloudPick(prompt, model, onProgress, maxTokens=8000, kind='Nube')
   if(!cloud.key) throw Error('Falta la API key de la nube. Pégala en el motor de IA del resumen.');
   const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal:AbortSignal.timeout(900000),
     headers:{'x-api-key':cloud.key,'anthropic-version':'2023-06-01','content-type':'application/json'},
-    body:JSON.stringify({model:model||'claude-opus-5-5',max_tokens:maxTokens,stream:true,messages:[{role:'user',content:prompt}]})});
+    body:JSON.stringify({model:model||'claude-sonnet-5-5',max_tokens:maxTokens,stream:true,messages:[{role:'user',content:prompt}]})});
   if(!r.ok){ let t=''; try{t=await r.text();}catch{} throw Error('La nube respondió '+r.status+(t?(': '+t.slice(0,180)):'')); }
-  let txt='', buf=''; const dec=new TextDecoder(); const usage={}; const usedModel=model||'claude-opus-5-5';
+  let txt='', buf=''; const dec=new TextDecoder(); const usage={}; const usedModel=model||'claude-sonnet-5-5';
   try{
   for await (const chunk of r.body){
     if(job.cancelRequested) throw Error('Análisis cancelado.');
@@ -712,7 +712,7 @@ async function detectBestMoments(opts){
   if(srcLen>0) targetSec=Math.min(targetSec,Math.max(180,Math.round(srcLen*0.6)));
   const want=Math.max(8,Math.min(110,Math.round(targetSec/55)+5)); // cuántos candidatos pedir al modelo (~1 por cada 55 s)
   const engine=((opts&&opts.engine)||cloud.engine||'local'); const useCloud=engine==='cloud'&&!!cloud.key;
-  const cloudModel=(opts&&opts.model)||cloud.model||'claude-opus-5-5';
+  const cloudModel=(opts&&opts.model)||cloud.model||'claude-sonnet-5-5';
   job={status:'running',message:useCloud?'Analizando el directo con la nube…':'Analizando el directo con IA (modelo pesado)…',progress:'',percent:0,cancelRequested:false};
   (async()=>{
    try{
@@ -738,7 +738,8 @@ async function detectBestMoments(opts){
     for(const c of chunks){ let peak=emin; for(const e of energy){ if(e.t>=c.t&&e.t<c.t+20&&e.db>peak)peak=e.db; } c.e10=Math.round((peak-emin)/span*10); }
     const fmt=s=>{const m=Math.floor(s/60),x=Math.round(s%60);return `${m}:${String(x).padStart(2,'0')}`;};
     const sliceLen=useCloud?600:170; // la nube lee el texto COMPLETO de cada bloque; el local solo una muestra
-    const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|energia ${c.e10}/10] ${c.text.replace(/\s+/g,' ').slice(0,sliceLen)}`).join('\n');
+    // dedupeRepeats: quita los bucles que inventa Whisper con música/ruido → menos tokens que pagar y menos basura para la IA.
+    const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|energia ${c.e10}/10] ${research.dedupeRepeats(c.text).slice(0,sliceLen)}`).join('\n');
     // 3) el 14B elige los mejores momentos (streaming para mostrar progreso real)
     job.message='La IA está eligiendo los mejores momentos… (modelo pesado, tarda)'; job.percent=30;
     const tgtMin=Math.round(targetSec/60);
@@ -859,7 +860,7 @@ async function cloudShorts(model, want, onProgress){
   if(chunks.length<2) throw Error('La transcripción es muy corta para Shorts.');
   for(const c of chunks){ let peak=emin; for(const e of energy){ if(e.t>=c.t&&e.t<c.t+sec&&e.db>peak)peak=e.db; } c.e10=Math.round((peak-emin)/span*10); }
   const fmt=s=>{const m=Math.floor(s/60),x=Math.round(s%60);return `${m}:${String(x).padStart(2,'0')}`;};
-  const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|e${c.e10}] ${c.text.replace(/\s+/g,' ').slice(0,400)}`).join('\n');
+  const list=chunks.map(c=>`[${Math.round(c.t)}|${fmt(c.t)}|e${c.e10}] ${research.dedupeRepeats(c.text).slice(0,400)}`).join('\n'); // sin bucles de Whisper
   // 3) la nube elige los mejores SHORTS virales
   job.message='La nube está eligiendo los mejores momentos para Shorts…'; job.percent=30;
   const prompt=`DIRECTO de un streamer mexicano (bloques [SEGUNDOS|m:ss|eN] texto; eN alto = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, elige los ${want} MEJORES momentos para SHORTS VIRALES (TikTok/Reels/YouTube Shorts). Cada Short:\n- dura de 30 a 60 segundos\n- es AUTO-CONTENIDO (se entiende solo, sin contexto previo)\n- tiene un GANCHO fuerte en los primeros 3 segundos (gracioso, polemico, sorprendente, tierno o con reaccion fuerte)\n- el "ini" cae donde EMPIEZA el momento (el setup), NO a media frase\nEvita relleno, saludos y logistica aburrida. Reparte los momentos a lo largo del directo.\nAdemas, califica el GANCHO: que tan fuerte agarran los PRIMEROS 3 SEGUNDOS (10 = enganchas de inmediato, 1 = arranque lento/aburrido).\nResponde SOLO este JSON, sin texto extra: {"shorts":[{"ini":<segundos del bloque>,"dur":<30-60>,"gancho":"<TITULO CORTO EN MAYUSCULAS, max 40 caracteres>","por":"<por que es viral, 1 frase>","score":<1-10>,"gscore":<1-10 fuerza del gancho en los primeros 3s>,"frase":<segundos donde EMPIEZA la frase MÁS fuerte/graciosa/polémica DENTRO del momento (se pondrá también al inicio como gancho, como OpusClip); null si el momento ya arranca con ella>,"frase_dur":<2-6>}]}`;
@@ -894,7 +895,7 @@ async function proposeShorts(opts) {
   if (!project?.videoPath || !transcript.length) throw Error('Abre y transcribe un video primero.');
   if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
   const engine=((opts&&opts.engine)||'local'); const useCloud=engine==='cloud'&&!!cloud.key;
-  const cloudModel=(opts&&opts.model)||cloud.model||'claude-opus-5-5';
+  const cloudModel=(opts&&opts.model)||cloud.model||'claude-sonnet-5-5';
   if(engine==='cloud'&&!cloud.key) throw Error('Elegiste la nube pero falta la API key. Pégala en 🎬 Resumen del directo → Motor de IA.');
   const duration=await durationOf(project.videoPath);
   // conserva lo que el usuario ya ajustó (gancho/correcciones/encuadre) por id
@@ -1623,7 +1624,7 @@ Da 5 títulos.`;
   rs.generated = { ...looseJson(txt), createdAt: Date.now(), format, video: useT && project?.videoPath ? path.basename(project.videoPath) : '', usedInsights: !!ins };
   return 'Propuesta lista.';
 }
-function pickModel(m) { return typeof m === 'string' && /^claude-/.test(m) ? m : (cloud.model || 'claude-opus-5-5'); }
+function pickModel(m) { return typeof m === 'string' && /^claude-/.test(m) ? m : (cloud.model || 'claude-sonnet-5-5'); }
 async function researchRoute(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/research') return respond(res, 200, researchState());
   if (req.method !== 'POST') return false;

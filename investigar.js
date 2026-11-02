@@ -183,7 +183,7 @@ function rsResultsCard(a) {
 }
 
 // ---------- 4. Fórmula IA ----------
-const RS_MODELS = `<option value="claude-opus-5-5">Opus 5.5 (mejor calidad)</option><option value="claude-sonnet-5-5">Sonnet 5.5 (buen valor)</option><option value="claude-haiku-4-5">Haiku (más barato)</option>`;
+const RS_MODELS = `<option value="claude-sonnet-5-5">Sonnet 5.5 (recomendado · mitad de precio)</option><option value="claude-opus-5-5">Opus 5.5 (máxima calidad)</option><option value="claude-haiku-4-5">Haiku (más barato)</option>`;
 function rsList(arr) { return Array.isArray(arr) && arr.length ? `<ul class="rsUl">${arr.map(x => `<li>${rsEsc(x)}</li>`).join('')}</ul>` : '<p class="muted">—</p>'; }
 function rsInsightsCard(s) {
   const i = s.insights;

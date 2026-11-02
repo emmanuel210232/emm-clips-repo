@@ -672,8 +672,8 @@ function switchMode(mode){
 }
 function bfmt(s){return `${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}`;}
 function syncBestofEngine(){
-  const cl=state.cloud||{engine:'local',model:'claude-opus-5-5',keySet:false};
-  const sel=$('bestofEngine'); if(sel) sel.value = cl.engine==='cloud'?('cloud:'+(cl.model||'claude-opus-5-5')):'local';
+  const cl=state.cloud||{engine:'local',model:'claude-sonnet-5-5',keySet:false};
+  const sel=$('bestofEngine'); if(sel) sel.value = cl.engine==='cloud'?('cloud:'+(cl.model||'claude-sonnet-5-5')):'local';
   const isCloud=cl.engine==='cloud';
   const keyRow=$('bestofKeyRow'); if(keyRow) keyRow.hidden = !isCloud || cl.keySet; // pide llave solo si nube y no hay
   const st=$('bestofEngineStatus');
@@ -745,7 +745,7 @@ $('bestofEngine').onchange=safe(async()=>{
 });
 $('bestofKeySave').onclick=safe(async()=>{
   const key=$('bestofKey').value.trim(); if(!key)throw Error('Pega tu API key.');
-  const v=$('bestofEngine').value; const model=v.startsWith('cloud:')?v.slice(6):'claude-opus-5-5';
+  const v=$('bestofEngine').value; const model=v.startsWith('cloud:')?v.slice(6):'claude-sonnet-5-5';
   const r=await api('/api/bestof/config',{key,engine:'cloud',model});
   state.cloud={engine:r.engine,model:r.model,keySet:r.keySet}; $('bestofKey').value=''; syncBestofEngine();
   notice('✅ Llave guardada. Nube lista con '+(r.model||'').replace('claude-','')+'. Ya puedes Procesar con la nube.');

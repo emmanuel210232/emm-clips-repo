@@ -1,6 +1,6 @@
 {
-  "version": "1.27.6",
-  "notes": "Nuevo: la app registra lo que gasta en la nube (tokens exactos que reporta la API) y lo muestra en Resumen del directo: gasto del mes y del último análisis. El resumen también dice al terminar cuánto costó.",
+  "version": "1.27.7",
+  "notes": "Gasta menos en la nube: (1) antes de mandar la transcripción a la IA se quitan las frases repetidas que inventa Whisper con música o ruido (hasta 35% menos texto que pagar en directos con fiesta/música); (2) Sonnet 5.5 queda como modelo recomendado y predeterminado (mitad de precio que Opus). Opus sigue disponible en el selector.",
   "files": [
     "server.js",
     "app.js",
