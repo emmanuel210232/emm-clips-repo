@@ -793,7 +793,7 @@ $('scanRun').onclick=safe(async()=>{
   const segments=(clips&&clips.length)?clips.map(c=>({start:+c.start.toFixed(2),end:+c.end.toFixed(2)})):null;
   await api('/api/scan-sensitive',{cats,sensitivity:$('scSens').value,step:Number($('scStep').value)||4,max:400,mode:($('scMode')||{}).value||'rapido',engine,segments});
   const mins=segments?Math.round(segments.reduce((a,c)=>a+(c.end-c.start),0)/60):0;
-  notice(engine==='cloud'?('☁️ Analizando con la nube (Haiku) SOLO los '+mins+' min de tus clips. Verás las marcas al terminar.'):'🛡️ Analizando con IA local (necesita Ollama) solo tus clips. Puedes cancelar arriba.');
+  notice(engine==='cloud'?('☁️ Analizando con la nube (Sonnet 5.5) SOLO los '+mins+' min de tus clips. Verás las marcas al terminar.'):'🛡️ Analizando con IA local (necesita Ollama) solo tus clips. Puedes cancelar arriba.');
 });
 // Si la pestaña se oculta a media previa, limpia el overlay (las animaciones se pausan al ocultar).
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopAnimPreview();});

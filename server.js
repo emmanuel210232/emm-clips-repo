@@ -44,7 +44,10 @@ let selection = readJson(files.selection, null);
 let sensitiveScan = readJson(files.sensitive, null);
 let silenceScan = null; // resultado transitorio de "quitar silencios"
 // Config de la NUBE para el resumen del directo (API de Claude). La KEY se guarda local y NUNCA se expone en /api/state.
-let cloud = readJson(path.join(DATA,'cloud.json'), {key:'', engine:'local', model:'claude-sonnet-5-5'});
+// Modelo de la nube: SOLO Claude Sonnet 5.5 (decisión del usuario: buena calidad a la mitad de precio que Opus).
+const CLOUD_MODEL='claude-sonnet-5-5';
+let cloud = readJson(path.join(DATA,'cloud.json'), {key:'', engine:'local', model:CLOUD_MODEL});
+cloud.model=CLOUD_MODEL; // aunque una configuración vieja diga Opus/Haiku
 let job = { status: 'idle', message: '', progress: '', percent: 0 };
 let activeProc = null; // proceso ffmpeg/whisper en curso (para poder cancelar)
 let filmstrip = null; // {count, interval, wave} de la línea de tiempo del video actual
@@ -137,7 +140,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.7';
+const APP_VERSION = '1.27.8';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -684,9 +687,9 @@ async function cloudPick(prompt, model, onProgress, maxTokens=8000, kind='Nube')
   if(!cloud.key) throw Error('Falta la API key de la nube. Pégala en el motor de IA del resumen.');
   const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal:AbortSignal.timeout(900000),
     headers:{'x-api-key':cloud.key,'anthropic-version':'2023-06-01','content-type':'application/json'},
-    body:JSON.stringify({model:model||'claude-sonnet-5-5',max_tokens:maxTokens,stream:true,messages:[{role:'user',content:prompt}]})});
+    body:JSON.stringify({model:CLOUD_MODEL,max_tokens:maxTokens,stream:true,messages:[{role:'user',content:prompt}]})});
   if(!r.ok){ let t=''; try{t=await r.text();}catch{} throw Error('La nube respondió '+r.status+(t?(': '+t.slice(0,180)):'')); }
-  let txt='', buf=''; const dec=new TextDecoder(); const usage={}; const usedModel=model||'claude-sonnet-5-5';
+  let txt='', buf=''; const dec=new TextDecoder(); const usage={}; const usedModel=CLOUD_MODEL;
   try{
   for await (const chunk of r.body){
     if(job.cancelRequested) throw Error('Análisis cancelado.');
@@ -712,7 +715,7 @@ async function detectBestMoments(opts){
   if(srcLen>0) targetSec=Math.min(targetSec,Math.max(180,Math.round(srcLen*0.6)));
   const want=Math.max(8,Math.min(110,Math.round(targetSec/55)+5)); // cuántos candidatos pedir al modelo (~1 por cada 55 s)
   const engine=((opts&&opts.engine)||cloud.engine||'local'); const useCloud=engine==='cloud'&&!!cloud.key;
-  const cloudModel=(opts&&opts.model)||cloud.model||'claude-sonnet-5-5';
+  const cloudModel=CLOUD_MODEL;
   job={status:'running',message:useCloud?'Analizando el directo con la nube…':'Analizando el directo con IA (modelo pesado)…',progress:'',percent:0,cancelRequested:false};
   (async()=>{
    try{
@@ -838,7 +841,7 @@ function detectSilences(opts){
   return {started:true};
 }
 function fmtSec(s){s=Math.max(0,Math.round(s));return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
-// SELECCIÓN DE SHORTS POR NUBE (Opus/Sonnet/Haiku) — estilo OpusClip: la IA LEE TODO el directo + la energía del audio
+// SELECCIÓN DE SHORTS POR NUBE (Sonnet 5.5) — estilo OpusClip: la IA LEE TODO el directo + la energía del audio
 // y elige los mejores momentos virales de 30-60s con gancho, en vez del algoritmo por ritmo + modelo chico.
 async function cloudShorts(model, want, onProgress){
   const bin=readiness().ffmpeg;
@@ -895,7 +898,7 @@ async function proposeShorts(opts) {
   if (!project?.videoPath || !transcript.length) throw Error('Abre y transcribe un video primero.');
   if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
   const engine=((opts&&opts.engine)||'local'); const useCloud=engine==='cloud'&&!!cloud.key;
-  const cloudModel=(opts&&opts.model)||cloud.model||'claude-sonnet-5-5';
+  const cloudModel=CLOUD_MODEL;
   if(engine==='cloud'&&!cloud.key) throw Error('Elegiste la nube pero falta la API key. Pégala en 🎬 Resumen del directo → Motor de IA.');
   const duration=await durationOf(project.videoPath);
   // conserva lo que el usuario ya ajustó (gancho/correcciones/encuadre) por id
@@ -1357,7 +1360,7 @@ async function moondreamQuick(fp){
   }catch{ return true; } // ante la duda, que lo revise gemma3
 }
 const RISK_ORDER={ninguno:0,bajo:1,medio:2,alto:3};
-// Visión en la NUBE (Claude Haiku) para el escáner sensible: varios fotogramas por llamada (barato) + prompt MUY estricto.
+// Visión en la NUBE (Claude Sonnet 5.5) para el escáner sensible: varios fotogramas por llamada (barato) + prompt MUY estricto.
 async function cloudClassifyBatch(files){
   const content=[];
   for(const fp of files){ let b64; try{ b64=await fsp.readFile(fp,{encoding:'base64'}); }catch{ continue; } content.push({type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}}); }
@@ -1365,9 +1368,9 @@ async function cloudClassifyBatch(files){
   content.push({type:'text',text:`Eres moderador de YouTube. Te doy ${content.length} fotogramas de un video EN ORDEN. Para CADA uno marca SOLO lo que YouTube penaliza de verdad y que sea CLARO Y EVIDENTE: un BESO en la boca evidente, DESNUDEZ (genitales, senos o nalgas al descubierto) o acto sexual, una PELEA REAL con golpes o sangre, o consumo visible de DROGAS.\nSE MUY ESTRICTO: abrazos, saludos, gente cerca o posando, baile, fiesta, una copa o cerveza social, ropa escotada o de fiesta = NO cuentan (todo false). Ante la MENOR duda, pon false.\nResponde SOLO un arreglo JSON, un objeto por fotograma EN EL MISMO ORDEN, sin texto extra: [{"beso":bool,"desnudez":bool,"pelea":bool,"drogas":bool,"riesgo":"ninguno|bajo|medio|alto"}]`});
   const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal:AbortSignal.timeout(120000),
     headers:{'x-api-key':cloud.key,'anthropic-version':'2023-06-01','content-type':'application/json'},
-    body:JSON.stringify({model:'claude-haiku-4-5',max_tokens:1500,messages:[{role:'user',content}]})});
+    body:JSON.stringify({model:CLOUD_MODEL,max_tokens:1500,messages:[{role:'user',content}]})});
   if(!r.ok){ let t=''; try{t=await r.text();}catch{} throw Error('La nube (visión) respondió '+r.status+(t?(': '+t.slice(0,160)):'')); }
-  const j=await r.json(); recordUsage('Contenido sensible','claude-haiku-4-5',j.usage); let txt=''; for(const b of (j.content||[])){ if(b.type==='text') txt+=b.text; }
+  const j=await r.json(); recordUsage('Contenido sensible',CLOUD_MODEL,j.usage); let txt=''; for(const b of (j.content||[])){ if(b.type==='text') txt+=b.text; }
   let arr=[]; const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} }
   return Array.isArray(arr)?arr:[];
 }
@@ -1403,15 +1406,15 @@ function scanSensitive(opts){
       }
       const flagged=[];
       if(engine==='cloud'){
-        // NUBE (Haiku): varios fotogramas por llamada, prompt estricto. Mucho más preciso (distingue abrazo vs beso).
-        job.message='Revisando con la nube (Haiku)…';
+        // NUBE (Sonnet 5.5): varios fotogramas por llamada, prompt estricto. Mucho más preciso (distingue abrazo vs beso).
+        job.message='Revisando con la nube (Sonnet 5.5)…';
         const BATCH=5;
         for(let n=0;n<frames.length;n+=BATCH){
           if(job.cancelRequested) throw Error('Análisis cancelado.');
           const batch=frames.slice(n,n+BATCH);
           let verdicts=[]; try{ verdicts=await cloudClassifyBatch(batch.map(f=>f.fp)); }catch(e){ if(n===0) throw e; }
           batch.forEach((f,bi)=>{ const r=verdicts[bi]; if(r){ const which=cats.filter(c=>r[c]); if(which.length){ flagged.push({t:f.t,i:f.i,cats:which,riesgo:r.riesgo||'medio',nota:''}); } } });
-          job.message=`Revisando con la nube (Haiku)… (${Math.min(n+BATCH,frames.length)}/${frames.length})`; job.percent=35+Math.round(Math.min(n+BATCH,frames.length)/Math.max(1,frames.length)*63);
+          job.message=`Revisando con la nube (Sonnet 5.5)… (${Math.min(n+BATCH,frames.length)}/${frames.length})`; job.percent=35+Math.round(Math.min(n+BATCH,frames.length)/Math.max(1,frames.length)*63);
         }
       } else {
         // LOCAL: moondream (chico) filtra primero; solo lo sospechoso lo confirma gemma3.
@@ -1624,7 +1627,7 @@ Da 5 títulos.`;
   rs.generated = { ...looseJson(txt), createdAt: Date.now(), format, video: useT && project?.videoPath ? path.basename(project.videoPath) : '', usedInsights: !!ins };
   return 'Propuesta lista.';
 }
-function pickModel(m) { return typeof m === 'string' && /^claude-/.test(m) ? m : (cloud.model || 'claude-sonnet-5-5'); }
+function pickModel() { return CLOUD_MODEL; } // única opción
 async function researchRoute(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/research') return respond(res, 200, researchState());
   if (req.method !== 'POST') return false;
@@ -2010,7 +2013,7 @@ const server=http.createServer(async (req,res) => {
       if(typeof b.key==='string'&&b.key.trim()) cloud.key=b.key.trim();
       if(b.clearKey) cloud.key='';
       if(b.engine==='local'||b.engine==='cloud') cloud.engine=b.engine;
-      if(typeof b.model==='string'&&/^claude-/.test(b.model)) cloud.model=b.model;
+      cloud.model=CLOUD_MODEL; // única opción
       writeJson(path.join(DATA,'cloud.json'),cloud);
       return respond(res,200,{ok:true,engine:cloud.engine,model:cloud.model,keySet:!!cloud.key}); }
     if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu); return respond(res,202,result); }
