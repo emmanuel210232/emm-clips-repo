@@ -679,7 +679,17 @@ function syncBestofEngine(){
   const st=$('bestofEngineStatus');
   if(st){ if(!isCloud) st.textContent='Gratis, en tu PC (modelo pesado).'; else st.textContent = cl.keySet?('✅ Nube lista · '+(cl.model||'').replace('claude-','')):'⚠️ Pega tu API key para usar la nube.'; }
 }
+// Gasto en la nube (exacto, de lo que reporta la API): este mes + último análisis.
+async function showCloudUsage(){
+  const el=$('cloudUsage'); if(!el) return;
+  try{ const u=await (await fetch('/api/usage')).json();
+    if(!u.monthCount){ el.textContent='💲 Gasto en la nube este mes: $0.00'; return; }
+    const l=u.last;
+    el.textContent='💲 Gasto en la nube este mes: $'+u.monthUsd.toFixed(2)+' USD ('+u.monthCount+' uso'+(u.monthCount===1?'':'s')+')'+(l?' · Último: '+l.kind+' $'+l.usd.toFixed(2)+' ('+Math.round(l.in/1000)+'k leídos + '+Math.round(l.out/1000)+'k escritos)':'');
+  }catch{}
+}
 function buildBestof(){
+  showCloudUsage();
   const p=state.project;
   const vs=$('bestofVideoStatus'); if(vs) vs.textContent = p? p.videoPath.split(/[\\/]/).at(-1):'Sin video';
   syncBestofEngine();

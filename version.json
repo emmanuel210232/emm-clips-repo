@@ -1,6 +1,6 @@
 {
-  "version": "1.27.5",
-  "notes": "Resumen del directo: nuevas duraciones de ~45, ~60 y ~90 minutos (antes el máximo era 30). Para directos largos (6-7 h). El resumen nunca pasa del 60% de lo que dura el directo.",
+  "version": "1.27.6",
+  "notes": "Nuevo: la app registra lo que gasta en la nube (tokens exactos que reporta la API) y lo muestra en Resumen del directo: gasto del mes y del último análisis. El resumen también dice al terminar cuánto costó.",
   "files": [
     "server.js",
     "app.js",

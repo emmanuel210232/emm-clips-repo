@@ -137,7 +137,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.5';
+const APP_VERSION = '1.27.6';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -658,20 +658,46 @@ let bestofScan=readJson(path.join(DATA,'bestof.json'), null); // se conserva al 
 function currentBestof(){ return bestofScan && project?.videoPath && bestofScan.videoPath===project.videoPath ? bestofScan : null; }
 function clearBestof(){ bestofScan=null; fs.rmSync(path.join(DATA,'bestof.json'),{force:true}); }
 // Llama a la API de Claude (nube) en streaming para elegir los mejores momentos. Devuelve el texto (JSON).
-async function cloudPick(prompt, model, onProgress, maxTokens=8000){
+// ===== GASTO EN LA NUBE (exacto, de lo que reporta la API en cada respuesta) =====
+// Precios USD por millón de tokens (entrada, salida) — tabla oficial de Anthropic (actualizada 2026-09-25).
+// Los tokens de "pensamiento" del modelo se cobran como salida y ya vienen incluidos en output_tokens.
+const PRICES = { 'claude-opus-5-5':[4,20], 'claude-opus-5':[5,25], 'claude-sonnet-5-5':[2,10], 'claude-sonnet-5':[2,10], 'claude-haiku-4-5':[1,5], 'claude-fable-5-1':[10,50] };
+const USAGE_FILE = path.join(DATA,'usage.json');
+let usageLog = readJson(USAGE_FILE, []);
+function recordUsage(kind, model, u){
+  if(!u) return null;
+  const inTok=(u.input_tokens||0)+(u.cache_creation_input_tokens||0), cacheTok=u.cache_read_input_tokens||0, outTok=u.output_tokens||0;
+  if(!inTok&&!outTok) return null;
+  const [pi,po]=PRICES[model]||PRICES['claude-opus-5-5'];
+  const usd=+((inTok*pi + cacheTok*pi*0.1 + outTok*po)/1e6).toFixed(4);
+  const e={t:Date.now(),kind,model,in:inTok+cacheTok,out:outTok,usd};
+  usageLog.push(e); usageLog=usageLog.slice(-1000); writeJson(USAGE_FILE,usageLog);
+  return e;
+}
+function usageSummary(){
+  const now=new Date(), m0=new Date(now.getFullYear(),now.getMonth(),1).getTime();
+  const month=usageLog.filter(e=>e.t>=m0);
+  const byKind={}; for(const e of month){ const k=byKind[e.kind]||(byKind[e.kind]={usd:0,n:0}); k.usd=+(k.usd+e.usd).toFixed(4); k.n++; }
+  return { last:usageLog.at(-1)||null, monthUsd:+month.reduce((a,e)=>a+e.usd,0).toFixed(2), monthCount:month.length, byKind, recent:usageLog.slice(-15).reverse() };
+}
+async function cloudPick(prompt, model, onProgress, maxTokens=8000, kind='Nube'){
   if(!cloud.key) throw Error('Falta la API key de la nube. Pégala en el motor de IA del resumen.');
   const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal:AbortSignal.timeout(900000),
     headers:{'x-api-key':cloud.key,'anthropic-version':'2023-06-01','content-type':'application/json'},
     body:JSON.stringify({model:model||'claude-opus-5-5',max_tokens:maxTokens,stream:true,messages:[{role:'user',content:prompt}]})});
   if(!r.ok){ let t=''; try{t=await r.text();}catch{} throw Error('La nube respondió '+r.status+(t?(': '+t.slice(0,180)):'')); }
-  let txt='', buf=''; const dec=new TextDecoder();
+  let txt='', buf=''; const dec=new TextDecoder(); const usage={}; const usedModel=model||'claude-opus-5-5';
+  try{
   for await (const chunk of r.body){
     if(job.cancelRequested) throw Error('Análisis cancelado.');
     buf+=dec.decode(chunk,{stream:true}); let nl;
     while((nl=buf.indexOf('\n'))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
       if(line.startsWith('data:')){ const d=line.slice(5).trim(); if(!d||d==='[DONE]')continue;
-        try{ const o=JSON.parse(d); if(o.type==='content_block_delta'&&o.delta&&o.delta.type==='text_delta'){ txt+=o.delta.text; onProgress&&onProgress(txt.length); } }catch{} } }
+        try{ const o=JSON.parse(d); if(o.type==='content_block_delta'&&o.delta&&o.delta.type==='text_delta'){ txt+=o.delta.text; onProgress&&onProgress(txt.length); }
+          else if(o.type==='message_start'&&o.message&&o.message.usage) Object.assign(usage,o.message.usage);
+          else if(o.type==='message_delta'&&o.usage) Object.assign(usage,o.usage); }catch{} } }
   }
+  } finally { cloudPick.last=recordUsage(kind,usedModel,usage); } // se registra aunque se cancele (lo leído ya se cobró)
   return txt;
 }
 async function detectBestMoments(opts){
@@ -725,7 +751,7 @@ async function detectBestMoments(opts){
       job.message=`La nube (${cloudModel.replace('claude-','').replace('-',' ')}) está leyendo el directo completo…`; job.percent=32;
       const expect=Math.max(1500, want*110); // estimación de chars de respuesta para la barra
       // Más momentos = respuesta más larga (más el razonamiento del modelo): el tope crece con lo pedido.
-      txt=await cloudPick(prompt, cloudModel, (len)=>{ job.percent=32+Math.min(55,Math.round(len/expect*55)); job.message='La nube está eligiendo los mejores momentos…'; }, Math.min(64000, 12000+want*300));
+      txt=await cloudPick(prompt, cloudModel, (len)=>{ job.percent=32+Math.min(55,Math.round(len/expect*55)); job.message='La nube está eligiendo los mejores momentos…'; }, Math.min(64000, 12000+want*300), 'Resumen del directo');
     } else {
       // LOCAL (Ollama 14B). num_ctx subido para que quepa todo el directo (Ollama por defecto lo corta).
       const estTok=Math.ceil(prompt.length/3.5)+NP+600;
@@ -773,7 +799,8 @@ async function detectBestMoments(opts){
     picked.sort((a,b)=>a.start-b.start);
     bestofScan={videoPath:project.videoPath,candidates:picked,scannedAt:Date.now(),model:useCloud?cloudModel:BESTOF_MODEL,engine:useCloud?'cloud':'local',total:dur,count:picked.length,targetMin:Math.round(targetSec/60),durMin:+(tot/60).toFixed(1)};
     writeJson(path.join(DATA,'bestof.json'),bestofScan);
-    job={status:'done',message:`Resumen listo: ${picked.length} momentos (~${Math.round(tot/60)} min). Revisa y ajusta.`,progress:'',percent:100};
+    const cost=useCloud&&cloudPick.last?` · Costó ≈ $${cloudPick.last.usd.toFixed(2)} USD (${Math.round(cloudPick.last.in/1000)}k tokens leídos + ${Math.round(cloudPick.last.out/1000)}k escritos)`:'';
+    job={status:'done',message:`Resumen listo: ${picked.length} momentos (~${Math.round(tot/60)} min). Revisa y ajusta.${cost}`,progress:'',percent:100};
    }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
   })();
 }
@@ -836,7 +863,7 @@ async function cloudShorts(model, want, onProgress){
   // 3) la nube elige los mejores SHORTS virales
   job.message='La nube está eligiendo los mejores momentos para Shorts…'; job.percent=30;
   const prompt=`DIRECTO de un streamer mexicano (bloques [SEGUNDOS|m:ss|eN] texto; eN alto = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, elige los ${want} MEJORES momentos para SHORTS VIRALES (TikTok/Reels/YouTube Shorts). Cada Short:\n- dura de 30 a 60 segundos\n- es AUTO-CONTENIDO (se entiende solo, sin contexto previo)\n- tiene un GANCHO fuerte en los primeros 3 segundos (gracioso, polemico, sorprendente, tierno o con reaccion fuerte)\n- el "ini" cae donde EMPIEZA el momento (el setup), NO a media frase\nEvita relleno, saludos y logistica aburrida. Reparte los momentos a lo largo del directo.\nAdemas, califica el GANCHO: que tan fuerte agarran los PRIMEROS 3 SEGUNDOS (10 = enganchas de inmediato, 1 = arranque lento/aburrido).\nResponde SOLO este JSON, sin texto extra: {"shorts":[{"ini":<segundos del bloque>,"dur":<30-60>,"gancho":"<TITULO CORTO EN MAYUSCULAS, max 40 caracteres>","por":"<por que es viral, 1 frase>","score":<1-10>,"gscore":<1-10 fuerza del gancho en los primeros 3s>,"frase":<segundos donde EMPIEZA la frase MÁS fuerte/graciosa/polémica DENTRO del momento (se pondrá también al inicio como gancho, como OpusClip); null si el momento ya arranca con ella>,"frase_dur":<2-6>}]}`;
-  const txt=await cloudPick(prompt, model, onProgress);
+  const txt=await cloudPick(prompt, model, onProgress, 8000, 'Shorts (momentos virales)');
   let arr=[]; try{ const pj=JSON.parse(txt); arr=Array.isArray(pj)?pj:(pj.shorts||pj.momentos||[]); }catch{}
   if(!arr.length){ const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} } }
   const words=tokenizeTranscript(transcript);
@@ -1339,7 +1366,7 @@ async function cloudClassifyBatch(files){
     headers:{'x-api-key':cloud.key,'anthropic-version':'2023-06-01','content-type':'application/json'},
     body:JSON.stringify({model:'claude-haiku-4-5',max_tokens:1500,messages:[{role:'user',content}]})});
   if(!r.ok){ let t=''; try{t=await r.text();}catch{} throw Error('La nube (visión) respondió '+r.status+(t?(': '+t.slice(0,160)):'')); }
-  const j=await r.json(); let txt=''; for(const b of (j.content||[])){ if(b.type==='text') txt+=b.text; }
+  const j=await r.json(); recordUsage('Contenido sensible','claude-haiku-4-5',j.usage); let txt=''; for(const b of (j.content||[])){ if(b.type==='text') txt+=b.text; }
   let arr=[]; const m=txt.match(/\[[\s\S]*\]/); if(m){ try{ arr=JSON.parse(m[0]); }catch{} }
   return Array.isArray(arr)?arr:[];
 }
@@ -1565,7 +1592,7 @@ A continuación van las MINIATURAS de los videos largos que más pegaron y luego
  "comparacionMiCanal":["qué hago distinto vs lo que pega (si hay datos míos)"],
  "oportunidades":["huecos que nadie está aprovechando"]}` });
   progress({ message: 'La IA está analizando títulos, miniaturas y horarios…', percent: 35 });
-  const txt = await cloudPick(content, model, n => progress({ message: `La IA está escribiendo la fórmula… (${(n / 1000).toFixed(1)}k caracteres)`, percent: Math.min(98, 35 + Math.round(n / 120)) }));
+  const txt = await cloudPick(content, model, n => progress({ message: `La IA está escribiendo la fórmula… (${(n / 1000).toFixed(1)}k caracteres)`, percent: Math.min(98, 35 + Math.round(n / 120)) }), 8000, 'Investigar: fórmula del nicho');
   rs.insights = { ...looseJson(txt), createdAt: Date.now(), model, basedOn: a.totals.videos };
   return 'Fórmula del nicho lista.';
 }
@@ -1592,7 +1619,7 @@ Responde SOLO un JSON válido, español de México:
 {"resumen":"de qué trata en 1-2 frases","titulos":[{"titulo":"...","porque":"qué patrón usa"}],"recomendado":0,"descripcion":"...","hashtags":["#..."],"tags":["..."],"miniaturaPrompt":"...","miniaturaAlternativa":"otra idea de gancho visual en 1-2 frases","textoMiniatura":["2-4 opciones de texto corto para la mini"],"horaSugerida":"día y hora CDMX + por qué","shorts":["momentos del video que servirían de Short (con minuto)"]}
 Da 5 títulos.`;
   progress({ message: 'La IA está escribiendo títulos, descripción y miniatura…', percent: 10 });
-  const txt = await cloudPick(prompt, opts.model, n => progress({ percent: Math.min(98, 10 + Math.round(n / 60)) }));
+  const txt = await cloudPick(prompt, opts.model, n => progress({ percent: Math.min(98, 10 + Math.round(n / 60)) }), 8000, 'Investigar: títulos y miniatura');
   rs.generated = { ...looseJson(txt), createdAt: Date.now(), format, video: useT && project?.videoPath ? path.basename(project.videoPath) : '', usedInsights: !!ins };
   return 'Propuesta lista.';
 }
@@ -1977,6 +2004,7 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/topics') return respond(res,200,await detectTopics());
     if (req.method==='POST' && url.pathname==='/api/bestof/analyze') { const body=await jsonBody(req); detectBestMoments(body||{}); return respond(res,202,{started:true}); }
     if (req.method==='GET' && url.pathname==='/api/bestof') return respond(res,200,currentBestof()||{candidates:[]});
+    if (req.method==='GET' && url.pathname==='/api/usage') return respond(res,200,usageSummary());
     if (req.method==='POST' && url.pathname==='/api/bestof/config') { const b=await jsonBody(req)||{};
       if(typeof b.key==='string'&&b.key.trim()) cloud.key=b.key.trim();
       if(b.clearKey) cloud.key='';
