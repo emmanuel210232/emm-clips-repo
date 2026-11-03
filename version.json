@@ -1,6 +1,6 @@
 {
-  "version": "1.27.10",
-  "notes": "La barra de progreso ahora muestra desde el primer segundo cuánto lleva exportado (ej. 12:30 de 2:05:00), el porcentaje con decimal y cuánto falta. Antes se quedaba en \"…\" varios minutos en videos largos. Además queda un registro en datalast_job_log.txt para diagnosticar.",
+  "version": "1.27.11",
+  "notes": "Exportar con MUCHOS clips (p. ej. quitar silencios: 700-1400 clips) ahora es ~20 veces más rápido: antes calculaba horas, ahora ~15-20 min por hora de video con GPU. Misma calidad (el video se codifica una sola vez), sincronía exacta y los cortes de silencio siguen sin notarse.",
   "files": [
     "server.js",
     "app.js",

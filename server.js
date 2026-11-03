@@ -64,14 +64,14 @@ function parseProgressSeconds(s) {
 // Porcentaje con 1 decimal + avance (m:ss de m:ss) + tiempo restante: en PCs sin GPU rápida un directo largo
 // tardaba minutos en llegar a 1% y la barra se veía congelada en "…" aunque sí estaba exportando.
 const mmss = s => { s=Math.max(0,Math.round(s)); const h=Math.floor(s/3600), m=Math.floor(s%3600/60), x=s%60; return h?`${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`:`${m}:${String(x).padStart(2,'0')}`; };
-function progress(total, label) {
-  const t0 = Date.now(); let tail = '', lastLog = 0;
+function progress(total, label, opts = {}) {
+  const t0 = opts.t0 || Date.now(), offset = opts.offset || 0; let tail = '', lastLog = 0;
   return s => {
     // Diagnóstico: lo último que dijo ffmpeg/whisper queda en data\last_job_log.txt (se reescribe cada 4 s).
     tail = (tail + s).slice(-6000);
     if (Date.now() - lastLog > 4000) { lastLog = Date.now();
       fs.writeFile(path.join(DATA,'last_job_log.txt'), `${new Date().toISOString()} · v${APP_VERSION} · ${job.message} · ${label||''}\nduración objetivo: ${mmss(total)} · lleva ${mmss((Date.now()-t0)/1000)} · ${job.percent||0}% · ${job.done||'sin avance todavía'}\n\n${tail}`, ()=>{}); }
-    const sec = parseProgressSeconds(s);
+    let sec = parseProgressSeconds(s); if (sec != null) sec += offset;
     if (sec != null && total > 0) {
       job.percent = Math.max(0, Math.min(99, Math.round(sec/total*1000)/10));
       const el = (Date.now()-t0)/1000;
@@ -153,7 +153,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.10';
+const APP_VERSION = '1.27.11';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -560,6 +560,73 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   // Render rápido cuando gpu=true: intenta GPU (NVENC) y, si el driver no lo soporta, cae solo a CPU veryfast.
   const cutVx264 = ['-c:v','libx264','-pix_fmt','yuv420p','-preset',gpu?'veryfast':'medium','-crf',cutCrf];
   const cutVnvenc = ['-c:v','h264_nvenc','-pix_fmt','yuv420p','-preset','p5','-rc','vbr','-cq',cutCrf,'-b:v','0'];
+  // MUCHOS clips (>120, p. ej. tras quitar silencios): el método de 1 sola entrada mandaba CADA fotograma del directo
+  // a CADA clip (1403 filtros) → tardaba minutos en arrancar y HORAS en exportar. Ahora se exporta por TANDAS de
+  // ≤100 clips con el método rápido (salto por clip + pre-roll para la sincronía) y al final se unen SIN reencodear
+  // el video. El audio va sin pérdida (PCM) en las tandas y se codifica UNA sola vez al final (con la mejora de voz).
+  const BATCH = !SEG && !canSmooth;
+  async function exportBatched(){
+    const B=100, groups=[]; for(let i=0;i<keep.length;i+=B) groups.push(keep.slice(i,i+B));
+    const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath);
+    // Mejora de voz: la parte por-muestra (filtros, reducción de ruido, compresor) se hace EN las tandas, mientras la GPU
+    // codifica el video (el CPU está libre); al unir solo queda loudnorm sobre el audio COMPLETO (volumen parejo en todo).
+    const ln=stdEnhance?audioChain.lastIndexOf(',loudnorm='):-1;
+    const preAf=ln>0?audioChain.slice(0,ln):'', postAf=stdEnhance?(ln>0?audioChain.slice(ln+1):audioChain):'';
+    const parts=[], list=path.join(DATA,`batches_${crypto.randomUUID()}.txt`); let doneSec=0, useGpu=gpu; const t0=Date.now();
+    try{
+      for(let g=0; g<groups.length; g++){
+        if(job.cancelRequested) throw Error('Proceso cancelado por el usuario.');
+        const grp=groups[g], gLen=grp.reduce((a,k)=>a+(k.end-k.start),0);
+        // TRAMOS: clips vecinos en el original (quitar silencios = cientos de clips separados por pausas cortas) comparten
+        // UNA lectura del video. Antes cada clip abría el video y decodificaba 15 s extra → 1403 clips de 4 s = >7 h de
+        // decodificación. Así cada segundo del original se decodifica una vez. Misma sincronía: salto PRE s antes del
+        // tramo + trim/atrim sobre los tiempos pedidos. Máx. 12 clips por tramo (pocas ramas por fotograma).
+        const spans=[];
+        for(const k of grp){ const sp=spans[spans.length-1], last=sp&&sp.clips[sp.clips.length-1];
+          if(last && k.start>=last.end-0.001 && k.start-last.end<20 && sp.clips.length<12) sp.clips.push(k); else spans.push({clips:[k]}); }
+        const ins=spans.flatMap(sp=>{ const s0=sp.clips[0].start, e=sp.clips[sp.clips.length-1].end; sp.s0=s0; sp.pre=Math.min(PRE,s0);
+          return ['-ss',(s0-sp.pre).toFixed(3),'-t',(e-s0+sp.pre).toFixed(3),'-i',project.videoPath]; });
+        const f=[]; let i=0;
+        spans.forEach((sp,j)=>{
+          const n=sp.clips.length;
+          if(n>1){ f.push(`[${j}:v]split=${n}${sp.clips.map((_,m)=>`[sv${j}_${m}]`).join('')}`); f.push(`[${j}:a]asplit=${n}${sp.clips.map((_,m)=>`[sa${j}_${m}]`).join('')}`); }
+          sp.clips.forEach((k,m)=>{
+            const vSrc=n>1?`[sv${j}_${m}]`:`[${j}:v]`, aSrc=n>1?`[sa${j}_${m}]`:`[${j}:a]`;
+            const length=k.end-k.start, fade=Math.min(.03,length/3), a0=sp.pre+(k.start-sp.s0);
+            f.push(`${vSrc}trim=start=${a0.toFixed(3)}:end=${(a0+length).toFixed(3)},setpts=PTS-STARTPTS${normOf(k)}[v${i}]`);
+            f.push(`${aSrc}atrim=start=${a0.toFixed(3)}:end=${(a0+length).toFixed(3)},asetpts=PTS-STARTPTS${censorAf(k.start,k.end)},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
+            i++;
+          });
+        });
+        const nIn=spans.length;
+        f.push(grp.map((_,i)=>`[v${i}][a${i}]`).join('')+`concat=n=${grp.length}:v=1:a=1[cv][ca0]`); f.push(`[ca0]${preAf||'anull'}[ca]`);
+        // Todas las tandas con los MISMOS parámetros (fps/formato/tamaño) para poder unirlas sin reencodear.
+        f.push(`[cv]settb=AVTB,fps=${efps},format=yuv420p,setsar=1[n]`); let vl='[n]', extra=[];
+        const fxIn=g===0?clipIn:'none', fxOut=g===groups.length-1?clipOut:'none'; // fundido de entrada en la 1ª tanda, de salida en la última
+        if((fxIn&&fxIn!=='none')||(fxOut&&fxOut!=='none')){ const fx=clipFxParts(vl,gLen,fxIn,fxOut,clipDur,EW,EH,efps,nIn); if(fx.applied){ f.push(...fx.parts); vl=fx.label; extra=fx.inputs; } }
+        if(!q.copy && q.scale){ f.push(`${vl}${q.scale}[sc]`); vl='[sc]'; }
+        const fscript=path.join(DATA,'filter.txt'); await fsp.writeFile(fscript,f.join(';\n'),'utf8');
+        const out=path.join(DATA,`batch_${crypto.randomUUID()}.mov`); parts.push(out);
+        const args=enc=>['-y',...ins,...extra,'-/filter_complex',fscript,'-map',vl,'-map','[ca]',...enc,'-c:a','pcm_s16le',out];
+        job.message=`Exportando video limpio… (parte ${g+1} de ${groups.length})`;
+        try{ await run(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(keptTotal,'Exportando',{offset:doneSec,t0})); }
+        catch(e){
+          if(!useGpu||g>0||job.cancelRequested) throw e;
+          useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…';
+          await run(bins.ffmpeg,args(cutVx264),progress(keptTotal,'Exportando',{offset:doneSec,t0}));
+        }
+        doneSec+=gLen;
+      }
+      await fsp.writeFile(list,parts.map(p=>`file '${p.replace(/\\/g,'/').replace(/'/g,"'\\''")}'`).join('\n'),'utf8');
+      job.message='Uniendo las partes (sin reencodear el video)…';
+      // aresample async: rellena con silencio los micro-huecos entre tandas según los tiempos → el audio no se adelanta.
+      const af=['aresample=async=1:first_pts=0', postAf||null].filter(Boolean).join(',');
+      await run(bins.ffmpeg,['-y','-f','concat','-safe','0','-i',list,'-map','0:v:0','-map','0:a:0','-c:v','copy','-af',af,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary],progress(keptTotal,'Uniendo'));
+    } finally {
+      for(const p of parts) await fsp.unlink(p).catch(()=>{});
+      await fsp.unlink(list).catch(()=>{});
+    }
+  }
   const script = path.join(DATA,'filter.txt');
   await fsp.writeFile(script, filter.join(';\n'), 'utf8');
   const name = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
@@ -570,7 +637,8 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     try {
       const cutBase=['-y',...segInputs,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
       const cutTail=['-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
-      try{
+      if(BATCH) await exportBatched();
+      else try{
         await run(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal,'Exportando'));
       }catch(gpuErr){
         if(!gpu || job.cancelRequested) throw gpuErr;
