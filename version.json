@@ -1,6 +1,6 @@
 {
-  "version": "1.27.9",
-  "notes": "Arreglado: el Resumen del directo a veces daba solo ~6 momentos de 1 minuto (\"MOMENTO FUERTE\"). La IA sí elegía bien, pero la app no lograba leer su lista y rellenaba con picos de audio. Ahora la lee siempre y, si algo falla, avisa en vez de inventar.",
+  "version": "1.27.10",
+  "notes": "La barra de progreso ahora muestra desde el primer segundo cuánto lleva exportado (ej. 12:30 de 2:05:00), el porcentaje con decimal y cuánto falta. Antes se quedaba en \"…\" varios minutos en videos largos. Además queda un registro en datalast_job_log.txt para diagnosticar.",
   "files": [
     "server.js",
     "app.js",

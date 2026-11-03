@@ -61,10 +61,23 @@ function parseProgressSeconds(s) {
   if (m) return (+m[1])*3600 + (+m[2])*60 + (+m[3]);
   return null;
 }
+// Porcentaje con 1 decimal + avance (m:ss de m:ss) + tiempo restante: en PCs sin GPU rápida un directo largo
+// tardaba minutos en llegar a 1% y la barra se veía congelada en "…" aunque sí estaba exportando.
+const mmss = s => { s=Math.max(0,Math.round(s)); const h=Math.floor(s/3600), m=Math.floor(s%3600/60), x=s%60; return h?`${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`:`${m}:${String(x).padStart(2,'0')}`; };
 function progress(total, label) {
+  const t0 = Date.now(); let tail = '', lastLog = 0;
   return s => {
+    // Diagnóstico: lo último que dijo ffmpeg/whisper queda en data\last_job_log.txt (se reescribe cada 4 s).
+    tail = (tail + s).slice(-6000);
+    if (Date.now() - lastLog > 4000) { lastLog = Date.now();
+      fs.writeFile(path.join(DATA,'last_job_log.txt'), `${new Date().toISOString()} · v${APP_VERSION} · ${job.message} · ${label||''}\nduración objetivo: ${mmss(total)} · lleva ${mmss((Date.now()-t0)/1000)} · ${job.percent||0}% · ${job.done||'sin avance todavía'}\n\n${tail}`, ()=>{}); }
     const sec = parseProgressSeconds(s);
-    if (sec != null && total > 0) job.percent = Math.max(0, Math.min(99, Math.round(sec/total*100)));
+    if (sec != null && total > 0) {
+      job.percent = Math.max(0, Math.min(99, Math.round(sec/total*1000)/10));
+      const el = (Date.now()-t0)/1000;
+      job.done = `${mmss(Math.min(sec,total))} de ${mmss(total)}`;
+      job.eta = sec > 1 && el > 8 ? Math.round(el/sec*(total-sec)) : null;
+    }
     job.progress = (label ? label+' · ' : '') + (job.percent||0) + '%';
   };
 }
@@ -140,7 +153,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.9';
+const APP_VERSION = '1.27.10';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
