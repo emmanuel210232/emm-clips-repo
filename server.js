@@ -153,7 +153,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.11';
+const APP_VERSION = '1.27.12';
 const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
 function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
@@ -1306,7 +1306,19 @@ async function reviewCut(id) {
   return {url:'/api/review-video?key='+encodeURIComponent(key),cut};
 }
 // Formatos que el navegador NO reproduce → necesitan una vista previa MP4 para verse en la app.
-function needsPreview(p=project?.videoPath){ return ['.mpg','.mpeg','.mkv','.avi'].includes(path.extname(p||'').toLowerCase()); }
+// Se decide por el CONTENEDOR real, no solo por la extensión: las descargas nuevas de Kick se llaman .mp4 pero por dentro
+// son MPEG-TS (como los .mpg) → el navegador no las reproduce y el video se veía gris.
+const _containerCache=new Map();
+function containerOf(p){
+  if(_containerCache.has(p)) return _containerCache.get(p);
+  const bin=readiness().ffprobe; let f='';
+  if(bin){ const o=spawnSync(bin,['-v','error','-show_entries','format=format_name','-of','default=nk=1:nw=1',p],{encoding:'utf8',windowsHide:true}); f=String(o.stdout||'').trim(); }
+  _containerCache.set(p,f); return f;
+}
+function needsPreview(p=project?.videoPath){
+  if(['.mpg','.mpeg','.mkv','.avi','.ts','.m2ts'].includes(path.extname(p||'').toLowerCase())) return true;
+  return /(^|,)(mpegts|mpeg|avi)(,|$)/.test(containerOf(p||''));
+}
 function videoCodec(p,sel='v:0'){ const bin=readiness().ffprobe; if(!bin) return ''; const o=spawnSync(bin,['-v','error','-select_streams',sel,'-show_entries','stream=codec_name','-of','default=nk=1:nw=1',p],{encoding:'utf8',windowsHide:true}); return String(o.stdout||'').trim().split(/\r?\n/)[0]||''; }
 // Genera la vista previa reproducible en el navegador (solo para VER; el export SIEMPRE usa el original).
 async function buildPreviewFile(bin){
