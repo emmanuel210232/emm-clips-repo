@@ -932,7 +932,7 @@ async function loadRollbackInfo(){
     btn.dataset.id=r.previous.id; btn.dataset.version=r.previous.version; btn.dataset.current=r.current;
     btn.textContent='↩️ Volver a la versión anterior ('+r.previous.version+')';
     const when=fmtBackupDate(r.previous.createdAt);
-    info.textContent=r.pendingRestart?'Cierra y vuelve a abrir la app para terminar el cambio de versión.':'Tienes la '+r.current+'. Respaldo de la '+r.previous.version+(when?' guardado el '+when:'')+'.';
+    info.textContent=r.pendingRestart?'Cierra y vuelve a abrir la app para terminar el cambio de versión.':('Tienes la '+r.current+'. Respaldo de la '+r.previous.version+(when?' guardado el '+when:'')).replace(/\.?$/,'.');
   }catch{ row.hidden=true; }
 }
 if($('rollbackUpdate')) $('rollbackUpdate').onclick=async()=>{

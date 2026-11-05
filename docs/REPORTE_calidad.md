@@ -1,0 +1,36 @@
+# Reporte — Tarea 1: Volver a la versión anterior (rama `nube/calidad`)
+
+## Qué hice
+- **`lib/updater.js`** (nuevo): el actualizador sale de `server.js` a un módulo que se puede probar.
+  - **Respaldo antes de actualizar** en `data/backups/<versión>-<fecha>/` (`meta.json` + `files/…`). Se conservan los **últimos 3**.
+  - **Instalación segura**: descarga **todo** a memoria antes de tocar nada; revisa sintaxis de los `.js` (`node --check`), que los `.json` sean válidos y que cada `require('./…')` exista; si falla al escribir, restaura el respaldo en ese momento. Escribe cada archivo con archivo temporal + renombrar.
+  - **Volver a la versión anterior**: restaura el respaldo más reciente, **pausa** la versión de la que te regresas (no se vuelve a ofrecer sola, ni en el aviso al abrir) y borra ese respaldo, así cada uso regresa una versión más. Una versión **más nueva** que la pausada sí se ofrece.
+  - Tras actualizar o regresar no deja encadenar otro cambio hasta reiniciar la app.
+  - Uso de emergencia desde terminal: `node lib/updater.js respaldos` / `node lib/updater.js volver`.
+- **`server.js`**: usa `lib/updater.js`; nuevos endpoints `POST /api/update/rollback-info` y `POST /api/update/rollback`; `/api/update/apply` acepta `{force:true}` para instalar una versión pausada. `EMM_UPDATE_URL` permite probar con un servidor falso. **No** se tocó `APP_VERSION` ni `version.json`.
+- **Interfaz** (⚙️ Configuración de motores): botón **"↩️ Volver a la versión anterior (X)"** con fecha del respaldo, confirmación que dice de qué versión a cuál regresa, y en "Buscar actualizaciones" el aviso de versión pausada con **"Instalar la X de todos modos"**. Capturas en `docs/capturas/rollback_*.png`.
+- **`Volver a la version anterior.cmd`**: para cuando la versión nueva ya ni abre.
+- **`tools-dev/check_manifest.js`**: revisa `version.json` antes de publicar (archivos existentes, `require` cubiertos, sintaxis, versión = `APP_VERSION`).
+- **`docs/rollback.md`**: cómo regresar a todos desde el repo con `git revert` + versión nueva más alta.
+
+## Cómo probarlo
+```bash
+node tests/updater.test.js
+```
+9 pruebas con un **servidor de actualizaciones falso** (http en 127.0.0.1), incluida una de punta a punta que arranca el `server.js` real en una carpeta temporal y hace check → apply → reinicio → rollback-info → rollback → reinicio → check (versión pausada). Todas las pruebas de `tests/` pasan.
+
+Probé la interfaz con Playwright contra el servidor falso (actualizar, ver botón, confirmar, regresar, versión pausada). Manual: ver §4 de `docs/rollback.md`.
+
+## ⚠️ Antes de publicar en main (lo tiene que hacer quien publique)
+Agregar a `version.json` → `files`: `"lib/updater.js"` y `"Volver a la version anterior.cmd"`. Si falta `lib/updater.js`, **la app de los usuarios no arrancaría** tras actualizar. `node tools-dev/check_manifest.js` lo avisa (hoy marca exactamente eso).
+
+## Riesgos
+- La **primera** actualización que trae este código la instala el actualizador viejo (sin respaldo). El botón aparece a partir de la siguiente.
+- Si una versión pasa la revisión de sintaxis pero truena al arrancar, el botón no se ve: queda el `.cmd` de emergencia (que usa `lib/updater.js` del disco; si justo ese archivo viniera roto, habría que copiar a mano desde `data/backups/…/files/`).
+- Archivos **nuevos** que traía la versión mala se quedan al regresar (no se borran). Son inofensivos porque el código viejo no los usa.
+- La app sigue sin reiniciarse sola: el usuario debe cerrar y abrir (igual que hoy).
+
+## Qué falta / ideas
+- Reinicio automático de la app después de actualizar o regresar.
+- Que "Iniciar Emm Clips.cmd" detecte que el servidor no arrancó y ofrezca regresar.
+- Visto de paso: al abrir la app sin video sale en consola `Cannot read properties of null (reading 'filmstrip')` (ya pasa en `main`, no es de este cambio).

@@ -429,6 +429,7 @@ body.bestof-mode #wizard, body.bestof-mode section.step, body.bestof-mode #confi
 /* ===== Banner de actualización disponible (aviso automático) ===== */
 .updateBanner{display:flex;align-items:center;gap:12px;margin:0 0 14px;border-radius:10px;padding:11px 14px;background:#eaf6ff;border:1px solid #b9ddf5;color:#14466b;font-size:13.5px;font-weight:600}
 .updateBanner[hidden]{display:none}
+.updateBox .row[hidden]{display:none}
 .updateBannerText{flex:1;min-width:0}
 .updateBannerX{flex:0 0 auto;background:none;border:none;color:#5a7488;font-size:15px;cursor:pointer;padding:4px 8px}
 [data-theme="dark"] .updateBanner{background:#16303f;border-color:#2b5a74;color:#bfe2f5}
