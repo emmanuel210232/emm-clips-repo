@@ -25,7 +25,9 @@ function persistSelection() {
   selectionSave.catch(e=>notice('No se pudo guardar la selección: '+e.message,true));
   return selectionSave;
 }
-function notice(message, bad=false) { const el=$('notice'); el.hidden=!message; el.textContent=message||''; el.className='notice'+(bad?' error':''); }
+// Los avisos verdes se quitan solos (8 s) para no comerse el alto del reproductor; los de error se quedan.
+let _noticeTimer=null;
+function notice(message, bad=false) { const el=$('notice'); el.hidden=!message; el.textContent=message||''; el.className='notice'+(bad?' error':''); clearTimeout(_noticeTimer); if(message&&!bad) _noticeTimer=setTimeout(()=>{ if(el.textContent===message) el.hidden=true; },8000); }
 async function api(url, data) { const res=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)}); const body=await res.json(); if(!res.ok)throw Error(body.error||'Error inesperado'); return body; }
 async function upload(url,file) { const res=await fetch(url+'?name='+encodeURIComponent(file.name),{method:'POST',headers:{'content-type':'application/octet-stream'},body:file});const body=await res.json();if(!res.ok)throw Error(body.error||'Error al subir archivo');return body; }
 async function refresh() { const res=await fetch('/api/state'); state=await res.json(); render(); }
@@ -592,7 +594,7 @@ function render() {
   if(av){av.disabled=!state.dfReady;if(!state.dfReady)av.checked=false;}
   if(avWrap)avWrap.classList.toggle('disabled',!state.dfReady);
   if(gd)gd.hidden=!!state.dfReady;
-  const rb=$('readyBar');const miss=[];if(!ready.ffmpeg)miss.push('FFmpeg');if(!ready.whisper)miss.push('Whisper');if(!ready.model)miss.push('modelo de voz');rb.hidden=false;if(miss.length){rb.className='readyBar warn';rb.textContent='⚠️ Falta configurar: '+miss.join(', ')+'. Ábrelo en “⚙️ Configuración” (panel izquierdo, abajo).';}else{rb.className='readyBar ok';rb.textContent=p?'✅ Todo listo. Transcribe el video y busca tus momentos.':'✅ Todo listo. Abre un video para empezar.';}
+  const rb=$('readyBar');const miss=[];if(!ready.ffmpeg)miss.push('FFmpeg');if(!ready.whisper)miss.push('Whisper');if(!ready.model)miss.push('modelo de voz');rb.hidden=false;if(miss.length){rb.className='readyBar warn';rb.textContent='⚠️ Falta configurar: '+miss.join(', ')+'. Ábrelo en “⚙️ Configuración” (panel izquierdo, abajo).';}else{rb.className='readyBar ok';rb.textContent=p?'✅ Todo listo. Transcribe el video y busca tus momentos.':'✅ Todo listo. Abre un video para empezar.';if(window._rbShown){rb.hidden=true;}else if(!window._rbTimer){window._rbTimer=setTimeout(()=>{window._rbShown=true;rb.hidden=true;},6000);}}
   const j=state.job;$('exportInfo').textContent=j.status==='running'?j.message:j.status==='done'?j.message:'';
   const running=j.status==='running';
   $('jobBar').hidden=!running;
