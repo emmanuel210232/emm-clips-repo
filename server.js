@@ -933,6 +933,29 @@ function detectSilences(opts){
   })();
   return {started:true};
 }
+// RITMO Y MÁRGENES (lib/pace.js): analiza el audio UNA vez con el umbral más sensible (silencios ≥ 0.2 s) y guarda
+// TODOS los silencios en data/ por video; el navegador decide al instante qué pausas quitar sin volver a analizar.
+const PACE_FILE=path.join(DATA,'pace_silences.json');
+function paceSilencesFor(videoPath){ const d=readJson(PACE_FILE,null); return d&&d.videoPath===videoPath?d:null; }
+function scanPace(opts){
+  const bin=readiness().ffmpeg;
+  if(!project?.videoPath||!bin) throw Error('Abre un video primero.');
+  if(job.status==='running') throw Error('Ya hay un proceso en curso.');
+  const noise=Math.max(10,Math.min(60,Number(opts.noise)||30));
+  const videoPath=project.videoPath;
+  job={status:'running',message:'Analizando las pausas del audio (una sola vez)…',progress:'',percent:0,cancelRequested:false};
+  (async()=>{
+    try{
+      const total=await durationOf(videoPath).catch(()=>0);
+      let log=''; const report=progress(total,'Pausas');
+      await run(bin,['-hide_banner','-i',videoPath,'-vn','-af',`silencedetect=noise=-${noise}dB:d=0.2`,'-f','null','NUL'],s=>{log=(log+s).slice(-16000000);report(s);});
+      const silences=require('./lib/pace').parseSilenceLog(log,total||Infinity);
+      writeJson(PACE_FILE,{videoPath,noise,total:+total.toFixed(3),silences,scannedAt:Date.now()});
+      job={status:'done',message:`Listo: encontré ${silences.length} pausas. Mueve "Ritmo" y los márgenes y dale Aplicar.`,progress:'',percent:100,pace:true};
+    }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
+  })();
+  return {started:true};
+}
 function fmtSec(s){s=Math.max(0,Math.round(s));return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
 // SELECCIÓN DE SHORTS POR NUBE (Sonnet 5.5) — estilo OpusClip: la IA LEE TODO el directo + la energía del audio
 // y elige los mejores momentos virales de 30-60s con gancho, en vez del algoritmo por ritmo + modelo chico.
@@ -1769,7 +1792,7 @@ async function researchRoute(req, res, url) {
   return false;
 }
 
-const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js' };
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/lib/pace.js':'lib/pace.js' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
   try {
@@ -1881,6 +1904,8 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/scan-sensitive') {
       const body=await jsonBody(req); scanSensitive(body||{}); return respond(res,202,{started:true});
     }
+    if (req.method==='POST' && url.pathname==='/api/pace/scan') { const body=await jsonBody(req).catch(()=>({})); scanPace(body||{}); return respond(res,202,{started:true}); }
+    if (req.method==='GET' && url.pathname==='/api/pace/silences') return respond(res,200,(project&&paceSilencesFor(project.videoPath))||{silences:null});
     if (req.method==='POST' && url.pathname==='/api/silences') {
       const body=await jsonBody(req); detectSilences(body||{}); return respond(res,202,{started:true});
     }
