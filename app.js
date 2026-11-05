@@ -398,7 +398,10 @@ function positionHead(){const head=$('tlHead');if(!head)return;const v=$('video'
 // Scrub FLUIDO: mientras arrastras, muestra la miniatura del filmstrip más cercana sobre el preview
 // (instantáneo, sin esperar el seek lento del <video>). Al soltar se hace un seek preciso y se ve el frame real.
 function nearestStripIndex(src){const N=state.filmstrip?state.filmstrip.count:0;if(!N)return 0;const dur=tlDuration();if(!dur)return 0;const interval=dur/N;let k=Math.round(src/interval+0.5);return Math.max(1,Math.min(N,k));}
-function showScrubThumb(src){const N=state.filmstrip?state.filmstrip.count:0;const img=$('scrubThumb');if(!img||!N)return;const k=nearestStripIndex(src);if(img.dataset.k!==String(k)){img.dataset.k=String(k);img.src='/api/strip?i='+k;}img.classList.add('show');}
+// Las miniaturas de la línea del tiempo tienen la misma dirección en todos los videos (/api/strip?i=N): sin esto el
+// navegador mostraba las del video ANTERIOR (guardadas en caché) mezcladas con el nuevo.
+function stripV(){const p=state&&state.project;return '&v='+encodeURIComponent((p&&(p.openedAt||p.videoPath))||'')+'-'+((state&&state.filmstrip&&state.filmstrip.count)||0);}
+function showScrubThumb(src){const N=state.filmstrip?state.filmstrip.count:0;const img=$('scrubThumb');if(!img||!N)return;const k=nearestStripIndex(src);if(img.dataset.k!==String(k)){img.dataset.k=String(k);img.src='/api/strip?i='+k+stripV();}img.classList.add('show');}
 function hideScrubThumb(){const img=$('scrubThumb');if(img)img.classList.remove('show');}
 function scrubEndAt(clientX){const v=$('video');if(!v){hideScrubThumb();return;}let src;try{src=outToSource(tlOutFromX(clientX));}catch{src=v.currentTime;}
   const done=()=>{hideScrubThumb();v.removeEventListener('seeked',done);};v.addEventListener('seeked',done);setTimeout(done,500);
@@ -444,7 +447,7 @@ function buildTimeline(){
     block.title='Clip '+(i+1)+' · '+fmt(c.end-c.start)+(c.zoom?' · 🔍 zoom':'')+' · pica para seleccionar · Supr para borrar';
     if(c.zoom){const z=document.createElement('div');z.className='tl-zoombadge';z.textContent='🔍';block.append(z);}
     if(c.trans){const tb=document.createElement('div');tb.className='tl-transbadge';tb.textContent='🎬';tb.title='Transición de tema (fundido) al entrar a este clip';block.append(tb);}
-    if(N){const row=document.createElement('div');row.className='tl-clipstrip';for(let k=1;k<=N;k++){const tk=(k-0.5)*interval;if(tk>=c.start&&tk<c.end){const img=document.createElement('img');img.loading='lazy';img.draggable=false;img.src='/api/strip?i='+k;row.append(img);}}block.append(row);}
+    if(N){const row=document.createElement('div');row.className='tl-clipstrip';for(let k=1;k<=N;k++){const tk=(k-0.5)*interval;if(tk>=c.start&&tk<c.end){const img=document.createElement('img');img.loading='lazy';img.draggable=false;img.src='/api/strip?i='+k+stripV();row.append(img);}}block.append(row);}
     const hl=document.createElement('div');hl.className='tl-handle l';block.append(hl);
     const hr=document.createElement('div');hr.className='tl-handle r';block.append(hr);
     inner.append(block);
