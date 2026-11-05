@@ -25,3 +25,8 @@ test('pedazo inválido truena; absTrims para una sola entrada completa', () => {
 test('startTimeOf no truena si ffprobe no existe', () => {
   assert.equal(S.startTimeOf('/no/existe/ffprobe', 'x.ts'), 0);
 });
+
+test('start_time negativo (MPEG-TS cerca de la vuelta de 33 bits) se respeta', () => {
+  const e = S.exactInput('v.ts', 100, 110, { fmtStart: -22.3177 });
+  assert.equal(e.vtrim, 'trim=start=77.6823:end=87.6823,setpts=PTS-STARTPTS');
+});
