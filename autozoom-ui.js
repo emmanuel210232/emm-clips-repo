@@ -11,7 +11,7 @@
   if (!AZ || !anchor) return;
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const say = (m, bad) => { if (typeof notice === 'function') notice(m, bad); };
-  const level = el('select', 'tl-sel'); level.id = 'azLevel'; level.title = 'Qué tanto se acerca';
+  const level = el('select', 'tl-zsel'); level.id = 'azLevel'; level.title = 'Qué tanto se acerca';
   [['suave', 'Suave'], ['normal', 'Normal'], ['fuerte', 'Fuerte']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; if (v === 'normal') o.selected = true; level.append(o); });
   const go = el('button', 'tl-btn', '🎥 Zoom en los cortes'); go.type = 'button'; go.id = 'azApply';
   go.title = 'Alterna un encuadre normal y uno acercado en cada corte, como los editores de YouTube (puedes quitar cualquiera con 🔍)';
