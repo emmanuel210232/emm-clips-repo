@@ -12,6 +12,7 @@ const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS, nearestP
 const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/editorial');
 const { detectSubjectX, smoothTrack, cropExpression, zoomExpression, planZooms, zoomCurve, zoomFilter } = require('./lib/framing');
 const { direct } = require('./lib/director');
+const seek = require('./lib/seek'); // corte exacto en MPEG-TS (-copyts + trim absoluto)
 // Opcional a propósito: si una actualización llegara sin lib/teaser.js (falta en version.json), la app SÍ arranca;
 // solo la opción del avance avisa que falta.
 let teaserLib = null; try { teaserLib = require('./lib/teaser'); } catch {}
@@ -183,13 +184,18 @@ async function applyUpdate(){
   }
   return {applied, latest:info.latest, message:`Actualizado a la versión ${info.latest}. Cierra y vuelve a abrir la app para aplicar los cambios.`};
 }
+// Corte exacto para leer un pedazo [start,end) del video abierto (ver lib/seek.js): args de entrada (con -copyts) y
+// los trims absolutos que deben ir AL INICIO de las cadenas [0:v]/[0:a]. Sin esto, en MPEG-TS el pedazo podía empezar
+// hasta ~1.4 s antes de lo pedido (encuadre, subtítulos y zooms de los Shorts quedaban corridos).
+function exactPiece(start,end){ const ex=seek.exactInput(project.videoPath,start,end,{fmtStart:seek.startTimeOf(readiness().ffprobe,project.videoPath)}); return {args:[...seek.COPYTS,...ex.input], vtrim:ex.vtrim, atrim:ex.atrim}; }
 function videoDimensions(videoPath) { const bin=readiness().ffprobe;if(!bin) throw Error('Configura ffprobe antes de crear el Short.'); const out=spawnSync(bin,['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','json',videoPath],{encoding:'utf8',windowsHide:true}); const stream=JSON.parse(out.stdout||'{}').streams?.[0]; if(out.status!==0||!stream?.width||!stream?.height) throw Error('No pude leer el tamaño del video.'); return stream; }
 async function framingForClip(clip,bin,width,height) {
   if(width<=height*9/16) return {portrait:true};
   if(clip.framingMode==='blur') return null;
   if(clip.framingMode==='manual') {const cropWidth=Math.floor((height*9/16)/2)*2,maxLeft=width-cropWidth;return {track:[{t:0,x:+Math.max(0,Math.min(maxLeft,(Number(clip.cropCenter)||.5)*width-cropWidth/2)).toFixed(1)}],cropWidth,confidence:1};}
   const interval=3,frameBytes=320*180*3;
-  const raw=await capture(bin,['-hide_banner','-loglevel','error','-ss',String(clip.start),'-t',String(clip.end-clip.start),'-i',project.videoPath,'-vf',`fps=1/${interval},scale=320:180,format=rgb24`,'-f','rawvideo','pipe:1']);
+  const xp=exactPiece(clip.start,clip.end);
+  const raw=await capture(bin,['-hide_banner','-loglevel','error',...xp.args,'-vf',`${xp.vtrim},fps=1/${interval},scale=320:180,format=rgb24`,'-f','rawvideo','pipe:1']);
   const observations=[];
   for(let i=0;i+frameBytes<=raw.length;i+=frameBytes) observations.push({t:observations.length*interval,subject:detectSubjectX(raw.subarray(i,i+frameBytes),320,180)});
   return smoothTrack(observations,width,height);
@@ -488,17 +494,20 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         }
         if(tPlan){
           const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath); const ai=audioInfo(project.videoPath);
-          const parts=[`[0:v]settb=AVTB,fps=${efps},format=yuv420p,setsar=1[m]`]; let vl='[m]', extra=[], idx=1;
+          // -copyts (lo pide el avance) deja el video completo en su tiempo ABSOLUTO: se le resta el start_time del archivo
+          // (lo mismo que hace ffmpeg sin -copyts) para que los rangos de groserías (en tiempo de la app) caigan igual.
+          const T0=seek.startTimeOf(bins.ffprobe,project.videoPath);
+          const parts=[`[0:v]setpts=PTS-${T0.toFixed(6)}/TB,settb=AVTB,fps=${efps},format=yuv420p,setsar=1[m]`]; let vl='[m]', extra=[], idx=1;
           if(fx){ const fxg=clipFxParts('[m]', duration, clipIn, clipOut, clipDur, EW, EH, efps, 1); if(fxg.applied){ parts.push(...fxg.parts); vl=fxg.label; extra=fxg.inputs; idx=fxg.nextIdx; } fxInFinalizeIn='none'; fxInFinalizeOut='none'; }
-          parts.push(`[0:a]${af}[ao]`);
-          const tg=teaserLib.buildTeaserGraph({frags:tPlan.fragments,firstInput:idx,videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:(s,e)=>teaserLib.muteFilter(ranges,s,e,pad),audioPost:audioChain,sampleRate:ai.sampleRate,layout:ai.layout});
+          parts.push(`[0:a]asetpts=PTS-${T0.toFixed(6)}/TB,${af}[ao]`);
+          const tg=teaserLib.buildTeaserGraph({fmtStart:seek.startTimeOf(bins.ffprobe,project.videoPath),frags:tPlan.fragments,firstInput:idx,videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:(s,e)=>teaserLib.muteFilter(ranges,s,e,pad),audioPost:audioChain,sampleRate:ai.sampleRate,layout:ai.layout});
           parts.push(...tg.filters, ...teaserLib.prependFilter(tg,vl,'[ao]',{sampleRate:ai.sampleRate,layout:ai.layout}));
           let vOut='[tzov]'; const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(','); if(!q.copy&&vf){ parts.push(`[tzov]${vf}[vout]`); vOut='[vout]'; }
           const fscript=path.join(DATA,'filter_mute.txt'); await fsp.writeFile(fscript,parts.join(';\n'),'utf8');
           const total=duration+tg.duration;
           const cpuEnc=q.copy?HQ_VIDEO:['-c:v','libx264','-preset','veryfast','-crf',String(q.crf||20),'-pix_fmt','yuv420p'];
           const gpuEnc=nvencArgs(q.copy?23:(q.crf||20)+3);
-          const targs=enc=>['-y','-i',project.videoPath,...extra,...tg.inputs,'-/filter_complex',fscript,'-map',vOut,'-map','[tzoa]',...enc,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
+          const targs=enc=>['-y',...seek.COPYTS,'-i',project.videoPath,...extra,...tg.inputs,'-/filter_complex',fscript,'-map',vOut,'-map','[tzoa]',...enc,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
           job.message=`Silenciando y exportando con avance (${tPlan.fragments.length} momentos, ${Math.round(tg.duration)} s)…`;
           try{ await run(bins.ffmpeg, targs(gpu?gpuEnc:cpuEnc), progress(total,gpu?'Exportando con avance (GPU)':'Exportando con avance')); }
           catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await run(bins.ffmpeg, targs(cpuEnc), progress(total,'Exportando con avance')); }
@@ -578,12 +587,17 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   // si luego se "resetean" los tiempos, la imagen queda adelantada al audio. Por eso se salta PRE segundos ANTES y el
   // corte exacto lo hace trim/atrim sobre los tiempos (que ffmpeg cuenta desde el punto PEDIDO, no desde donde cayó):
   // así audio e imagen salen del mismo instante aunque el salto sea impreciso. Con muchísimos pedazos: método anterior.
+  // ⚠️ CORTE EXACTO (medido con tools-dev/check_cut.js): el trim RELATIVO tras -ss contaba desde donde CAYÓ el salto,
+  // no desde el punto pedido → en MPEG-TS cada pedazo empezaba hasta ~1.4 s antes. Ahora: -copyts (cada stream conserva
+  // su marca de tiempo real) y trim/atrim sobre el tiempo ABSOLUTO (start_time del archivo + tiempo) → cuadro exacto y
+  // audio/imagen cortados en el mismo instante real. Ver lib/seek.js.
   const SEG = keep.length <= 120;
-  const PRE = 15;
-  const pre = k => Math.min(PRE, k.start);
-  const segInputs = SEG ? keep.flatMap(k=>['-ss',(k.start-pre(k)).toFixed(3),'-t',(k.end-k.start+pre(k)).toFixed(3),'-i',project.videoPath]) : ['-i',project.videoPath];
-  const vIn = (k,i) => SEG ? `[${i}:v]trim=start=${pre(k).toFixed(3)}:end=${(pre(k)+k.end-k.start).toFixed(3)},setpts=PTS-STARTPTS` : `[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS`;
-  const aIn = (k,i) => SEG ? `[${i}:a]atrim=start=${pre(k).toFixed(3)}:end=${(pre(k)+k.end-k.start).toFixed(3)},asetpts=PTS-STARTPTS` : `[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS`;
+  const PRE = seek.PRE;
+  const T0 = seek.startTimeOf(bins.ffprobe, project.videoPath);
+  const exIn = keep.map(k => seek.exactInput(project.videoPath, k.start, k.end, { pre: PRE, fmtStart: T0 }));
+  const segInputs = SEG ? exIn.flatMap(e=>e.input) : ['-i',project.videoPath];
+  const vIn = (k,i) => SEG ? `[${i}:v]${exIn[i].vtrim}` : `[0:v]${seek.absTrims(k.start,k.end,T0).vtrim}`;
+  const aIn = (k,i) => SEG ? `[${i}:a]${exIn[i].atrim}` : `[0:a]${seek.absTrims(k.start,k.end,T0).atrim}`;
   if (canSmooth) {
     // Crossfade entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
     // d por límite: 0.5s donde cambia el tema (.trans), 0.14s si se pidió suavizar, 0.05s en cortes normales (imperceptible).
@@ -657,12 +671,12 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         // AVANCE como "parte 0": mismos parámetros que las tandas (fps, formato, tamaño, codificador, audio PCM) →
         // se une con las demás SIN reencodear el video. Audio: la mejora de voz por-muestra aquí; loudnorm al unir (todo junto).
         const ai=audioInfo(project.videoPath);
-        const tg=teaserLib.buildTeaserGraph({frags:tPlan.fragments,firstInput:0,videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:teaserMute,audioPost:preAf,sampleRate:ai.sampleRate,layout:ai.layout});
+        const tg=teaserLib.buildTeaserGraph({fmtStart:seek.startTimeOf(bins.ffprobe,project.videoPath),frags:tPlan.fragments,firstInput:0,videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:teaserMute,audioPost:preAf,sampleRate:ai.sampleRate,layout:ai.layout});
         const f=[...tg.filters, `${tg.v}settb=AVTB,fps=${efps},format=yuv420p,setsar=1[n]`]; let vl='[n]';
         if(!q.copy && q.scale){ f.push(`${vl}${q.scale}[sc]`); vl='[sc]'; }
         const fscript=path.join(DATA,'filter.txt'); await fsp.writeFile(fscript,f.join(';\n'),'utf8');
         const out=path.join(DATA,`batch_${crypto.randomUUID()}.mov`); parts.push(out);
-        const args=enc=>['-y',...tg.inputs,'-/filter_complex',fscript,'-map',vl,'-map',tg.a,...enc,'-c:a','pcm_s16le',out];
+        const args=enc=>['-y',...seek.COPYTS,...tg.inputs,'-/filter_complex',fscript,'-map',vl,'-map',tg.a,...enc,'-c:a','pcm_s16le',out];
         job.message=`Exportando el avance (${tPlan.fragments.length} momentos)…`;
         try{ await run(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando avance',{t0})); }
         catch(e){ if(!useGpu||job.cancelRequested) throw e; useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; await run(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando avance',{t0})); }
@@ -679,16 +693,16 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         for(const k of grp){ const sp=spans[spans.length-1], last=sp&&sp.clips[sp.clips.length-1];
           if(last && k.start>=last.end-0.001 && k.start-last.end<20 && sp.clips.length<12) sp.clips.push(k); else spans.push({clips:[k]}); }
         const ins=spans.flatMap(sp=>{ const s0=sp.clips[0].start, e=sp.clips[sp.clips.length-1].end; sp.s0=s0; sp.pre=Math.min(PRE,s0);
-          return ['-ss',(s0-sp.pre).toFixed(3),'-t',(e-s0+sp.pre).toFixed(3),'-i',project.videoPath]; });
+          return seek.exactInput(project.videoPath, s0, e, { pre: PRE, fmtStart: T0 }).input; });
         const f=[]; let i=0;
         spans.forEach((sp,j)=>{
           const n=sp.clips.length;
           if(n>1){ f.push(`[${j}:v]split=${n}${sp.clips.map((_,m)=>`[sv${j}_${m}]`).join('')}`); f.push(`[${j}:a]asplit=${n}${sp.clips.map((_,m)=>`[sa${j}_${m}]`).join('')}`); }
           sp.clips.forEach((k,m)=>{
             const vSrc=n>1?`[sv${j}_${m}]`:`[${j}:v]`, aSrc=n>1?`[sa${j}_${m}]`:`[${j}:a]`;
-            const length=k.end-k.start, fade=Math.min(.03,length/3), a0=sp.pre+(k.start-sp.s0);
-            f.push(`${vSrc}trim=start=${a0.toFixed(3)}:end=${(a0+length).toFixed(3)},setpts=PTS-STARTPTS${normOf(k)}[v${i}]`);
-            f.push(`${aSrc}atrim=start=${a0.toFixed(3)}:end=${(a0+length).toFixed(3)},asetpts=PTS-STARTPTS${censorAf(k.start,k.end)},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
+            const length=k.end-k.start, fade=Math.min(.03,length/3), tr=seek.absTrims(k.start,k.end,T0); // corte exacto
+            f.push(`${vSrc}${tr.vtrim}${normOf(k)}[v${i}]`);
+            f.push(`${aSrc}${tr.atrim}${censorAf(k.start,k.end)},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
             i++;
           });
         });
@@ -701,7 +715,7 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         if(!q.copy && q.scale){ f.push(`${vl}${q.scale}[sc]`); vl='[sc]'; }
         const fscript=path.join(DATA,'filter.txt'); await fsp.writeFile(fscript,f.join(';\n'),'utf8');
         const out=path.join(DATA,`batch_${crypto.randomUUID()}.mov`); parts.push(out);
-        const args=enc=>['-y',...ins,...extra,'-/filter_complex',fscript,'-map',vl,'-map','[ca]',...enc,'-c:a','pcm_s16le',out];
+        const args=enc=>['-y',...seek.COPYTS,...ins,...extra,'-/filter_complex',fscript,'-map',vl,'-map','[ca]',...enc,'-c:a','pcm_s16le',out];
         job.message=`Exportando video limpio… (parte ${g+1} de ${groups.length})`;
         try{ await run(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0})); }
         catch(e){
@@ -738,13 +752,13 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
       if(tPlan && !BATCH){
         // Avance + video en la MISMA pasada: se pega antes del video ya cortado (y con sus efectos) y después se reescala.
         const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath); const ai=audioInfo(project.videoPath);
-        const tg=teaserLib.buildTeaserGraph({frags:tPlan.fragments,firstInput:(SEG?keep.length:1)+countInputs(cutExtraInputs),videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:teaserMute,audioPost:audioChain,sampleRate:ai.sampleRate,layout:ai.layout});
+        const tg=teaserLib.buildTeaserGraph({fmtStart:seek.startTimeOf(bins.ffprobe,project.videoPath),frags:tPlan.fragments,firstInput:(SEG?keep.length:1)+countInputs(cutExtraInputs),videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:teaserMute,audioPost:audioChain,sampleRate:ai.sampleRate,layout:ai.layout});
         filter.push(...tg.filters, ...teaserLib.prependFilter(tg,vLabel,aLabel,{fps:efps,sampleRate:ai.sampleRate,layout:ai.layout}));
         vLabel='[tzov]'; aLabel='[tzoa]'; teaserInputs=tg.inputs;
       }
       applyRescale();
       await fsp.writeFile(script, filter.join(';\n'), 'utf8');
-      const cutBase=['-y',...segInputs,...cutExtraInputs,...teaserInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
+      const cutBase=['-y',...seek.COPYTS,...segInputs,...cutExtraInputs,...teaserInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
       const cutTail=['-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
       if(BATCH) await exportBatched();
       else try{
@@ -1178,7 +1192,7 @@ async function extractVisionFrames(clip){
   const dir=visionDir(clip.id);
   await fsp.rm(dir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(dir,{recursive:true});
   const dur=clip.end-clip.start;
-  await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-loglevel','error','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-vf',`fps=${VISION_FPS},scale='min(960,iw)':-2`,'-q:v','3',path.join(dir,'f%04d.jpg')],{windowsHide:true}); let err=''; c.stderr.on('data',b=>{err=(err+b).slice(-500);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('No pude sacar los cuadros: '+err))); });
+  await new Promise((resolve,reject)=>{ const xp=exactPiece(clip.start,clip.end); const c=spawn(bin,['-hide_banner','-loglevel','error',...xp.args,'-vf',`${xp.vtrim},fps=${VISION_FPS},scale='min(960,iw)':-2`,'-q:v','3',path.join(dir,'f%04d.jpg')],{windowsHide:true}); let err=''; c.stderr.on('data',b=>{err=(err+b).slice(-500);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('No pude sacar los cuadros: '+err))); });
   const count=fs.readdirSync(dir).filter(f=>/^f\d+\.jpg$/.test(f)).length;
   return {count,fps:VISION_FPS};
 }
@@ -1227,7 +1241,7 @@ async function ensureCaptionFonts(){
 }
 // Energía del audio del clip cada 0.1 s (para decidir dónde van los zooms).
 async function clipEnergy(bin,start,dur){
-  let out=''; await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-ss',String(start),'-t',String(dur),'-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=1600,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],{windowsHide:true}); c.stdout.on('data',b=>{out+=b.toString();}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('energía '+code))); });
+  let out=''; await new Promise((resolve,reject)=>{ const xp=exactPiece(start,start+dur); const c=spawn(bin,['-hide_banner',...xp.args,'-map','0:a:0','-af',`${xp.atrim},aresample=16000,asetnsamples=n=1600,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-`,'-f','null','-'],{windowsHide:true}); c.stdout.on('data',b=>{out+=b.toString();}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('energía '+code))); });
   const energy=[]; let cur=null;
   for(const l of out.split(/\r?\n/)){ const mt=l.match(/pts_time:([\d.]+)/); if(mt){cur=+mt[1];continue;} const mr=l.match(/RMS_level=(-?[\d.]+|-?inf|nan)/i); if(mr&&cur!=null){ const v=parseFloat(mr[1]); energy.push({t:cur,db:Number.isFinite(v)?v:-90}); } }
   return energy;
@@ -1301,14 +1315,16 @@ async function renderOneShort(clip,bin) {
   }
   job.message=`Creando Short ${clip.rank}…`; job.percent=0;
   // Silenciar groserías que caigan dentro de este Short (audio por filter_complex, sin tocar imagen)
-  let fullFilter=filter, audioMap=['-map','0:a:0'];
+  // Corte exacto: el pedazo empieza en el cuadro pedido (subtítulos, zooms y encuadre van en tiempo del clip).
+  const xp=exactPiece(clip.start,clip.start+dur);
+  filter=filter.replace(/\[0:v\]fps=/g,`[0:v]${xp.vtrim},fps=`);
+  let fullFilter=`${filter};[0:a]${xp.atrim}[a]`, audioMap=['-map','[a]'];
   if(groserias.length) {
     const enable=groserias.map(m=>`between(t,${Math.max(0,m.start-clip.start-pad).toFixed(3)},${Math.min(dur,m.end-clip.start+pad).toFixed(3)})`).join('+');
-    fullFilter=`${filter};[0:a]volume=enable='${enable}':volume=0[a]`;
-    audioMap=['-map','[a]'];
+    fullFilter=`${filter};[0:a]${xp.atrim},volume=enable='${enable}':volume=0[a]`;
   }
   try {
-    await run(bin,['-y','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r',String(SFPS),'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',hookFirst?'12':'18','-c:a','aac','-b:a',hookFirst?'256k':'160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
+    await run(bin,['-y',...xp.args,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r',String(SFPS),'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',hookFirst?'12':'18','-c:a','aac','-b:a',hookFirst?'256k':'160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
     if(hookFirst){
       // Segunda pasada: [frase gancho] + [Short completo], y el recuadro del título encima del gancho.
       // (La primera pasada fue casi sin pérdida —crf 12— para que la calidad final sea la misma.)
@@ -1388,9 +1404,10 @@ async function reviewClip(at, requestedLength) {
   if (requestedLength!==undefined && (!Number.isFinite(full)||full<3||full>90)) throw Error('El clip de revisión debe durar entre 3 y 90 segundos.');
   const start=requestedLength===undefined?Math.max(0,seconds-2):seconds;
   const length=Math.min(requestedLength===undefined?8:full,duration-start);
-  const key=`review_${Math.round(seconds*100)}_${Math.round(length*100)}.mp4`;
+  const key=`review2_${Math.round(seconds*100)}_${Math.round(length*100)}.mp4`; // review2: con corte exacto (las viejas podían estar corridas)
   const output=path.join(DATA,key);
-  if (!fs.existsSync(output)) await run(bin,['-y','-ss',String(start),'-t',String(length),'-i',project.videoPath,'-map','0:v:0','-map','0:a:0','-vf','scale=960:-2','-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
+  const xp=exactPiece(start,start+length);
+  if (!fs.existsSync(output)) await run(bin,['-y',...xp.args,'-map','0:v:0','-map','0:a:0','-vf',`${xp.vtrim},scale=960:-2`,'-af',xp.atrim,'-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
   return { url:'/api/review-video?key='+encodeURIComponent(key), seek:seconds-start };
 }
 async function reviewCut(id) {
@@ -1404,15 +1421,16 @@ async function reviewCut(id) {
   if(!cut) throw Error('Tiempo de corte inválido.');
   const from=Math.max(0,cut.start-3),to=Math.min(duration,cut.end+3);
   const hash=crypto.createHash('sha1').update(`${project.videoPath}|${id}|${cut.start}|${cut.end}`).digest('hex').slice(0,16);
-  const key=`review_cut_${hash}.mp4`,output=path.join(DATA,key);
+  const key=`review_cut2_${hash}.mp4`,output=path.join(DATA,key);
+  const xp=exactPiece(from,to), T0=seek.startTimeOf(readiness().ffprobe,project.videoPath);
   if(!fs.existsSync(output)) {
     const keep=[{start:0,end:cut.start-from},{start:cut.end-from,end:to-from}].filter(s=>s.end-s.start>.1);
     const filters=[];
-    keep.forEach((s,i)=>{const len=s.end-s.start,fade=Math.min(.012,len/3);filters.push(`[0:v]trim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);filters.push(`[0:a]atrim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(len-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);});
+    keep.forEach((s,i)=>{const len=s.end-s.start,fade=Math.min(.012,len/3),tr=seek.absTrims(from+s.start,from+s.end,T0);filters.push(`[0:v]${tr.vtrim}[v${i}]`);filters.push(`[0:a]${tr.atrim},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(len-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);});
     filters.push(keep.map((_,i)=>`[v${i}][a${i}]`).join('')+`concat=n=${keep.length}:v=1:a=1[joined][a]`);
     filters.push('[joined]scale=960:-2[v]');
     const script=path.join(DATA,`filter_${hash}.txt`);await fsp.writeFile(script,filters.join(';\n'),'utf8');
-    await run(bin,['-y','-ss',String(from),'-t',String(to-from),'-i',project.videoPath,'-/filter_complex',script,'-map','[v]','-map','[a]','-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
+    await run(bin,['-y',...xp.args,'-/filter_complex',script,'-map','[v]','-map','[a]','-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
   }
   return {url:'/api/review-video?key='+encodeURIComponent(key),cut};
 }
@@ -1896,7 +1914,7 @@ const server=http.createServer(async (req,res) => {
     }
     if (req.method==='GET' && url.pathname==='/api/review-video') {
       const key=String(url.searchParams.get('key')||'');
-      if (!/^review_(?:\d+(?:_\d+)?|cut_[a-f0-9]{16})\.mp4$/.test(key)) return error(res,'Fragmento inválido.',400);
+      if (!/^review(?:2_\d+(?:_\d+)?|_cut2_[a-f0-9]{16}|_\d+(?:_\d+)?|_cut_[a-f0-9]{16})\.mp4$/.test(key)) return error(res,'Fragmento inválido.',400);
       const file=path.join(DATA,key);
       if (!fs.existsSync(file)) return error(res,'Fragmento no encontrado.',404);
       return serveMedia(req,res,file);
@@ -1971,9 +1989,9 @@ const server=http.createServer(async (req,res) => {
       if(!Number.isFinite(at)||at<0||at>d) throw Error('Tiempo fuera del video.');
       const name=`miniatura_${Math.round(at*1000)}_${Date.now()}.png`;
       const out=path.join(EXPORTS,name);
-      // seek rápido cerca + seek fino = exacto y rápido, a resolución completa
-      const fast=Math.max(0,at-2), fine=Math.min(2,at-fast);
-      await run(bin,['-y','-ss',String(fast),'-i',project.videoPath,'-ss',String(fine),'-frames:v','1',out]);
+      // Cuadro EXACTO a resolución completa (lib/seek.js: -copyts + trim absoluto; antes el doble -ss podía caer ~1 s antes en MPEG-TS)
+      const xp=exactPiece(at,at+0.5);
+      await run(bin,['-y',...xp.args,'-vf',xp.vtrim,'-frames:v','1',out]);
       return respond(res,200,{name, at});
     }
     if (req.method==='POST' && url.pathname==='/api/project/prepare') {

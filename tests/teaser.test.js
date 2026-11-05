@@ -67,19 +67,20 @@ test('duración del avance: 6 × 10 s con 5 fundidos de 0.5 s = 57.5 s',()=>{
 
 test('filtro del avance: blanco y negro, fundidos, letrero y audio alineado con la imagen',()=>{
   const frags=[{start:5,end:15},{start:100,end:110},{start:200,end:210}];
-  const g=T.buildTeaserGraph({frags,firstInput:3,videoPath:'v.mpg',fps:60,width:1920,height:1080,fontFile:'data/fonts/X.ttf',muteOf:(s,e)=>s===100?',volume=0':''});
-  // entradas: salto 15 s antes (o lo que haya) y trim sobre los tiempos pedidos
-  assert.deepEqual(g.inputs.slice(0,6),['-ss','0.000','-t','15.000','-i','v.mpg']);
-  assert.deepEqual(g.inputs.slice(6,12),['-ss','85.000','-t','25.000','-i','v.mpg']);
+  const g=T.buildTeaserGraph({frags,firstInput:3,videoPath:'v.mpg',fps:60,width:1920,height:1080,fontFile:'data/fonts/X.ttf',fmtStart:1.4,muteOf:(s,e)=>s===100?',volume=0':''});
+  // CORTE EXACTO: salto 15 s antes (o nada si está cerca del inicio) y trim sobre el tiempo ABSOLUTO (start_time 1.4 + tiempo)
+  assert.equal(g.needsCopyts,true);
+  assert.deepEqual(g.inputs.slice(0,4),['-t','15.500','-i','v.mpg']);
+  assert.deepEqual(g.inputs.slice(4,10),['-ss','85.000','-t','25.500','-i','v.mpg']);
   const f=g.filters.join(';');
-  assert.match(f,/\[3:v\]trim=start=5\.000:end=15\.000/);
-  assert.match(f,/\[4:v\]trim=start=15\.000:end=25\.000.*hue=s=0/);
+  assert.match(f,/\[3:v\]trim=start=6\.4000:end=16\.4000,setpts=PTS-STARTPTS/);
+  assert.match(f,/\[4:v\]trim=start=101\.4000:end=111\.4000.*hue=s=0/);
   assert.match(f,/xfade=transition=fade:duration=0\.500:offset=9\.500/);
   assert.match(f,/xfade=transition=fade:duration=0\.500:offset=19\.000/);
   // audio: los fragmentos con fundido después pierden 0.5 s al final → suenan justo cuando aparecen
-  assert.match(f,/\[3:a\]atrim=start=5\.000:end=14\.500/);
-  assert.match(f,/\[4:a\]atrim=start=15\.000:end=24\.500,asetpts=PTS-STARTPTS,volume=0/);
-  assert.match(f,/\[5:a\]atrim=start=15\.000:end=25\.000/);
+  assert.match(f,/\[3:a\]atrim=start=6\.4000:end=15\.9000/);
+  assert.match(f,/\[4:a\]atrim=start=101\.4000:end=110\.9000,asetpts=PTS-STARTPTS,volume=0/);
+  assert.match(f,/\[5:a\]atrim=start=201\.4000:end=211\.4000/);
   assert.match(f,/text='PRÓXIMAMENTE\.\.\.'/);
   assert.match(f,/fontfile='data\/fonts\/X\.ttf'/);
   assert.equal(g.duration,29);
