@@ -12,6 +12,7 @@ const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS, nearestP
 const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/editorial');
 const { detectSubjectX, smoothTrack, cropExpression, zoomExpression, planZooms, zoomCurve, zoomFilter } = require('./lib/framing');
 const { direct } = require('./lib/director');
+const { createUpdater } = require('./lib/updater');
 const channelStyle = require('./channel_style.json');
 
 const ROOT = __dirname;
@@ -154,32 +155,13 @@ function nativeDialog(kind, defaultName='') {
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
 const APP_VERSION = '1.27.12';
-const UPDATE_RAW = 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
-const UPDATE_ALLOW = new Set(['.js','.html','.css','.cmd','.ps1','.json']);
-function cmpVer(a,b){const pa=String(a).split('.').map(n=>parseInt(n,10)||0),pb=String(b).split('.').map(n=>parseInt(n,10)||0);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
+// EMM_UPDATE_URL solo sirve para PROBAR con un servidor de actualizaciones falso (nunca contra main).
+const UPDATE_RAW = process.env.EMM_UPDATE_URL || 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 async function fetchText(url){const r=await fetch(url,{signal:AbortSignal.timeout(20000),cache:'no-store'});if(!r.ok)throw Error('No se pudo descargar ('+r.status+')');return r.text();}
-async function checkUpdate(){
-  const manifest=JSON.parse(await fetchText(UPDATE_RAW+'version.json?t='+Date.now()));
-  const latest=String(manifest.version||'0');
-  return {current:APP_VERSION, latest, hasUpdate:cmpVer(latest,APP_VERSION)>0, notes:String(manifest.notes||''), files:Array.isArray(manifest.files)?manifest.files:[]};
-}
-async function applyUpdate(){
-  const info=await checkUpdate();
-  if(!info.hasUpdate) return {applied:0, message:'Ya tienes la última versión ('+APP_VERSION+').'};
-  let applied=0;
-  for(const rel of info.files){
-    const safe=String(rel).replace(/\\/g,'/');
-    if(safe.includes('..')||safe.startsWith('/')||/^[a-zA-Z]:/.test(safe)) throw Error('Ruta insegura en la actualización: '+rel);
-    if(!UPDATE_ALLOW.has(path.extname(safe).toLowerCase())) throw Error('Tipo de archivo no permitido: '+rel);
-    const content=await fetchText(UPDATE_RAW+safe+'?t='+Date.now());
-    const dest=path.join(ROOT,safe);
-    if(!dest.startsWith(ROOT)) throw Error('Destino fuera de la app: '+rel);
-    await fsp.mkdir(path.dirname(dest),{recursive:true});
-    await fsp.writeFile(dest,content,'utf8');
-    applied++;
-  }
-  return {applied, latest:info.latest, message:`Actualizado a la versión ${info.latest}. Cierra y vuelve a abrir la app para aplicar los cambios.`};
-}
+// Respalda en data/backups/<versión>-<fecha>/ antes de reemplazar (últimos 3) y permite "Volver a la versión anterior".
+const updater = createUpdater({ root:ROOT, dataDir:DATA, currentVersion:APP_VERSION, baseUrl:UPDATE_RAW, fetchText });
+const checkUpdate = () => updater.checkUpdate();
+const applyUpdate = (opts) => updater.applyUpdate(opts);
 function videoDimensions(videoPath) { const bin=readiness().ffprobe;if(!bin) throw Error('Configura ffprobe antes de crear el Short.'); const out=spawnSync(bin,['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','json',videoPath],{encoding:'utf8',windowsHide:true}); const stream=JSON.parse(out.stdout||'{}').streams?.[0]; if(out.status!==0||!stream?.width||!stream?.height) throw Error('No pude leer el tamaño del video.'); return stream; }
 async function framingForClip(clip,bin,width,height) {
   if(width<=height*9/16) return {portrait:true};
@@ -1913,7 +1895,9 @@ const server=http.createServer(async (req,res) => {
       return respond(res,200,{ready:dfReady()});
     }
     if (req.method==='POST' && url.pathname==='/api/update/check') return respond(res,200,await checkUpdate());
-    if (req.method==='POST' && url.pathname==='/api/update/apply') return respond(res,200,await applyUpdate());
+    if (req.method==='POST' && url.pathname==='/api/update/apply') { const body=await jsonBody(req).catch(()=>({})); return respond(res,200,await applyUpdate({force:!!(body&&body.force)})); }
+    if (req.method==='POST' && url.pathname==='/api/update/rollback-info') return respond(res,200,await updater.rollbackInfo());
+    if (req.method==='POST' && url.pathname==='/api/update/rollback') { const body=await jsonBody(req).catch(()=>({})); return respond(res,200,await updater.rollback({id:body&&body.id})); }
     if (req.method==='POST' && url.pathname==='/api/job/cancel') {
       if (job.status!=='running') return respond(res,200,{cancelled:false,message:'No hay ningún proceso en curso.'});
       job.cancelRequested=true; job.message='Cancelando…';

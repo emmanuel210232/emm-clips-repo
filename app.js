@@ -833,7 +833,7 @@ $('export').onclick=safe(async()=>{await selectionSave;
   const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,smooth,censor,gpu,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});
   notice(edited?`Exportando tu edición (${segments.length} clip${segments.length>1?'s':''}). El archivo aparecerá en exports.`:(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`));});
 $('cancelJob').onclick=safe(async()=>{await api('/api/job/cancel',{});notice('Cancelando el proceso…');});
-$('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};
+$('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(r.pendingRestart){info.textContent='Cierra y vuelve a abrir la app para terminar el cambio de versión.';return;}if(!r.hasUpdate&&r.paused){const t=document.createElement('span');t.textContent='La versión '+r.paused+' está pausada porque regresaste de ella. Tienes la '+r.current+'.  ';const again=document.createElement('button');again.className='secondary compact';again.type='button';again.textContent='Instalar la '+r.paused+' de todos modos';again.onclick=async()=>{if(!confirm('¿Instalar otra vez la versión '+r.paused+'? Es la versión de la que te regresaste.'))return;try{again.disabled=true;again.textContent='Actualizando…';const a=await api('/api/update/apply',{force:true});info.replaceChildren();info.textContent='✅ '+a.message;loadRollbackInfo();}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(t,again);return;}if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;loadRollbackInfo();}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};
 // ====== COMPROBACIÓN DE REQUISITOS (para saber si esta PC tiene todo) ======
 function reqItemEl(it){
   const ok=it.ok, essential=it.essential;
@@ -916,9 +916,39 @@ async function checkUpdatesOnStart(){
     b.hidden=false;
   }catch{}
 }
-if($('updateBannerBtn')) $('updateBannerBtn').onclick=async()=>{ const btn=$('updateBannerBtn'); try{ btn.disabled=true; btn.textContent='Actualizando…'; const a=await api('/api/update/apply',{}); $('updateBannerText').textContent='✅ '+a.message; btn.hidden=true; const dx=$('updateBannerDismiss'); if(dx)dx.textContent='Entendido'; }catch(e){ $('updateBannerText').textContent='No se pudo actualizar: '+e.message; btn.disabled=false; btn.textContent='Reintentar'; } };
+if($('updateBannerBtn')) $('updateBannerBtn').onclick=async()=>{ const btn=$('updateBannerBtn'); try{ btn.disabled=true; btn.textContent='Actualizando…'; const a=await api('/api/update/apply',{}); $('updateBannerText').textContent='✅ '+a.message; btn.hidden=true; loadRollbackInfo(); const dx=$('updateBannerDismiss'); if(dx)dx.textContent='Entendido'; }catch(e){ $('updateBannerText').textContent='No se pudo actualizar: '+e.message; btn.disabled=false; btn.textContent='Reintentar'; } };
 if($('updateBannerDismiss')) $('updateBannerDismiss').onclick=()=>{ const b=$('updateBanner'); if(b)b.hidden=true; try{ if(_updLatest) localStorage.setItem('eirl_upd_dismiss',_updLatest); }catch{} };
+// ===== Volver a la versión anterior =====
+// Antes de cada actualización la app respalda sus archivos (data/backups, últimos 3). Este botón regresa al último
+// respaldo y pausa la versión de la que te regresas para que no se te vuelva a ofrecer sola.
+function fmtBackupDate(iso){ try{ const d=new Date(iso); if(isNaN(d)) return ''; return d.toLocaleString('es-MX',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch{ return ''; } }
+async function loadRollbackInfo(){
+  const row=$('rollbackRow'), info=$('rollbackInfo'), btn=$('rollbackUpdate'); if(!row||!btn) return;
+  try{
+    const r=await api('/api/update/rollback-info',{});
+    if(!r.previous){ row.hidden=true; return; }
+    row.hidden=false;
+    btn.disabled=!!r.pendingRestart;
+    btn.dataset.id=r.previous.id; btn.dataset.version=r.previous.version; btn.dataset.current=r.current;
+    btn.textContent='↩️ Volver a la versión anterior ('+r.previous.version+')';
+    const when=fmtBackupDate(r.previous.createdAt);
+    info.textContent=r.pendingRestart?'Cierra y vuelve a abrir la app para terminar el cambio de versión.':'Tienes la '+r.current+'. Respaldo de la '+r.previous.version+(when?' guardado el '+when:'')+'.';
+  }catch{ row.hidden=true; }
+}
+if($('rollbackUpdate')) $('rollbackUpdate').onclick=async()=>{
+  const btn=$('rollbackUpdate'), info=$('rollbackInfo');
+  const to=btn.dataset.version, from=btn.dataset.current;
+  if(!to) return;
+  if(!confirm('¿Volver de la versión '+from+' a la '+to+'?\n\nTus videos, transcripciones y proyectos NO se borran; solo cambia el programa.\nDespués tendrás que cerrar y volver a abrir la app.\nLa '+from+' no se te volverá a ofrecer sola.')) return;
+  try{
+    btn.disabled=true; btn.textContent='Regresando…';
+    const r=await api('/api/update/rollback',{id:btn.dataset.id});
+    info.textContent='✅ '+r.message; btn.textContent='↩️ Listo';
+    const b=$('updateBanner'); if(b){ $('updateBannerText').textContent='✅ '+r.message; const go=$('updateBannerBtn'); if(go) go.hidden=true; b.hidden=false; }
+  }catch(e){ info.textContent='No se pudo regresar: '+e.message; btn.disabled=false; btn.textContent='↩️ Volver a la versión anterior ('+to+')'; }
+};
 refresh().catch(e=>notice(e.message,true));
+loadRollbackInfo();
 checkRequirementsOnStart();
 checkUpdatesOnStart();
 // Sondea mientras haya un trabajo corriendo O se estén generando miniaturas en segundo plano (barato: ~0.1 KB).
