@@ -758,7 +758,4 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
 .appShell .stageBar #thumbsPanel:not([open])>summary{list-style:none;cursor:pointer;padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:700;background:var(--sh-panel2);border:1px solid var(--sh-line);color:var(--sh-tx)}
 .appShell .stageBar #thumbsPanel:not([open])>summary::-webkit-details-marker{display:none}
 .appShell .stageBar .muted{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Scrub: la imagen chica de la línea del tiempo ya no tapa todo el reproductor (se veía pixeleado); va en un recuadro
-   en la esquina y el video real (a resolución completa) se ve debajo mientras se mueve. */
-.appShell .stage .player .scrubThumb{inset:auto 12px 54px auto;width:min(260px,32%);height:auto;aspect-ratio:16/9;object-fit:cover;border:2px solid rgba(255,255,255,.85);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.6)}
 .appShell .dock{max-height:44vh}

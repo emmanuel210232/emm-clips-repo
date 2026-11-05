@@ -403,7 +403,9 @@ function nearestStripIndex(src){const N=state.filmstrip?state.filmstrip.count:0;
 // Las miniaturas de la línea del tiempo tienen la misma dirección en todos los videos (/api/strip?i=N): sin esto el
 // navegador mostraba las del video ANTERIOR (guardadas en caché) mezcladas con el nuevo.
 function stripV(){const p=state&&state.project;return '&v='+encodeURIComponent((p&&(p.openedAt||p.videoPath))||'')+'-'+((state&&state.filmstrip&&state.filmstrip.count)||0);}
-function showScrubThumb(src){const N=state.filmstrip?state.filmstrip.count:0;const img=$('scrubThumb');if(!img||!N)return;const k=nearestStripIndex(src);if(img.dataset.k!==String(k)){img.dataset.k=String(k);img.src='/api/strip?i='+k+stripV();}img.classList.add('show');}
+// Ya no se tapa el video con la miniatura de la línea del tiempo (1 imagen cada ~2 min, borrosa): al arrastrar se ve
+// el VIDEO REAL a resolución completa en el punto exacto. (Se deja la función por compatibilidad.)
+function showScrubThumb(src){return;const N=state.filmstrip?state.filmstrip.count:0;const img=$('scrubThumb');if(!img||!N)return;const k=nearestStripIndex(src);if(img.dataset.k!==String(k)){img.dataset.k=String(k);img.src='/api/strip?i='+k+stripV();}img.classList.add('show');}
 function hideScrubThumb(){const img=$('scrubThumb');if(img)img.classList.remove('show');}
 function scrubEndAt(clientX){const v=$('video');if(!v){hideScrubThumb();return;}let src;try{src=outToSource(tlOutFromX(clientX));}catch{src=v.currentTime;}
   const done=()=>{hideScrubThumb();v.removeEventListener('seeked',done);};v.addEventListener('seeked',done);setTimeout(done,500);
