@@ -25,3 +25,16 @@ test('pedazo inválido truena; absTrims para una sola entrada completa', () => {
 test('startTimeOf no truena si ffprobe no existe', () => {
   assert.equal(S.startTimeOf('/no/existe/ffprobe', 'x.ts'), 0);
 });
+
+test('startTimeOf acepta start_time negativo y relee si el archivo cambia (ruta + tamaño + fecha)', { skip: process.platform === 'win32' }, () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emm_seek_'));
+  const probe = path.join(dir, 'ffprobe'), vid = path.join(dir, 'v.mp4'), out = path.join(dir, 'out.txt');
+  fs.writeFileSync(probe, `#!/bin/sh\ncat "${out}"\n`); fs.chmodSync(probe, 0o755);
+  try {
+    fs.writeFileSync(out, '-0.042\n'); fs.writeFileSync(vid, 'a');
+    assert.equal(S.startTimeOf(probe, vid), -0.042);
+    fs.writeFileSync(out, '1.4\n'); fs.writeFileSync(vid, 'bb'); // mismo nombre, otro archivo
+    assert.equal(S.startTimeOf(probe, vid), 1.4);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

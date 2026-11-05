@@ -143,21 +143,26 @@ async function jsonBody(req) { let size = 0; const chunks=[]; for await (const c
 // Si la GPU no puede decodificar (sin NVIDIA, driver viejo, sin memoria de video), repite el MISMO comando por CPU y
 // ya no lo vuelve a intentar en esta sesión. want=false (el usuario apagó la GPU) → idéntico a antes.
 const hwDecode = { on: null };
+// Más de MAX_HW_INPUTS entradas de video (camino SEG con hasta 120 pedazos / cutBase): cada una abriría su propio
+// decodificador NVDEC y la memoria de video se llena → ese comando va por CPU (sin apagar la GPU para los demás).
+const MAX_HW_INPUTS = 16;
 async function runDec(exe, args, onOutput, want = true) {
   if (!want) return run(exe, args, onOutput);
   if (hwDecode.on === null) hwDecode.on = await hwaccel.probeCuda(exe);
   if (!hwDecode.on) return run(exe, args, onOutput);
-  const t0 = Date.now();
-  try { return await run(exe, hwaccel.withHwaccel(args, { gpu: true }), onOutput); }
+  const hwArgs = hwaccel.withHwaccel(args, { gpu: true });
+  if (hwArgs.filter(a => a === '-hwaccel').length > MAX_HW_INPUTS) return run(exe, args, onOutput);
+  try { return await run(exe, hwArgs, onOutput); }
   catch (e) {
     if (job.cancelRequested) throw e;
-    if (!hwaccel.isHwaccelFailure(e.message) && Date.now() - t0 > 30000) throw e; // falla real a media exportación
+    // Solo una falla REAL de NVDEC/CUDA (según el stderr completo) pasa a CPU; cualquier otra falla se reporta tal cual.
+    if (!hwaccel.isHwaccelFailure(e.stderr || e.message)) throw e;
     hwDecode.on = false;
     job.message = 'La GPU no pudo leer el video; sigo leyéndolo con el procesador (misma calidad)…'; job.percent = 0;
     return run(exe, args, onOutput);
   }
 }
-function run(exe, args, onOutput = () => {}) { return new Promise((resolve, reject) => { const child = spawn(exe, args, { windowsHide: true, cwd: ROOT }); activeProc = child; let stderr=''; child.stderr.on('data', b => { const s=b.toString(); stderr=(stderr+s).slice(-5000); onOutput(s); }); child.stdout.on('data', b => onOutput(b.toString())); child.on('error', e => { if (activeProc===child) activeProc=null; reject(e); }); child.on('close', code => { if (activeProc===child) activeProc=null; if (code === 0) resolve(); else if (job.cancelRequested) reject(Error('Proceso cancelado por el usuario.')); else reject(Error(`${path.basename(exe)} terminó con código ${code}: ${stderr.slice(-700)}`)); }); }); }
+function run(exe, args, onOutput = () => {}) { return new Promise((resolve, reject) => { const child = spawn(exe, args, { windowsHide: true, cwd: ROOT }); activeProc = child; let stderr=''; child.stderr.on('data', b => { const s=b.toString(); stderr=(stderr+s).slice(-5000); onOutput(s); }); child.stdout.on('data', b => onOutput(b.toString())); child.on('error', e => { if (activeProc===child) activeProc=null; reject(e); }); child.on('close', code => { if (activeProc===child) activeProc=null; if (code === 0) resolve(); else if (job.cancelRequested) reject(Error('Proceso cancelado por el usuario.')); else { const err=Error(`${path.basename(exe)} terminó con código ${code}: ${stderr.slice(-700)}`); err.stderr=stderr; reject(err); } }); }); }
 function capture(exe,args,maxBytes=30*1024*1024) { return new Promise((resolve,reject)=>{ const child=spawn(exe,args,{windowsHide:true,cwd:ROOT}); const chunks=[];let size=0,stderr='';child.stdout.on('data',b=>{size+=b.length;if(size>maxBytes){child.kill();reject(Error('Demasiados fotogramas para analizar.'));return;}chunks.push(b)});child.stderr.on('data',b=>{stderr=(stderr+b.toString()).slice(-2000)});child.on('error',reject);child.on('close',code=>code===0?resolve(Buffer.concat(chunks)):reject(Error(`FFmpeg no pudo analizar el encuadre: ${stderr.slice(-500)}`)));}); }
 // Diálogos nativos de Windows (abrir/guardar) — la app corre en la PC del usuario.
 function nativeDialog(kind, defaultName='') {
