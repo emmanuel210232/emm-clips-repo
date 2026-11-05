@@ -52,5 +52,22 @@
 - Bien: sin path traversal, recuperación al reiniciar como se diseñó, sin ids inexistentes, scripts en buen orden.
 - Además (agente B): prueba real de la cola con 2 Shorts **pasó**: ambos "Listo", duración exacta, primer cuadro correcto (+1 cuadro esperado por el start_time del video) y sincronía 4.7 ms. Antes empezaban 30–45 cuadros tarde.
 
-## Pendientes de llegar
-- nube/export-intro (corte exacto en el export y GPU) y el método `lib/seek.js`.
+## nube/export-intro (corte exacto en el export + GPU)
+Sin bugs que rompan sincronía, calidad o cortes: todos los comandos con `-copyts` cortan cada entrada con trim absoluto, ninguno usa `-c:v copy`; filtros relativos (groserías, afade, xfade, drawtext) quedan después de `setpts=PTS-STARTPTS`; `fmtStart` aplicado en todos los cortes; el reintento por CPU reusa args sin `-hwaccel`.
+1. **Media — `runDec` (server.js:154): la regla de 30 s está al revés.** Una falla temprana que no es de NVDEC (NVENC no disponible, error de filtro) apaga la GPU toda la sesión con mensaje equivocado; una falla real de CUDA después de 30 s no se detecta (`run` guarda solo 700 caracteres de stderr) y el export termina en error. Arreglo: guardar ~5000 caracteres de stderr y reintentar por CPU solo si `isHwaccelFailure(stderr)`.
+2. Media — memoria de video en el camino SEG (server.js:614-617): hasta 130 entradas con `-hwaccel cuda` llenan 8 GB. Arreglo: sin GPU si hay > 16 entradas de video.
+3. Menor — `startTimeOf` ignora start_time negativo y su caché usa solo la ruta (ver la sección de `lib/seek.js`).
+- La prueba de punta a punta A/B/C **no verificó** el export: el puerto 4188 estaba ocupado por un servidor viejo. Repetirla con el puerto libre.
+
+## lib/seek.js (método de corte exacto)
+1. **Alta (comprobado) — start_time negativo cerca de la vuelta de 33 bits del MPEG-TS** (≈ 95 443.7 s): libavformat da start_time negativo (p. ej. −22.3 s) y `startTimeOf` lo cambia a 0 → **el corte sale vacío** (0 cuadros). Con el valor real, ffmpeg corta bien aunque cruce la vuelta. También .mp4 con B-frames/priming AAC (−0.02 a −0.07 s → 1–4 cuadros corridos). Arreglo: aceptar cualquier valor finito; si ffprobe falla, **no** usar 0 en silencio (lanzar error o volver al método sin `-copyts`).
+2. **Alta — saltos de marcas de tiempo** (directo que se reconecta, segmentos HLS perdidos): con `-copyts` ffmpeg no corrige saltos y "absoluto = fmtStart + t" deja de valer → cortes en otro punto o vacíos. Arreglo: detectar saltos (muestreo de `pts_time` o duración vs pts final − inicial) y, si hay, remuxear a marcas continuas antes de cortar.
+3. Media — `setpts=PTS-STARTPTS` por stream convierte en desfase A/V la diferencia de inicio de audio y video (explica los 4.7–16 ms). Arreglo: restar el mismo inicio absoluto a ambos (`setpts=PTS-<a>/TB`, `asetpts=PTS-<a>/TB`) + `aresample=async=1:first_pts=0`.
+4. Media — redondeo a 4 decimales en 60 fps puede saltarse 1 cuadro con tiempos ajustados a cuadro. Arreglo: correr los límites medio cuadro antes o usar `trim=start_pts=` en ticks.
+5. Baja — GOP de más de 15 s: subir PRE según el GOP medido.
+6. Baja — `absTrims` con muchos pedazos en una sola entrada es lento y gasta memoria si no van en orden.
+7. ffprobe y ffmpeg deben ser el **mismo binario** (`tools/`). Probar en Windows con `-output_ts_offset 95420` y un directo real.
+8. `check_cut.js` no cubre lo anterior: agregar casos de vuelta de 33 bits, salto de marcas y medición de audio.
+
+## Arreglos en curso al cerrar la sesión
+Se lanzaron agentes para corregir: miniaturas-cola (1–5), export-intro (runDec, límite de entradas GPU, startTimeOf), teaser-ia (1–2), muletillas (1–4), ritmo (1–4) y autozoom (1–2). Revisar con `git log` de cada rama qué alcanzó a subirse.

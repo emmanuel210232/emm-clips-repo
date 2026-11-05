@@ -38,9 +38,9 @@ Con `-ss <antes> -i` + `trim` **relativo** (método de main), en MPEG-TS el cort
 
 ## 4. Lo que quedó pendiente
 ### Por verificar (hecho pero sin probar de punta a punta)
-- Export completo con corte exacto (la prueba A/B/C no terminó en la nube).
+- Export completo con corte exacto: la prueba A/B/C **no verificó nada** (el puerto 4188 estaba ocupado por un servidor viejo). Repetirla con el puerto libre.
 - "Exportar frame" con el servidor real.
-- Interfaz de miniaturas y cola en el navegador; cola con 2 exports reales; sincronía del Short corregido y subtítulos contra la voz.
+- Interfaz de miniaturas y cola en el navegador; subtítulos del Short contra la voz con una transcripción real. (La cola con 2 Shorts reales **sí pasó**: duración exacta, primer cuadro correcto y sincronía 4.7 ms.)
 - Avance de la IA con la API real (solo se probó con respuestas de ejemplo).
 - GPU real (en la nube no hay NVDEC).
 - Arreglos de la revisión de la línea del tiempo en el navegador.
@@ -60,7 +60,13 @@ Con `-ss <antes> -i` + `trim` **relativo** (método de main), en MPEG-TS el cort
 - Diseño: subtítulo "— marca lo que quieras aplicar" (Paso 4, tema claro) con contraste 2.86:1.
 - `check_manifest.js` no ve los archivos que la página carga con `<script>` (p. ej. `lib/timeline-core.js`): enseñarle `staticFiles`.
 - La cola detecta el fin de un export revisando cada 0.7 s: rara condición de carrera si otro proceso arranca justo ahí.
-- `docs/REVISION_FINAL.md` (si llegó a subirse) tiene lo que encontraron los últimos 7 revisores.
+- **`docs/REVISION_FINAL.md` tiene todo lo que encontraron los 7 revisores finales**, por rama y prioridad. Lo más importante:
+  - `lib/seek.js`: start_time negativo cerca de la vuelta de 33 bits → corte vacío (comprobado); saltos de marcas en directos reconectados; desfase A/V por `PTS-STARTPTS` por stream.
+  - miniaturas-cola: dos exports a la vez (cola + botón), cola que se pierde al cerrar, galería que no se reinicia al cambiar de video, "Mejores momentos" que no funciona.
+  - export-intro: `runDec` decide mal cuándo es falla de GPU; demasiadas entradas con GPU en el camino SEG.
+  - teaser-ia: con IA local se pierden momentos en resúmenes largos.
+  - muletillas/ritmo/autozoom: errores en lógica aún no conectada (ver documento).
+  - Al cerrar la sesión se lanzaron agentes para corregir varios de estos; ver `git log` de cada rama.
 
 ## 5. Antes de publicar en `main` (checklist)
 - [ ] Agregar a `version.json` → `files` lo que use la versión (si falta uno que `server.js` requiere, **la app no arranca**):
