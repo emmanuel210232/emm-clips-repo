@@ -14,6 +14,8 @@ const { safeRel, missingRequires } = require('../lib/updater');
 const root = path.resolve(__dirname, '..');
 // En las PCs de los usuarios ya existen aunque no vengan en "files" (los puso el instalador).
 const PREINSTALLED = new Set(['channel_style.json']);
+// Archivos que deben llegar a los usuarios aunque nadie los use con require().
+const MUST_SHIP = ['lib/updater.js', 'Volver a la version anterior.cmd'];
 
 function check() {
   const problems = [];
@@ -26,10 +28,12 @@ function check() {
     staged.set(s, fs.readFileSync(f, 'utf8'));
     if (s.endsWith('.js')) { const r = spawnSync(process.execPath, ['--check', f], { encoding: 'utf8' }); if (r.status !== 0) problems.push(`Error de sintaxis en ${s}: ${String(r.stderr).split('\n').slice(0, 3).join(' ')}`); }
   }
-  for (const m of missingRequires(staged, rel => PREINSTALLED.has(rel))) problems.push(`Falta en version.json "files": ${m.require} (lo usa ${m.file})`);
-  const srv = staged.get('server.js') || '';
-  const appVer = (srv.match(/const APP_VERSION\s*=\s*'([^']+)'/) || [])[1];
-  if (appVer && appVer !== manifest.version) problems.push(`version.json dice ${manifest.version} pero APP_VERSION en server.js dice ${appVer}`);
+  for (const f of MUST_SHIP) if (fs.existsSync(path.join(root, f)) && !staged.has(f)) problems.push(`Falta en version.json "files": ${f}`);
+  for (const m of missingRequires(staged, rel => PREINSTALLED.has(rel))) if (!MUST_SHIP.includes(m.require + '.js')) problems.push(`Falta en version.json "files": ${m.require} (lo usa ${m.file})`);
+  const srv = staged.get('server.js');
+  if (!srv) problems.push('server.js debe venir en "files" (ahí está APP_VERSION; sin él la misma actualización se ofrecería para siempre).');
+  const appVer = ((srv || '').match(/const APP_VERSION\s*=\s*'([^']+)'/) || [])[1];
+  if (srv && appVer !== manifest.version) problems.push(`version.json dice ${manifest.version} pero APP_VERSION en server.js dice ${appVer}`);
   return { version: manifest.version, files: staged.size, problems };
 }
 

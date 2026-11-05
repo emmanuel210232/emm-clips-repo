@@ -222,3 +222,41 @@ test('server.js: /api/update/check → apply → rollback-info → rollback con 
     await srv.close();
   }
 });
+
+test('rutas engañosas hacia data/ también se rechazan', () => {
+  assert.throws(() => U.safeRel('././data/x.json'), /no puede tocar/);
+  assert.throws(() => U.safeRel('data./x.json'), /no puede tocar/);
+  assert.throws(() => U.safeRel('data /x.json'), /no puede tocar/);
+  assert.throws(() => U.safeRel('lib/../../x.js'), /insegura/);
+  assert.equal(U.safeRel('./lib/core.js'), 'lib/core.js');
+});
+
+test('dos instalaciones al mismo tiempo: solo corre una', async () => {
+  const srv = await fakeServer();
+  try {
+    const root = tmpApp({ 'app.js': 'var v=1;' });
+    release(srv, '2.0.0', { 'app.js': 'var v=2;' });
+    const u = mk(root, '1.0.0', srv);
+    const [a, b] = await Promise.allSettled([u.applyUpdate(), u.applyUpdate()]);
+    assert.equal(a.status, 'fulfilled');
+    assert.equal(b.status, 'rejected'); assert.match(b.reason.message, /en curso/);
+    const list = await u.listBackups();
+    assert.equal(list.length, 1);
+    assert.equal(read(root, `data/backups/${list[0].id}/files/app.js`), 'var v=1;', 'el respaldo tiene lo viejo');
+  } finally { await srv.close(); }
+});
+
+test('solo se puede volver al respaldo más reciente (si no, la app quedaría mezclada)', async () => {
+  const srv = await fakeServer();
+  try {
+    const root = tmpApp({ 'app.js': 'v1', 'lib.js': 'l1' });
+    release(srv, '1.0.1', { 'app.js': 'v2' }); await mk(root, '1.0.0', srv).applyUpdate();
+    release(srv, '1.0.2', { 'lib.js': 'l3' }); await mk(root, '1.0.1', srv).applyUpdate();
+    const u = mk(root, '1.0.2', srv);
+    const list = await u.listBackups();
+    await assert.rejects(() => u.rollback({ id: list[1].id }), /más reciente/);
+    assert.equal(read(root, 'app.js'), 'v2');
+    assert.equal((await u.rollback({ id: list[0].id })).restored, '1.0.1');
+    assert.equal(read(root, 'lib.js'), 'l1');
+  } finally { await srv.close(); }
+});

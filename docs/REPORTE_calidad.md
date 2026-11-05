@@ -25,10 +25,21 @@ Probé la interfaz con Playwright contra el servidor falso (actualizar, ver bot�
 Agregar a `version.json` → `files`: `"lib/updater.js"` y `"Volver a la version anterior.cmd"`. Si falta `lib/updater.js`, **la app de los usuarios no arrancaría** tras actualizar. `node tools-dev/check_manifest.js` lo avisa (hoy marca exactamente eso).
 
 ## Riesgos
-- La **primera** actualización que trae este código la instala el actualizador viejo (sin respaldo). El botón aparece a partir de la siguiente.
+- La **primera** actualización que trae este código la instala el actualizador viejo (sin respaldo), así que **ese salto no se puede deshacer con el botón**; el botón aparece a partir de la siguiente. Para esa primera vez, el plan B es el `git revert` de `docs/rollback.md`.
 - Si una versión pasa la revisión de sintaxis pero truena al arrancar, el botón no se ve: queda el `.cmd` de emergencia (que usa `lib/updater.js` del disco; si justo ese archivo viniera roto, habría que copiar a mano desde `data/backups/…/files/`).
 - Archivos **nuevos** que traía la versión mala se quedan al regresar (no se borran). Son inofensivos porque el código viejo no los usa.
 - La app sigue sin reiniciarse sola: el usuario debe cerrar y abrir (igual que hoy).
+
+## Correcciones tras revisión de código
+Un agente revisor encontró y se corrigió:
+- Dos instalaciones/regresos al mismo tiempo (dos pestañas o banner + botón) podían dejar respaldos mezclados → ahora hay un candado: solo corre uno.
+- Si fallaba un paso después de escribir (p. ej. borrar un respaldo viejo con el antivirus encima), un reintento respaldaba archivos nuevos como si fueran viejos → ahora se marca "reinicia la app" en cuanto se escriben y los pasos de limpieza no tumban la operación.
+- El regreso ahora guarda una copia de lo actual y, si falla a la mitad, lo deja como estaba (y si ni eso se puede, lo dice claramente en vez de afirmar que todo quedó bien).
+- `rename` reintenta en Windows (antivirus/indexador) en vez de abortar al azar.
+- Solo se puede volver al respaldo más reciente (saltarse uno dejaría la app mezclada).
+- Rutas engañosas (`././data/…`, `data./…`) ya no pueden escribir en `data/`.
+- `check_manifest.js` exige `server.js` en `files` y avisa si faltan `lib/updater.js` o el `.cmd`.
+- El `.cmd` solo cierra el proceso del puerto 4177 exacto y avisa si no pudo regresar.
 
 ## Qué falta / ideas
 - Reinicio automático de la app después de actualizar o regresar.
