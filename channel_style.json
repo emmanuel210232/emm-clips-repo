@@ -1,0 +1,21 @@
+{
+  "channel": "https://www.youtube.com/@ADRIANOZENDEJAS32/shorts",
+  "brandHandle": "@ADRIANOZENDEJAS32",
+  "brandMark": "K",
+  "transcriptionPrompt": "Conversación informal en español de México. Adriano, Shifu, Emiliano, Tico, chat, güey, no mames.",
+  "durationSeconds": { "min": 60, "max": 90 },
+  "style": {
+    "canvas": "9:16",
+    "background": "video desenfocado alrededor del cuadro original",
+    "captions": "mayúsculas blancas, contorno negro y palabra activa amarilla",
+    "hook": "texto opcional y editable en la zona superior",
+    "brand": "marca y usuario en la zona inferior"
+  },
+  "referenceShorts": [
+    { "url": "https://www.youtube.com/shorts/4DStmDeSZtE", "durationSeconds": 26.5 },
+    { "url": "https://www.youtube.com/shorts/KETgOPcfFG4", "durationSeconds": 51.7 },
+    { "url": "https://www.youtube.com/shorts/EP7oEnfIhbM", "durationSeconds": 22.0 },
+    { "url": "https://www.youtube.com/shorts/A1zrEs9DLV0" },
+    { "url": "https://www.youtube.com/shorts/7jhUPJxHSBs" }
+  ]
+}
