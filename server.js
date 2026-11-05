@@ -13,6 +13,7 @@ const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/ed
 const { detectSubjectX, smoothTrack, cropExpression, zoomExpression, planZooms, zoomCurve, zoomFilter } = require('./lib/framing');
 const { direct } = require('./lib/director');
 const { createUpdater } = require('./lib/updater');
+const AZ = require('./lib/autozoom'); // zoom en los cortes: recorte centrado + reescalado lanczos (compatible con zoom:true viejo)
 const seek = require('./lib/seek'); // corte exacto en MPEG-TS (-copyts + trim absoluto)
 const hwaccel = require('./lib/hwaccel'); // decodificación por GPU (NVDEC) con caída a CPU
 // Opcional a propósito: si una actualización llegara sin lib/teaser.js (falta en version.json), la app SÍ arranca;
@@ -572,7 +573,7 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
   // Si el editor de clips manda "segments" (los clips en orden), se concatenan EN ESE ORDEN (soporta reordenar/trim).
   let keep;
   if (Array.isArray(segments) && segments.length) {
-    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end),zoom:!!s.zoom,trans:!!s.trans,join:!!s.join})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
+    keep = segments.map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end),...AZ.sanitizeSegmentZoom(s),trans:!!s.trans,join:!!s.join})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04);
     if (!keep.length) throw Error('Los clips no son válidos.');
   } else {
     const chosenPauses=pauses.filter(p=>selectedPauseIds.includes(p.id));
@@ -601,9 +602,9 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
   let smoothTotal = keptTotal; // duración REAL de salida con crossfade (los crossfades la acortan); para el fade de entrada/salida en 1 pasada
   // Zoom (punch-in) por segmento marcado con .zoom. Zoom ESTÁTICO (crop+scale): fiable, instantáneo
   // y sin colgarse (el zoompan de este ffmpeg se desboca generando miles de frames). Recorta ~1.12x al centro.
-  const hasZoom = keep.some(k=>k.zoom);
+  const hasZoom = keep.some(k=>AZ.zoomValue(k)>1);
   const {width:ZW,height:ZH} = hasZoom ? videoDimensions(project.videoPath) : {width:0,height:0};
-  const zoomOf = (k)=> (k.zoom && ZW && ZH) ? `,crop=iw/1.12:ih/1.12,scale=${ZW}:${ZH},setsar=1` : '';
+  const zoomOf = (k)=> (ZW && ZH) ? AZ.cropZoomFilter(k,ZW,ZH) : '';
   const normOf = (k)=> zoomOf(k); // los pedazos sin zoom quedan en su tamaño nativo (ya coinciden para el concat)
   // Transición por tema (.trans = dissolve largo) y UNIR suave (.join = crossfade corto para que el corte no se note).
   const hasTrans = keep.some(k=>k.trans);
@@ -2120,7 +2121,7 @@ async function thumbsQueueRoute(req,res,url){
   return false;
 }
 
-const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/lib/thumbs.js':'lib/thumbs.js', '/miniaturas.js':'miniaturas.js', '/cola.js':'cola.js', '/timeline-core.js':'lib/timeline-core.js', '/lib/pace.js':'lib/pace.js', '/ritmo.js':'ritmo.js', '/lib/fillers.js':'lib/fillers.js', '/muletillas.js':'muletillas.js' };
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/lib/thumbs.js':'lib/thumbs.js', '/miniaturas.js':'miniaturas.js', '/cola.js':'cola.js', '/timeline-core.js':'lib/timeline-core.js', '/lib/pace.js':'lib/pace.js', '/ritmo.js':'ritmo.js', '/lib/fillers.js':'lib/fillers.js', '/muletillas.js':'muletillas.js', '/lib/autozoom.js':'lib/autozoom.js', '/autozoom-ui.js':'autozoom-ui.js' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
   try {

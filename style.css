@@ -728,3 +728,5 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
 .fillerItem.safe .fillerTag{background:#2ea04366}
 .fillersChips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .fillerChip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:rgba(127,127,127,.18);font-size:12px}
+
+.tl-sel{font-size:12px;padding:2px 4px;border-radius:6px}

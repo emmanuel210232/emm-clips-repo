@@ -241,9 +241,9 @@ function mergeClips(){
 }
 function toggleZoom(){
   ensureClips();
-  if(multiSel.size){ pushUndo(); const on=![...multiSel].every(i=>clips[i]&&clips[i].zoom); multiSel.forEach(i=>{if(clips[i])clips[i].zoom=on;}); saveClips(); buildTimeline(); notice(on?'🔍 Zoom puesto en '+multiSel.size+' clips.':'Zoom quitado.'); return; }
+  if(multiSel.size){ pushUndo(); const on=![...multiSel].every(i=>clips[i]&&clips[i].zoom); multiSel.forEach(i=>{if(clips[i]){clips[i].zoom=on;clips[i].zoomManual=true;delete clips[i].zoomAuto;}}); saveClips(); buildTimeline(); notice(on?'🔍 Zoom puesto en '+multiSel.size+' clips.':'Zoom quitado.'); return; }
   if(selectedClipIdx<0||selectedClipIdx>=clips.length)return notice('Pica un clip para ponerle (o quitarle) zoom.',true);
-  pushUndo(); clips[selectedClipIdx].zoom=!clips[selectedClipIdx].zoom; saveClips(); buildTimeline();
+  pushUndo(); clips[selectedClipIdx].zoom=!clips[selectedClipIdx].zoom; clips[selectedClipIdx].zoomManual=true; delete clips[selectedClipIdx].zoomAuto; saveClips(); buildTimeline();
   notice(clips[selectedClipIdx].zoom?'🔍 Zoom (acercamiento) puesto en este clip. Se aplica al exportar.':'Zoom quitado de este clip.');
 }
 // Parte un clip en pedazos según las ventanas de zoom (en tiempo de la fuente); los pedazos dentro de una ventana quedan con zoom.
@@ -272,7 +272,7 @@ function splitClipsAt(times){
   let arr=clips;
   for(const t of [...times].sort((a,b)=>a-b)){
     const out=[];
-    for(const c of arr){ if(t>c.start+0.12&&t<c.end-0.12){ out.push({start:c.start,end:+t.toFixed(3),zoom:c.zoom,trans:c.trans},{start:+t.toFixed(3),end:c.end,zoom:c.zoom}); } else out.push(c); }
+    for(const c of arr){ if(t>c.start+0.12&&t<c.end-0.12){ out.push({...c,start:c.start,end:+t.toFixed(3),join:false},{...c,start:+t.toFixed(3),end:c.end,trans:false,join:false}); } else out.push(c); }
     arr=out;
   }
   return arr;
@@ -964,7 +964,7 @@ async function buildExportBody(){await selectionSave;
   let mode=(document.querySelector('input[name="censorMode"]:checked')||{}).value==='cut'?'cut':'mute';
   const ids=[...selected];const pauseIds=[...selectedPauses];
   let segments=null;
-  if(edited){ mode='cut'; segments=clips.map(c=>({start:+c.start.toFixed(3),end:+c.end.toFixed(3),zoom:!!c.zoom,trans:!!c.trans,join:!!c.join})); }
+  if(edited){ mode='cut'; segments=clips.map(c=>({start:+c.start.toFixed(3),end:+c.end.toFixed(3),zoom:typeof c.zoom==='number'?c.zoom:!!c.zoom,zoomCx:c.zoomCx,zoomCy:c.zoomCy,trans:!!c.trans,join:!!c.join})); }
   else { if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas, o edita clips en la línea del tiempo (Paso 1).'); }
   const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};
   const smooth=edited && !!$('silSmooth')?.checked;
