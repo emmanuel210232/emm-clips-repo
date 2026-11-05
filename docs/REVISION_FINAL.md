@@ -40,5 +40,17 @@
 3. Baja — `isPeak`/`phrases.find` lineales (31 ms con 20 000; aceptable).
 - Bien: recortes pares y dentro del cuadro, tope 1.25× respetado, sin bucles infinitos, vista previa coincide con ffmpeg.
 
+## nube/miniaturas-cola
+1. **Alta — "Mejores momentos" nunca funciona** (miniaturas.js:23 / lib/thumbs.js:32): el `<select>` manda `'bestof'` y `sampleTimes` compara con `'best'`. Arreglo: aceptar ambos.
+2. **Alta — la galería no se reinicia al cambiar de video** (miniaturas.js:72 y :142): `window.state` siempre es `undefined` (`let state` de app.js no queda en `window`) → al abrir otro video, un clic o "Guardar PNG" guarda **el cuadro del video nuevo** con la galería del viejo. Arreglo: `const st = typeof state !== 'undefined' ? state : null;`.
+3. **Alta — la cola se puede perder al cerrar la app** (server.js:1851, :1870, :40): se guarda cada 700 ms con `writeFileSync` directo; si se corta a media escritura, el JSON queda roto y al abrir se sobrescribe con una cola vacía. Arreglo: guardar solo si cambió, escribir a `.tmp` + `renameSync`, y si no se puede leer renombrarlo a `.bad`.
+4. **Alta — pueden correr dos exports a la vez** (server.js:421 vs :1874): `exportVideo` revisa `job` y luego hace `await durationOf()` antes de marcarlo; en ese hueco la cola arranca un Short → dos ffmpeg, `job` sobrescrito y resultados cruzados. Arreglo: reservar `job` de forma síncrona antes del primer `await` (o candado `starting`).
+5. Media — cancelar justo al empezar no detiene el export (server.js:1911-1913): se resuelve con el punto 4.
+6. Media — procesos de miniaturas sin límite de tiempo (server.js:1386, :1819): si dos ffmpeg se cuelgan (disco USB/red), la galería se bloquea para siempre. Arreglo: matar a los ~30 s.
+7. Media — JPEG a medias en caché (server.js:1826): escribir a `.tmp` y renombrar.
+8. Menor — los videos de la cola leen cortes/ajustes/transcripción al exportar, no al encolar; y un trabajo ajeno que arranque en los ~700 ms entre items se le puede asignar a la cola.
+- Bien: sin path traversal, recuperación al reiniciar como se diseñó, sin ids inexistentes, scripts en buen orden.
+- Además (agente B): prueba real de la cola con 2 Shorts **pasó**: ambos "Listo", duración exacta, primer cuadro correcto (+1 cuadro esperado por el start_time del video) y sincronía 4.7 ms. Antes empezaban 30–45 cuadros tarde.
+
 ## Pendientes de llegar
-- nube/export-intro (corte exacto en el export y GPU), nube/miniaturas-cola (cola y miniaturas), método `lib/seek.js`.
+- nube/export-intro (corte exacto en el export y GPU) y el método `lib/seek.js`.
