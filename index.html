@@ -67,6 +67,7 @@
         <div class="editorMain">
         <div class="player"><video id="video" controls preload="metadata"></video><img id="scrubThumb" class="scrubThumb" alt=""><div id="animOverlay" class="animOverlay"></div><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
         <div class="row" style="margin-top:10px"><button id="grabFrame" class="secondary">📸 Exportar frame (para miniatura)</button><span class="muted">Pausa en el momento que quieras y pícalo. Sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
+        <details class="card thumbsPanel" id="thumbsPanel"><summary>🖼️ Miniaturas: galería a resolución completa</summary><div id="thumbsBody"></div></details>
         <div class="timelineWrap">
           <div class="tl-controls">
             <span id="tlTime" class="tl-time">0:00:00 / 0:00:00</span>
@@ -231,7 +232,8 @@
           <label class="inlineCheck mini"><input type="checkbox" id="exCensor"> 🤫 Silenciar TODAS las groserías del diccionario <small style="color:#8a968b">(aunque no las hayas marcado en el Paso 2; las marcadas se silencian siempre)</small></label>
           <label class="inlineCheck mini"><input type="checkbox" id="exGpu"> ⚡ Render rápido <small style="color:#8a968b">(ideal para videos largos; calidad casi igual)</small></label>
         </div>
-        <div class="row"><button id="export" class="primary">Exportar MP4</button><span id="exportInfo" class="muted"></span></div>
+        <div class="row"><button id="export" class="primary">Exportar MP4</button><button id="exportQueueAdd" type="button" class="secondary">➕ Agregar a la cola</button><span id="exportInfo" class="muted"></span></div>
+        <details class="card queuePanel" id="queuePanel" open><summary>📋 Cola de exports · <span id="queueBadge" class="muted">vacía</span></summary><div id="queueBody"></div></details>
         <div id="exportedFiles" class="exportedFiles"></div>
       </div>
       <div class="stepNav"><button type="button" class="secondary prev" data-go="3">← Atrás</button><span></span></div>
@@ -300,5 +302,8 @@
   <script src="/app.js"></script>
   <script src="/vision.js"></script>
   <script src="/investigar.js"></script>
+  <script src="/lib/thumbs.js"></script>
+  <script src="/miniaturas.js"></script>
+  <script src="/cola.js"></script>
 </body>
 </html>

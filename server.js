@@ -2253,7 +2253,8 @@ const server=http.createServer(async (req,res) => {
         const {width,height}=videoDimensions(project.videoPath);
         const side=Math.round(Math.max(90,Math.min(height,p.size*width*1.5))/2)*2;
         const x=Math.round(Math.max(0,Math.min(width-side,p.x*width-side/2))), y=Math.round(Math.max(0,Math.min(height-side,p.y*height-side*0.45)));
-        await runBG(readiness().ffmpeg,['-y','-ss',String(clip.start+p.t),'-i',project.videoPath,'-frames:v','1','-vf',`crop=${side}:${side}:${x}:${y},scale=160:160:flags=lanczos`,'-q:v','3',fp]);
+        const ex=exactClip(clip.start+p.t,0.5,3);
+        await runBG(readiness().ffmpeg,['-y',...COPYTS,...ex.input,'-frames:v','1','-vf',`${ex.vtrim},crop=${side}:${side}:${x}:${y},scale=160:160:flags=lanczos`,'-q:v','3',fp]);
       }
       return serveMedia(req,res,fp);
     }
