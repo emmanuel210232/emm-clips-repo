@@ -62,20 +62,24 @@ async function withServer(dir, fn) {
   } catch (e) { e.message += '\n--- servidor ---\n' + log.slice(-3000); throw e; } finally { child.kill(); }
 }
 
+// La fuente misma mide ~21 ms (el "retraso" de arranque del AAC en MPEG-TS): se compara contra ESO, no contra 0.
+let SRC_MS = 0;
 async function check(name, job, expected, { muteMain = true } = {}) {
   const pr = await AV.probe(job.output);
   const sync = await AV.measureSync(job.output);
   const tDur = expected.teaser;
   const inT = sync.pairs.filter(p => p.t < tDur - 0.5), inM = sync.pairs.filter(p => p.t > tDur + 0.5);
   const maxAbs = l => l.length ? Math.max(...l.map(p => Math.abs(p.ms))) : null;
+  const maxDev = l => l.length ? +Math.max(...l.map(p => Math.abs(p.ms - SRC_MS))).toFixed(1) : null;
   const errs = await AV.decodeErrors(job.output);
   const res = {
     caso: name, duracion: +pr.duration.toFixed(3), esperada: +(expected.teaser + expected.main).toFixed(3),
-    avance: { fragmentos: (job.teaser || []).length, duracion: tDur, pares: inT.length, maxMs: maxAbs(inT) },
-    video: { pares: inM.length, maxMs: maxAbs(inM) }, erroresDecodificacion: errs,
+    fuenteMs: SRC_MS,
+    avance: { fragmentos: (job.teaser || []).length, duracion: tDur, pares: inT.length, maxMs: maxAbs(inT), maxDesvioMs: maxDev(inT) },
+    video: { pares: inM.length, maxMs: maxAbs(inM), maxDesvioMs: maxDev(inM) }, erroresDecodificacion: errs,
   };
   const frame = 1000 / 60 + 0.5;
-  res.ok = Math.abs(res.duracion - res.esperada) < 0.12 && inT.length >= 3 && inM.length >= 10 && maxAbs(inT) <= frame && maxAbs(inM) <= frame && errs === 0;
+  res.ok = Math.abs(res.duracion - res.esperada) < 0.12 && inT.length >= 3 && inM.length >= 10 && maxDev(inT) <= frame && maxDev(inM) <= frame && errs === 0;
   // La grosería: en el video, el destello que cae en la grosería NO debe tener bip (silenciado, sin bip encima).
   if (muteMain && expected.swearAt != null) {
     const near = sync.beepTimes.filter(b => Math.abs(b - expected.swearAt) < 0.1);
@@ -93,13 +97,14 @@ async function check(name, job, expected, { muteMain = true } = {}) {
   const src = path.join(WORK, `fuente_${SECONDS}s.ts`);
   if (!fs.existsSync(src)) { console.log(`Creando fuente sintética de ${SECONDS} s (MPEG-TS 1080p60)…`); await AV.makeSyncSource(src, { seconds: SECONDS }); }
   const T = require('../lib/teaser');
+  { const s = await AV.measureSync(src); SRC_MS = s.meanMs; console.log(`Sincronía de la fuente: ${s.meanMs} ms (máx ${s.maxAbsMs})`); }
   const results = [];
   const base = (dir, { bestof }) => {
     copyApp(dir);
     wj(dir, 'config.json', { ffmpeg: FFMPEG, ffprobe: FFPROBE });
     wj(dir, 'project.json', { videoPath: src, openedAt: new Date().toISOString() });
     wj(dir, 'transcript.json', transcript(SECONDS));
-    wj(dir, 'dictionary.json', [{ term: 'chingada', enabled: true }]);
+    fs.writeFileSync(path.join(dir, 'dictionary.json'), JSON.stringify([{ term: 'chingada', enabled: true }])); // va en la raíz de la app
     if (bestof) wj(dir, 'bestof.json', { videoPath: src, scannedAt: Date.now(), candidates: [
       { start: 10, end: 45, score: 9, gancho: 'uno' }, { start: 55, end: 90, score: 8, gancho: 'grosería' },
       { start: 125, end: 160, score: 7, gancho: 'tres' }, { start: 190, end: 230, score: 6, gancho: 'cuatro' }] });
