@@ -157,7 +157,10 @@ function loadClips(){const dur=tlDuration();
   if(dur && (state?.manualCuts||[]).length){ clips=keptFromCuts(state.manualCuts,dur); saveClips(); return; }
   clips=dur?[{start:0,end:dur}]:[];}
 function saveClips(){try{localStorage.setItem(clipsKey(),JSON.stringify(clips));}catch{}trackHistory();}
-function ensureClips(){const dur=tlDuration();if(!clips)loadClips();if((!clips||!clips.length)&&dur)clips=[{start:0,end:dur}];return clips||[];}
+function ensureClips(){const dur=tlDuration();if(!clips)loadClips();if((!clips||!clips.length)&&dur)clips=[{start:0,end:dur}];
+  // Punto de partida del historial: sin esto el PRIMER cambio tras abrir el video (p. ej. dividir) no se podía deshacer.
+  if(lastSavedClips==null&&clips&&clips.length)lastSavedClips=encClips(clips);
+  return clips||[];}
 function clipsSig(){return (clips||[]).map(c=>c.start.toFixed(1)+'-'+c.end.toFixed(1)+(c.zoom?'z':'')+(c.trans?'t':'')+(c.join?'j':'')).join(',');}
 function totalOut(){return (clips||[]).reduce((a,c)=>a+(c.end-c.start),0);}
 function clipOutBounds(){let acc=0;return (clips||[]).map(c=>{const o={outStart:acc,outEnd:acc+(c.end-c.start)};acc=o.outEnd;return o;});}
