@@ -14,6 +14,7 @@ const { detectSubjectX, smoothTrack, cropExpression, zoomExpression, planZooms, 
 const { direct } = require('./lib/director');
 const { createUpdater } = require('./lib/updater');
 const seek = require('./lib/seek'); // corte exacto en MPEG-TS (-copyts + trim absoluto)
+const hwaccel = require('./lib/hwaccel'); // decodificación por GPU (NVDEC) con caída a CPU
 // Opcional a propósito: si una actualización llegara sin lib/teaser.js (falta en version.json), la app SÍ arranca;
 // solo la opción del avance avisa que falta.
 let teaserLib = null; try { teaserLib = require('./lib/teaser'); } catch {}
@@ -138,7 +139,31 @@ function state() { return { project, config, dictionary, transcript, shorts, adj
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
-function run(exe, args, onOutput = () => {}) { return new Promise((resolve, reject) => { const child = spawn(exe, args, { windowsHide: true, cwd: ROOT }); activeProc = child; let stderr=''; child.stderr.on('data', b => { const s=b.toString(); stderr=(stderr+s).slice(-5000); onOutput(s); }); child.stdout.on('data', b => onOutput(b.toString())); child.on('error', e => { if (activeProc===child) activeProc=null; reject(e); }); child.on('close', code => { if (activeProc===child) activeProc=null; if (code === 0) resolve(); else if (job.cancelRequested) reject(Error('Proceso cancelado por el usuario.')); else reject(Error(`${path.basename(exe)} terminó con código ${code}: ${stderr.slice(-700)}`)); }); }); }
+// DECODIFICAR POR GPU (NVDEC): mismo comando con -hwaccel cuda antes de cada entrada de video (lib/hwaccel.js). Los
+// cuadros bajan a memoria normal → filtros y codificador IGUALES, misma calidad (la decodificación H.264 es exacta).
+// Si la GPU no puede decodificar (sin NVIDIA, driver viejo, sin memoria de video), repite el MISMO comando por CPU y
+// ya no lo vuelve a intentar en esta sesión. want=false (el usuario apagó la GPU) → idéntico a antes.
+const hwDecode = { on: null };
+// Más de MAX_HW_INPUTS entradas de video (camino SEG con hasta 120 pedazos / cutBase): cada una abriría su propio
+// decodificador NVDEC y la memoria de video se llena → ese comando va por CPU (sin apagar la GPU para los demás).
+const MAX_HW_INPUTS = 16;
+async function runDec(exe, args, onOutput, want = true) {
+  if (!want) return run(exe, args, onOutput);
+  if (hwDecode.on === null) hwDecode.on = await hwaccel.probeCuda(exe);
+  if (!hwDecode.on) return run(exe, args, onOutput);
+  const hwArgs = hwaccel.withHwaccel(args, { gpu: true });
+  if (hwArgs.filter(a => a === '-hwaccel').length > MAX_HW_INPUTS) return run(exe, args, onOutput);
+  try { return await run(exe, hwArgs, onOutput); }
+  catch (e) {
+    if (job.cancelRequested) throw e;
+    // Solo una falla REAL de NVDEC/CUDA (según el stderr completo) pasa a CPU; cualquier otra falla se reporta tal cual.
+    if (!hwaccel.isHwaccelFailure(e.stderr || e.message)) throw e;
+    hwDecode.on = false;
+    job.message = 'La GPU no pudo leer el video; sigo leyéndolo con el procesador (misma calidad)…'; job.percent = 0;
+    return run(exe, args, onOutput);
+  }
+}
+function run(exe, args, onOutput = () => {}) { return new Promise((resolve, reject) => { const child = spawn(exe, args, { windowsHide: true, cwd: ROOT }); activeProc = child; let stderr=''; child.stderr.on('data', b => { const s=b.toString(); stderr=(stderr+s).slice(-5000); onOutput(s); }); child.stdout.on('data', b => onOutput(b.toString())); child.on('error', e => { if (activeProc===child) activeProc=null; reject(e); }); child.on('close', code => { if (activeProc===child) activeProc=null; if (code === 0) resolve(); else if (job.cancelRequested) reject(Error('Proceso cancelado por el usuario.')); else { const err=Error(`${path.basename(exe)} terminó con código ${code}: ${stderr.slice(-700)}`); err.stderr=stderr; reject(err); } }); }); }
 function capture(exe,args,maxBytes=30*1024*1024) { return new Promise((resolve,reject)=>{ const child=spawn(exe,args,{windowsHide:true,cwd:ROOT}); const chunks=[];let size=0,stderr='';child.stdout.on('data',b=>{size+=b.length;if(size>maxBytes){child.kill();reject(Error('Demasiados fotogramas para analizar.'));return;}chunks.push(b)});child.stderr.on('data',b=>{stderr=(stderr+b.toString()).slice(-2000)});child.on('error',reject);child.on('close',code=>code===0?resolve(Buffer.concat(chunks)):reject(Error(`FFmpeg no pudo analizar el encuadre: ${stderr.slice(-500)}`)));}); }
 // Diálogos nativos de Windows (abrir/guardar) — la app corre en la PC del usuario.
 function nativeDialog(kind, defaultName='') {
@@ -491,16 +516,16 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
           const gpuEnc=nvencArgs(q.copy?23:(q.crf||20)+3);
           const targs=enc=>['-y',...seek.COPYTS,'-i',project.videoPath,...extra,...tg.inputs,'-/filter_complex',fscript,'-map',vOut,'-map','[tzoa]',...enc,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
           job.message=`Silenciando y exportando con avance (${tPlan.fragments.length} momentos, ${Math.round(tg.duration)} s)…`;
-          try{ await run(bins.ffmpeg, targs(gpu?gpuEnc:cpuEnc), progress(total,gpu?'Exportando con avance (GPU)':'Exportando con avance')); }
-          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await run(bins.ffmpeg, targs(cpuEnc), progress(total,'Exportando con avance')); }
+          try{ await runDec(bins.ffmpeg, targs(gpu?gpuEnc:cpuEnc), progress(total,gpu?'Exportando con avance (GPU)':'Exportando con avance'), gpu); }
+          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await runDec(bins.ffmpeg, targs(cpuEnc), progress(total,'Exportando con avance'), gpu); }
         } else if(fx && !q.scale && !q.fps){
           // UN SOLO PASO: silenciar + efecto de entrada/salida juntos (no hay dos barras).
           const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=videoFps(project.videoPath);
           const fxg=clipFxParts('[m]', duration, clipIn, clipOut, clipDur, EW, EH, efps, 1);
           const parts=[`[0:v]settb=AVTB,fps=${efps},format=yuv420p,setsar=1[m]`, ...fxg.parts, `[0:a]${af}[ao]`];
           const fxArgs=enc=>['-y','-i',project.videoPath,...fxg.inputs,'-filter_complex',parts.join(';'),'-map',fxg.label,'-map','[ao]',...enc,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
-          try{ await run(bins.ffmpeg, fxArgs(gpu?nvencArgs(23):HQ_VIDEO), progress(duration,gpu?'Silenciando y aplicando efecto (GPU)':'Silenciando y aplicando efecto')); }
-          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await run(bins.ffmpeg, fxArgs(HQ_VIDEO), progress(duration,'Silenciando y aplicando efecto')); }
+          try{ await runDec(bins.ffmpeg, fxArgs(gpu?nvencArgs(23):HQ_VIDEO), progress(duration,gpu?'Silenciando y aplicando efecto (GPU)':'Silenciando y aplicando efecto'), gpu); }
+          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await runDec(bins.ffmpeg, fxArgs(HQ_VIDEO), progress(duration,'Silenciando y aplicando efecto'), gpu); }
           fxInFinalizeIn='none'; fxInFinalizeOut='none'; // ya aplicado
         } else {
           const base=['-y','-i',project.videoPath,'-map','0:v:0','-map','0:a:0'];
@@ -660,8 +685,8 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         const out=path.join(DATA,`batch_${crypto.randomUUID()}.mov`); parts.push(out);
         const args=enc=>['-y',...seek.COPYTS,...tg.inputs,'-/filter_complex',fscript,'-map',vl,'-map',tg.a,...enc,'-c:a','pcm_s16le',out];
         job.message=`Exportando el avance (${tPlan.fragments.length} momentos)…`;
-        try{ await run(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando avance',{t0})); }
-        catch(e){ if(!useGpu||job.cancelRequested) throw e; useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; await run(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando avance',{t0})); }
+        try{ await runDec(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando avance',{t0}),gpu); }
+        catch(e){ if(!useGpu||job.cancelRequested) throw e; useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; await runDec(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando avance',{t0}),gpu); }
         doneSec+=tDur;
       }
       for(let g=0; g<groups.length; g++){
@@ -699,11 +724,11 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         const out=path.join(DATA,`batch_${crypto.randomUUID()}.mov`); parts.push(out);
         const args=enc=>['-y',...seek.COPYTS,...ins,...extra,'-/filter_complex',fscript,'-map',vl,'-map','[ca]',...enc,'-c:a','pcm_s16le',out];
         job.message=`Exportando video limpio… (parte ${g+1} de ${groups.length})`;
-        try{ await run(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0})); }
+        try{ await runDec(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0}),gpu); }
         catch(e){
           if(!useGpu||g>0||tPlan||job.cancelRequested) throw e;
           useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…';
-          await run(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0}));
+          await runDec(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0}),gpu);
         }
         doneSec+=gLen;
       }
@@ -744,11 +769,11 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
       const cutTail=['-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
       if(BATCH) await exportBatched();
       else try{
-        await run(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal+tDur,'Exportando'));
+        await runDec(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal+tDur,'Exportando'), gpu);
       }catch(gpuErr){
         if(!gpu || job.cancelRequested) throw gpuErr;
         job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; job.percent=0;
-        await run(bins.ffmpeg, [...cutBase,...cutVx264,...cutTail], progress(keptTotal+tDur,'Exportando'));
+        await runDec(bins.ffmpeg, [...cutBase,...cutVx264,...cutTail], progress(keptTotal+tDur,'Exportando'), gpu);
       }
       await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,cutFxIn,cutFxOut,clipDur);
       const tNote=wantTeaser?(tPlan?` · con avance de ${tPlan.fragments.length} momentos (${Math.round(tPlan.duration)} s)`:' · sin avance (no encontré suficientes momentos; el video es muy corto)'):'';

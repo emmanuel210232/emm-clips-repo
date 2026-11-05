@@ -62,15 +62,36 @@ async function withServer(dir, fn) {
   } catch (e) { e.message += '\n--- servidor ---\n' + log.slice(-3000); throw e; } finally { child.kill(); }
 }
 
-// La fuente misma mide ~21 ms (el "retraso" de arranque del AAC en MPEG-TS): se compara contra ESO, no contra 0.
+// SINCRONÍA: la fuente pone el destello y el bip en el MISMO instante, así que la sincronía real es 0 ms. Medida sobre la
+// fuente MPEG-TS sale ~21 ms porque su video empieza 21 ms después que su audio (start_time distinto por stream) y la
+// medición toma cada stream desde su propio inicio: es un artefacto de la medición, no un desfase. Por eso el criterio
+// es |bip − destello| ≤ 1 cuadro CONTRA 0 (no contra los 21 ms de la fuente); SRC_MS solo se imprime como referencia.
 let SRC_MS = 0;
+// CUADRO EXACTO: cada destello de la salida debe caer donde lo predicen los tiempos pedidos (cada segundo entero del
+// original que entra en un pedazo). Con el método viejo (-ss + trim relativo) caían ~1.4 s (≈85 cuadros) corridos.
+const FRAME_TOL_MS = 30; // < 2 cuadros a 60 fps (redondeo de cuadro + 21 ms de inicio del video en la fuente)
+function expectedFlashes(pieces) { // pieces: [{out, start, end}] en segundos
+  const out = [];
+  for (const p of pieces) for (let sec = Math.ceil(p.start - 1e-6); sec < p.end - 1e-6; sec++) out.push(p.out + (sec - p.start));
+  return out;
+}
+function frameCheck(flashTimes, expected, from = 0, to = Infinity) {
+  const fl = flashTimes.filter(t => t >= from && t < to);
+  const errs = fl.map(t => expected.reduce((m, e) => Math.min(m, Math.abs(e - t)), Infinity) * 1000);
+  return { destellos: fl.length, maxErrorMs: errs.length ? +Math.max(...errs).toFixed(1) : null };
+}
+function teaserPieces(frags) {
+  const d = frags.length > 1 ? Math.min(0.5, Math.min(...frags.map(f => f.end - f.start)) / 3) : 0; let t = 0;
+  return frags.map(f => { const p = { out: t, start: f.start, end: f.end }; t += (f.end - f.start) - d; return p; });
+}
+function mainPieces(segs, offset) { let t = offset; return segs.map(s => { const p = { out: t, start: s.start, end: s.end }; t += s.end - s.start; return p; }); }
 async function check(name, job, expected, { muteMain = true } = {}) {
   const pr = await AV.probe(job.output);
   const sync = await AV.measureSync(job.output);
   const tDur = expected.teaser;
   const inT = sync.pairs.filter(p => p.t < tDur - 0.5), inM = sync.pairs.filter(p => p.t > tDur + 0.5);
   const maxAbs = l => l.length ? Math.max(...l.map(p => Math.abs(p.ms))) : null;
-  const maxDev = l => l.length ? +Math.max(...l.map(p => Math.abs(p.ms - SRC_MS))).toFixed(1) : null;
+  const maxDev = l => l.length ? +Math.max(...l.map(p => Math.abs(p.ms - SRC_MS))).toFixed(1) : null; // solo referencia
   const errs = await AV.decodeErrors(job.output);
   const res = {
     caso: name, duracion: +pr.duration.toFixed(3), esperada: +(expected.teaser + expected.main).toFixed(3),
@@ -79,7 +100,13 @@ async function check(name, job, expected, { muteMain = true } = {}) {
     video: { pares: inM.length, maxMs: maxAbs(inM), maxDesvioMs: maxDev(inM) }, erroresDecodificacion: errs,
   };
   const frame = 1000 / 60 + 0.5;
-  res.ok = Math.abs(res.duracion - res.esperada) < 0.12 && inT.length >= 3 && inM.length >= 10 && maxDev(inT) <= frame && maxDev(inM) <= frame && errs === 0;
+  // Cuadro exacto en el avance y en el video principal.
+  const tP = teaserPieces(job.teaser || []);
+  res.avance.cuadro = frameCheck(sync.flashTimes, expectedFlashes(tP), 0, tDur - 0.05);
+  if (expected.mainPieces) res.video.cuadro = frameCheck(sync.flashTimes, expectedFlashes(expected.mainPieces), tDur + 0.05);
+  const frameOk = c => !c || (c.destellos >= 3 && c.maxErrorMs <= FRAME_TOL_MS);
+  res.ok = Math.abs(res.duracion - res.esperada) < 0.12 && inT.length >= 3 && inM.length >= 10 && maxAbs(inT) <= frame && maxAbs(inM) <= frame && errs === 0
+    && frameOk(res.avance.cuadro) && frameOk(res.video.cuadro);
   // La grosería: en el video, el destello que cae en la grosería NO debe tener bip (silenciado, sin bip encima).
   if (muteMain && expected.swearAt != null) {
     const near = sync.beepTimes.filter(b => Math.abs(b - expected.swearAt) < 0.1);
@@ -116,7 +143,8 @@ async function check(name, job, expected, { muteMain = true } = {}) {
     const job = await withServer(dir, async () => { await api('/api/export', { mode: 'cut', segments: segs, selectedIds: [], censor: true, gpu: true, quality: 'original', enhance: { normalize: true }, teaser: { on: true } }); return waitJob(); });
     const main = segs.reduce((a, s) => a + s.end - s.start, 0);
     // la grosería (61) cae en el 2º clip: en la salida está en 40 + (61-50) = 51 s después del avance
-    results.push(await check('A', job, { teaser: T.teaserDuration(job.teaser), main, swearAt: T.teaserDuration(job.teaser) + 51 }));
+    const tdA = T.teaserDuration(job.teaser);
+    results.push(await check('A', job, { teaser: tdA, main, swearAt: tdA + 51, mainPieces: mainPieces(segs, tdA) }));
   }
   if (CASES.includes('B')) {
     const dir = path.join(WORK, 'appB'); base(dir, { bestof: false });
@@ -125,14 +153,16 @@ async function check(name, job, expected, { muteMain = true } = {}) {
       const m = await api('/api/state'); const ids = (m.matches || []).map(x => x.id);
       await api('/api/export', { mode: 'mute', selectedIds: ids, gpu: true, quality: 'lite', enhance: 'none', teaser: { on: true } }); return waitJob(); });
     const td = T.teaserDuration(job.teaser);
-    results.push(await check('B', job, { teaser: td, main: (await AV.probe(src)).duration, swearAt: td + 61 }));
+    const srcDur = (await AV.probe(src)).duration;
+    results.push(await check('B', job, { teaser: td, main: srcDur, swearAt: td + 61, mainPieces: [{ out: td, start: 0, end: srcDur }] }));
   }
   if (CASES.includes('C')) {
     const dir = path.join(WORK, 'appC'); base(dir, { bestof: true });
     const segs = []; for (let t = 0.5; t + 1.5 <= SECONDS; t += 1.8) segs.push({ start: +t.toFixed(3), end: +(t + 1.5).toFixed(3) });
     console.log(`C) Cortar con ${segs.length} clips (por tandas) + avance como parte 0`);
     const job = await withServer(dir, async () => { await api('/api/export', { mode: 'cut', segments: segs, selectedIds: [], censor: true, gpu: true, quality: 'original', enhance: 'none', teaser: { on: true } }); return waitJob(); });
-    results.push(await check('C', job, { teaser: T.teaserDuration(job.teaser), main: segs.reduce((a, s) => a + s.end - s.start, 0) }, { muteMain: false }));
+    const tdC = T.teaserDuration(job.teaser);
+    results.push(await check('C', job, { teaser: tdC, main: segs.reduce((a, s) => a + s.end - s.start, 0), mainPieces: mainPieces(segs, tdC) }, { muteMain: false }));
   }
   const ok = results.every(r => r.ok);
   console.log(ok ? '✅ Todo bien' : '❌ Hay fallas'); process.exit(ok ? 0 : 1);
