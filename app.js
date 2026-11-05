@@ -377,7 +377,7 @@ function editedPlaybackTick(){
   }
 }
 function buildTimeline(){
-  const bar=$('timeline'); if(!bar) return;
+  const bar=$('timeline'); if(!bar||!state) return; // aún no llega /api/state (al abrir la app)
   const dur=tlDuration(); ensureClips(); const T=totalOut();
   const fp=`${Math.round(dur)}|${tlZoom}|${state.filmstrip?state.filmstrip.count:0}|${clipsSig()}`;
   if(bar.dataset.fp===fp && bar.childElementCount){positionHead();drawSelection();return;}
@@ -539,7 +539,7 @@ function render() {
   if(av){av.disabled=!state.dfReady;if(!state.dfReady)av.checked=false;}
   if(avWrap)avWrap.classList.toggle('disabled',!state.dfReady);
   if(gd)gd.hidden=!!state.dfReady;
-  const rb=$('readyBar');const miss=[];if(!ready.ffmpeg)miss.push('FFmpeg');if(!ready.whisper)miss.push('Whisper');if(!ready.model)miss.push('modelo de voz');rb.hidden=false;if(miss.length){rb.className='readyBar warn';rb.textContent='⚠️ Falta configurar: '+miss.join(', ')+'. Ábrelo en “Configuración de motores” (abajo a la derecha).';}else{rb.className='readyBar ok';rb.textContent=p?'✅ Todo listo. Transcribe el video y busca tus momentos.':'✅ Todo listo. Abre un video para empezar.';}
+  const rb=$('readyBar');const miss=[];if(!ready.ffmpeg)miss.push('FFmpeg');if(!ready.whisper)miss.push('Whisper');if(!ready.model)miss.push('modelo de voz');rb.hidden=false;if(miss.length){rb.className='readyBar warn';rb.textContent='⚠️ Falta configurar: '+miss.join(', ')+'. Ábrelo en “⚙️ Configuración” (panel izquierdo, abajo).';}else{rb.className='readyBar ok';rb.textContent=p?'✅ Todo listo. Transcribe el video y busca tus momentos.':'✅ Todo listo. Abre un video para empezar.';}
   const j=state.job;$('exportInfo').textContent=j.status==='running'?j.message:j.status==='done'?j.message:'';
   const running=j.status==='running';
   $('jobBar').hidden=!running;
@@ -663,8 +663,9 @@ function switchMode(mode){
   document.body.classList.toggle('research-mode', research);
   const sec=$('bestofSection'); if(sec) sec.hidden=!bestof;
   const rsec=$('researchSection'); if(rsec) rsec.hidden=!research;
-  const btn=$('modeToggle'); if(btn) btn.textContent = bestof?'✂️ Editor de cortos':'🎬 Resumen del directo';
-  const rbtn=$('researchToggle'); if(rbtn) rbtn.textContent = research?'✂️ Editor de cortos':'🔍 Investigar';
+  // Panel izquierdo: el modo activo se marca (clic otra vez = regresar al editor).
+  const btn=$('modeToggle'); if(btn) btn.classList.toggle('active', bestof);
+  const rbtn=$('researchToggle'); if(rbtn) rbtn.classList.toggle('active', research);
   try{ localStorage.setItem('eirl_mode', mode); }catch{}
   if(bestof) buildBestof();
   if(research && typeof openResearch==='function') openResearch();
@@ -897,8 +898,9 @@ async function checkRequirementsOnStart(){
   if(!d.ollama){ let seen=false; try{ seen=localStorage.getItem('eirl_req_seen')==='1'; }catch{} if(!seen){ try{localStorage.setItem('eirl_req_seen','1');}catch{} openRequirements(); } }
 }
 // Asistente por pasos (wizard)
-function goStep(n){n=Math.max(1,Math.min(4,Number(n)||1));document.querySelectorAll('.step').forEach(s=>{s.hidden=Number(s.dataset.step)!==n;});document.querySelectorAll('.wstep').forEach(b=>{const bn=Number(b.dataset.step);b.classList.toggle('active',bn===n);b.classList.toggle('done',bn<n);});try{localStorage.setItem('eirl_step',String(n));}catch{}window.scrollTo({top:0,behavior:'smooth'});if(n===1){const tl=document.getElementById('timeline');if(tl)tl.dataset.fp='';setTimeout(()=>{try{buildTimeline();}catch{}},90);}}
-document.querySelectorAll('.wstep').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.step)));
+function goStep(n){n=Math.max(1,Math.min(4,Number(n)||1));document.querySelectorAll('.step').forEach(s=>{s.hidden=Number(s.dataset.step)!==n;});document.querySelectorAll('.wstep').forEach(b=>{const bn=Number(b.dataset.step);b.classList.toggle('active',bn===n);b.classList.toggle('done',bn<n);});try{localStorage.setItem('eirl_step',String(n));}catch{}window.scrollTo({top:0,behavior:'smooth'});const ins=$('inspector');if(ins)ins.scrollTop=0;if(n===1){const tl=document.getElementById('timeline');if(tl)tl.dataset.fp='';setTimeout(()=>{try{buildTimeline();}catch{}},90);}}
+document.querySelectorAll('.wstep').forEach(b=>b.addEventListener('click',()=>{if(document.body.classList.contains('bestof-mode')||document.body.classList.contains('research-mode'))switchMode('cortos');goStep(b.dataset.step);}));
+if($('railConfig')) $('railConfig').onclick=()=>{if(document.body.classList.contains('bestof-mode')||document.body.classList.contains('research-mode'))switchMode('cortos');const c=$('configFooter');if(c){c.open=true;c.scrollIntoView({behavior:'smooth',block:'start'});}};
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>goStep(b.dataset.go)));
 goStep(1); // siempre empezar en el paso 1 (como CapCut), no en el último
 try{ const m=localStorage.getItem('eirl_mode'); if(m==='bestof'||m==='research') switchMode(m); }catch{}
