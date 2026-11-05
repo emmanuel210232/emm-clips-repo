@@ -1,38 +1,38 @@
-# Reporte — Tarea 6: Miniaturas y cola de exports (rama `nube/miniaturas-cola`) — **A MEDIAS**
-
-> ⚠️ **No publicar todavía.** Falta la interfaz y el PNG puede salir de otro momento a mitad del video (ver Riesgos).
+# Reporte — Tarea 6: Miniaturas y cola de exports (rama `nube/miniaturas-cola`)
 
 ## Qué hice
-- **`lib/thumbs.js`** (sirve en Node y en el navegador) + `tests/thumbs.test.js`:
-  - Elige qué fotogramas mostrar: todo el video (sin el primer y último 1 %), alrededor de un momento, o los mejores momentos de `data/bestof.json` por score (sin resumen usa todo el video).
-  - Puntúa qué tan expresiva es una cara con datos de MediaPipe: boca abierta, sonrisa, cejas arriba y ojos muy abiertos suben; ojos cerrados, cara chica o en la orilla y foto movida bajan.
-  - Da las mejores sugerencias sin repetir casi el mismo momento.
-- **`lib/queue.js`** + `tests/queue.test.js`: cola de exports con estados en espera / exportando / listo / error / cancelado.
-  - Guarda una copia de las opciones al agregar; se puede cancelar, quitar, reintentar y mover.
-  - Al reabrir la app, lo que estaba exportando queda como error y la cola en pausa.
-  - Salta los exports de otro video con aviso.
-- **`server.js`**:
-  - El botón "Exportar MP4" y la cola llaman a la misma función, así que la calidad y el método de export no cambian. `renderShort` ahora usa `renderShortClip(clip)`, que es lo que llama la cola.
-  - `/api/thumbs/plan` (tiempos, tamaño, fps), `/api/thumbs/frame` (JPG chico para la galería, en caché en `data/thumbs/`, máximo 2 ffmpeg a la vez, no se mete con Cancelar ni con un export) y `/api/thumbs/save` (PNG del original sin reescalar en `exports/` + copia a Descargas; salto 3 s antes + `trim`; BT.709 si el video no trae etiqueta de color).
-  - `/api/queue` y `/api/queue/add|start|pause|cancel|remove|retry|move|clear`; la cola se guarda en `data/export_queue.json`.
-  - Se sirven `/lib/thumbs.js`, `/miniaturas.js` y `/cola.js` (estos dos aún no existen).
+- **Corte exacto (`lib/seek.js`)** en todo lo de esta rama: PNG y JPG de la galería; Shorts (render, energía de la voz, encuadre, cuadros para MediaPipe y cara recortada); "📸 Exportar frame" y las vistas de revisión de cortes. Antes, con `-ss` directo en MPEG-TS, **un Short empezaba 0.5–0.75 s tarde** y sus subtítulos/zooms quedaban desfasados, y el PNG salía de otro cuadro. Ahora se abre unos segundos antes con `-copyts` y se corta en el tiempo absoluto = el cuadro que muestra el reproductor.
+- **`lib/thumbs.js`** (Node y navegador): qué cuadros mostrar (todo el video / alrededor del momento / mejores momentos de `data/bestof.json`); puntaje de expresión con blendshapes de MediaPipe; mejores sugerencias sin repetir el mismo momento.
+- **`lib/queue.js`**: cola con estados en espera / exportando / listo / error / cancelado, guardada en `data/export_queue.json`.
+- **Servidor**: `/api/thumbs/plan|frame|save`; `/api/queue` y `/api/queue/add|start|pause|cancel|remove|retry|move|clear`. La cola llama a las mismas funciones que "Exportar MP4" y "Crear Short": misma calidad y método.
+- **Interfaz**:
+  - `miniaturas.js`: plegable "🖼️ Miniaturas" bajo el reproductor: galería, ◀ ▶ un cuadro, "⏯ Ir a este momento", "💾 Guardar PNG" (exports + Descargas) y "✨ Sugerir caras expresivas" (FaceLandmarker con blendshapes; si no carga sin internet, avisa y la galería sigue).
+  - `cola.js`: plegable "📋 Cola de exports" en Exportar: empezar/pausar, cancelar, reintentar, subir/bajar, quitar y limpiar terminados.
+  - "➕ Agregar a la cola" junto a "Exportar MP4" y "➕ A la cola" en cada Short (corre `visionBeforeRender`).
+  - Cambios en `index.html` y `style.css` agrupados en un bloque; no se quitó ningún id.
 
 ## Cómo probarlo
 ```bash
 for f in tests/*.test.js; do node "$f"; done
 ```
-Medido con un video de prueba MPEG-TS 1080p60 de 90 s: el plan regresa 12 tiempos con 1920×1080 a 60 fps; el JPG de la galería pesa ~10 KB (~15 ms en caché); los PNG salen 1920×1080 `rgb24`.
+`tests/thumbs-exacto.test.js` arranca el `server.js` real con un MPEG-TS sintético (start_time 1.4 s) y compara PNG/JPG en 5 tiempos contra el cuadro decodificado desde el inicio: **0 cuadros de diferencia** en todos. Manual: `EDITOR_IRL_PORT=4430 node server.js`, abrir un directo, "🖼️ Miniaturas" → galería → ◀ ▶ → Guardar PNG; en Exportar, "➕ Agregar a la cola" dos veces y "▶ Empezar la cola".
+
+## Mediciones
+- Short con `-ss` directo (antes): empezaba 30–45 cuadros tarde.
+- Miniaturas con `-copyts` + trim absoluto: 0 cuadros de diferencia en 5 tiempos.
+- Prueba real de la cola con 2 Shorts: **sin resultado**, seguía corriendo al cerrar la sesión.
 
 ## Riesgos
-- **El PNG puede salir de otro momento.** En t=0.5 s el PNG es exactamente el cuadro 30 (bien), pero en 37.5, 61.25 y 88.9 s **no** es el cuadro esperado, ni a ±2 cuadros. Probable causa: con MPEG-TS, `-ss` antes de `-i` cae tarde (hasta ~1.3 s) y el `trim` relativo asume que cayó exacto. Siguiente paso: medir contra `select=eq(n\,N)` decodificando desde el inicio en un rango de ±150 cuadros y corregir (`-copyts` con `trim` sobre el tiempo absoluto restando el `start_time` del MPEG-TS, o `-ss` como opción de salida en una ventana corta).
-  - **Ojo:** conviene revisar si el mismo supuesto afecta al export (pre-roll de 15 s + `trim`); el export ya se midió con sincronía A/V correcta, pero la sincronía puede estar bien aunque el corte empiece unos cuadros antes o después.
-- La cola sabe que terminó un export cuando el trabajo deja de estar "en curso" (revisa cada 0.7 s). Si otro proceso arranca justo en ese hueco, podría confundirse. Es raro.
-- A los Shorts encolados les falta correr `visionBeforeRender` al agregarlos (va con la interfaz).
+- **No se probó la interfaz nueva en el navegador** ni se tomaron capturas.
+- No se midió la sincronía A/V del Short ya corregido ni que sus subtítulos coincidan con la voz.
+- MediaPipe no se pudo probar aquí; el puntaje se probó con datos sintéticos.
+- La cola detecta el fin de un export cuando el trabajo deja de estar "en curso" (cada 0.7 s); si otro proceso arranca justo en ese hueco podría confundirse. Es raro.
+- Al juntar con `nube/integracion` habrá conflictos en `index.html`, `app.js` y `style.css`. También con `nube/export-intro`, que aplicó el corte exacto a los Shorts en la función vieja (aquí está en `renderShortClip`).
 
 ## Qué falta
-1. Interfaz: `miniaturas.js` (galería, ◀ ▶ un cuadro, "Guardar PNG", "✨ Sugerir caras expresivas" con FaceLandmarker `outputFaceBlendshapes:true` usando `MP_BASE`/`MP_MODELS` de `vision.js`, aviso si no carga sin internet) y `cola.js` (lista con estados y botones, "➕ Agregar a la cola" junto a "Exportar MP4" y en cada Short).
-2. Corregir y medir la precisión del fotograma.
-3. Probar la cola con 2 exports reales.
-4. Fusionar `main` (1.27.13) y acomodar la interfaz en el rediseño de `nube/diseno`.
+- Probar la interfaz en el navegador y tomar capturas.
+- Correr la cola con 2 exports reales y medir sincronía y cuadro exacto del Short.
+- Correr `tools-dev/check_cut.js` con un directo real en Windows.
 
-**Antes de publicar en `main`:** agregar `lib/thumbs.js` y `lib/queue.js` a `version.json` → `files` (sin ellos la app no arranca porque `server.js` los usa), y `miniaturas.js` y `cola.js` cuando existan.
+## Antes de publicar en `main`
+Agregar a `version.json` → `files`: `lib/thumbs.js`, `lib/queue.js`, `lib/seek.js`, `miniaturas.js`, `cola.js`. Sin los tres de `lib/`, **la app no arranca**.
