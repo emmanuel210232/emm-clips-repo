@@ -12,7 +12,9 @@ const { suggestShorts, makeAss, captionStyles, CAPTION_STYLES, FORMATS, nearestP
 const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/editorial');
 const { detectSubjectX, smoothTrack, cropExpression, zoomExpression, planZooms, zoomCurve, zoomFilter } = require('./lib/framing');
 const { direct } = require('./lib/director');
-const teaserLib = require('./lib/teaser');
+// Opcional a propósito: si una actualización llegara sin lib/teaser.js (falta en version.json), la app SÍ arranca;
+// solo la opción del avance avisa que falta.
+let teaserLib = null; try { teaserLib = require('./lib/teaser'); } catch {}
 const channelStyle = require('./channel_style.json');
 
 const ROOT = __dirname;
@@ -425,6 +427,7 @@ const countInputs = args => args.filter(a=>a==='-i').length;
 // Plan del avance: fragmentos que mandó la interfaz (si el usuario ya los revisó) o los mejores momentos
 // (Resumen del directo por score → energía del audio → transcripción). keep = lo que se conserva del video (null = todo).
 async function teaserPlanFor({keep=null,duration,frags=null,onPct}={}){
+  if(!teaserLib) throw Error('Falta el archivo lib/teaser.js para el avance. Busca actualizaciones.');
   if(Array.isArray(frags)&&frags.length){ const f=teaserLib.sanitizeFragments(frags,duration); return {fragments:f,duration:teaserLib.teaserDuration(f)}; }
   const bo=currentBestof();
   const energy=await audioEnergy(project.videoPath,{onPct}).catch(()=>[]);
@@ -432,6 +435,7 @@ async function teaserPlanFor({keep=null,duration,frags=null,onPct}={}){
 }
 async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false,teaser=null) {
   const wantTeaser = !!(teaser && teaser.on);
+  if (wantTeaser && !teaserLib) throw Error('Falta el archivo lib/teaser.js para el avance. Busca actualizaciones o exporta sin avance.');
   const teaserFrags = wantTeaser && Array.isArray(teaser.frags) ? teaser.frags.slice(0,10) : null;
   const q = QUALITY[quality] || QUALITY.original;
   const {chain:audioChain, studio:studioOn} = buildAudioFilter(enhance);
