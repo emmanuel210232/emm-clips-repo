@@ -19,6 +19,17 @@
     "vision.js",
     "lib/director.js",
     "lib/updater.js",
-    "Volver a la version anterior.cmd"
+    "Volver a la version anterior.cmd",
+    "lib/seek.js",
+    "lib/hwaccel.js",
+    "lib/teaser.js",
+    "lib/thumbs.js",
+    "lib/queue.js",
+    "lib/pace.js",
+    "lib/timeline-core.js",
+    "miniaturas.js",
+    "cola.js",
+    "lib/autozoom.js",
+    "lib/fillers.js"
   ]
 }

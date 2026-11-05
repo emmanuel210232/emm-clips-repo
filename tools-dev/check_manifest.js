@@ -31,6 +31,10 @@ function check() {
   for (const f of MUST_SHIP) if (fs.existsSync(path.join(root, f)) && !staged.has(f)) problems.push(`Falta en version.json "files": ${f}`);
   for (const m of missingRequires(staged, rel => PREINSTALLED.has(rel))) if (!MUST_SHIP.includes(m.require + '.js')) problems.push(`Falta en version.json "files": ${m.require} (lo usa ${m.file})`);
   const srv = staged.get('server.js');
+  // Archivos que la PÁGINA carga (staticFiles de server.js, p. ej. miniaturas.js o lib/timeline-core.js): si no vienen en
+  // "files", la app arranca pero esa parte de la página no carga en las PCs de los usuarios.
+  const sf = ((srv || '').match(/const staticFiles\s*=\s*\{([^}]*)\}/) || [])[1] || '';
+  for (const m of sf.matchAll(/:\s*'([^']+)'/g)) if (!staged.has(m[1]) && !PREINSTALLED.has(m[1])) problems.push(`Falta en version.json "files": ${m[1]} (la página lo carga)`);
   if (!srv) problems.push('server.js debe venir en "files" (ahí está APP_VERSION; sin él la misma actualización se ofrecería para siempre).');
   const appVer = ((srv || '').match(/const APP_VERSION\s*=\s*'([^']+)'/) || [])[1];
   if (srv && appVer !== manifest.version) problems.push(`version.json dice ${manifest.version} pero APP_VERSION en server.js dice ${appVer}`);

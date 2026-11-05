@@ -156,7 +156,18 @@ function loadClips(){const dur=tlDuration();
   // Sin clips guardados: si el proyecto ya trae cortes, derivo los clips conservados (consistente con el export).
   if(dur && (state?.manualCuts||[]).length){ clips=keptFromCuts(state.manualCuts,dur); saveClips(); return; }
   clips=dur?[{start:0,end:dur}]:[];}
-function saveClips(){try{localStorage.setItem(clipsKey(),JSON.stringify(clips));}catch{}trackHistory();}
+// localStorage tiene un límite (~5 MB): con el historial de 3-4 videos se llenaba y los CLIPS dejaban de guardarse sin
+// aviso. Si no cabe, se borra el historial (deshacer) de OTROS videos y se reintenta; los clips de otros videos no se tocan.
+let _lsWarned=false;
+function lsSet(key,val){
+  try{localStorage.setItem(key,val);return true;}catch{}
+  try{const cur=histKey();for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith('eirl_hist_')&&k!==cur)localStorage.removeItem(k);}}catch{}
+  try{localStorage.setItem(key,val);return true;}catch{}
+  if(key!==histKey()){try{localStorage.removeItem(histKey());localStorage.setItem(key,val);return true;}catch{}}
+  if(!_lsWarned){_lsWarned=true;notice('⚠️ El navegador ya no tiene espacio para guardar tu edición. Exporta o guarda tu trabajo y cierra otros videos abiertos.',true);}
+  return false;
+}
+function saveClips(){lsSet(clipsKey(),JSON.stringify(clips));trackHistory();}
 function ensureClips(){const dur=tlDuration();if(!clips)loadClips();if((!clips||!clips.length)&&dur)clips=[{start:0,end:dur}];
   // Punto de partida del historial: sin esto el PRIMER cambio tras abrir el video (p. ej. dividir) no se podía deshacer.
   if(lastSavedClips==null&&clips&&clips.length)lastSavedClips=encClips(clips);
@@ -177,7 +188,9 @@ let hist=TL?TL.createHistory({limit:50}):null, lastSavedClips=null, pendingUndoL
 function histKey(){return 'eirl_hist_'+(state?.project?.videoPath||'');}
 function encClips(c){return JSON.stringify(TL?TL.encodeClips(c||[]):(c||[]));}
 function loadHist(){hist=TL?TL.createHistory({limit:50}):null;if(!hist)return;try{const raw=JSON.parse(localStorage.getItem(histKey())||'null');if(raw)hist.load(raw);}catch{}}
-function persistHist(){if(!hist)return;let max=1500000;for(let i=0;i<8;i++){try{localStorage.setItem(histKey(),JSON.stringify(TL.fitHistory(hist.toJSON(),max)));return;}catch{max=Math.floor(max/2);}}}
+function persistHist(){if(!hist)return;let max=1500000;for(let i=0;i<8;i++){try{localStorage.setItem(histKey(),JSON.stringify(TL.fitHistory(hist.toJSON(),max)));return;}catch{
+  if(i===0){try{const cur=histKey();for(let j=localStorage.length-1;j>=0;j--){const k=localStorage.key(j);if(k&&k.startsWith('eirl_hist_')&&k!==cur)localStorage.removeItem(k);}}catch{}continue;} // primero: borrar el historial de otros videos
+  max=Math.floor(max/2);}}}
 function trackHistory(){
   if(!hist||!clips)return;
   const enc=encClips(clips), label=pendingUndoLabel; pendingUndoLabel='';
@@ -408,6 +421,7 @@ function editedPlaybackTick(){
 function buildTimeline(){
   const bar=$('timeline'); if(!bar||!state) return; // aún no llega /api/state (al abrir la app)
   const dur=tlDuration(); ensureClips(); const T=totalOut();
+  if(tlZoom>tlMaxZoom()) tlZoom=Math.max(1,tlMaxZoom()); // al agrandar la ventana el ancho (zoom × ancho) podía pasar el límite del navegador
   const fp=`${Math.round(dur)}|${tlZoom}|${state.filmstrip?state.filmstrip.count:0}|${clipsSig()}`;
   if(bar.dataset.fp===fp && bar.childElementCount){positionHead();drawSelection();return;}
   bar.dataset.fp=fp; bar.replaceChildren();
@@ -702,7 +716,7 @@ window.addEventListener('keydown',e=>{
   if(k==='j'||k==='k'||k==='l'){e.preventDefault();shuttleKey(k);return;}
   if(e.key==='+'||e.key==='='||e.code==='NumpadAdd'){e.preventDefault();setTlZoom(tlZoom*1.6);return;}
   if(e.key==='-'||e.key==='_'||e.code==='NumpadSubtract'){e.preventDefault();setTlZoom(tlZoom/1.6);return;}
-  if(e.key==='Escape'&&editView){e.preventDefault();stopEditView('Saliste de la vista de la edición.');return;}
+  if(e.key==='Escape'&&editView&&!($('reqModal')&&!$('reqModal').hidden)){e.preventDefault();/* con Requisitos abierto, Esc solo cierra Requisitos */stopEditView('Saliste de la vista de la edición.');return;}
   if(k==='z'&&!e.ctrlKey&&!e.metaKey){e.preventDefault();toggleZoom();return;}
   if((e.key==='['||e.key===']')&&clips&&selectedClipIdx>=0){e.preventDefault();const to=selectedClipIdx+(e.key==='['?-1:1);if(to>=0&&to<clips.length){pushUndo();const[c]=clips.splice(selectedClipIdx,1);clips.splice(to,0,c);saveClips();selectedClipIdx=to;syncRemoved();buildTimeline();notice('↔ Clip movido al lugar '+(to+1)+'.');}return;}
   if(e.key==='Delete'||e.key==='Backspace'){

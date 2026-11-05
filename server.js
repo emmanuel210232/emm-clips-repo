@@ -2013,7 +2013,8 @@ async function saveThumbPng(t){
   if(!Number.isFinite(t)) throw Error('Tiempo no válido.');
   t=Math.max(0,Math.min(info.duration-1/info.fps,t));
   const baseName=path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
-  const output=path.join(EXPORTS,`${baseName}_miniatura_${Thumbs.fileStamp(t)}.png`);
+  let output=path.join(EXPORTS,`${baseName}_miniatura_${Thumbs.fileStamp(t)}.png`);
+  if(fs.existsSync(output)) output=output.replace(/\.png$/,`_${Date.now().toString().slice(-5)}.png`); // guardar dos veces el mismo cuadro no borra el primero
   // PNG = sin pérdida, mismo tamaño que el original (sin reescalar), color convertido con precisión.
   await withThumbSlot(()=>runBG(bin,frameArgs(t,info,{size:'iw:ih',fmt:'format=rgb24'},['-c:v','png',output]),{timeoutMs:THUMB_TIMEOUT_MS}));
   if(!fs.existsSync(output)) throw Error('No se pudo guardar la miniatura.');
