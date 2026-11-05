@@ -173,6 +173,11 @@ test('IA: lee el avance propuesto (absoluto, relativo, texto m:ss) y rechaza lo 
   assert.equal(T.readAvance({ inicio: 'x', fin: null }, m), null);
   assert.equal(T.readAvance(null, m), null);
   assert.equal(T.readAvance('3620-3628', m), null);
+  // Momento al inicio del directo (30–120 s): 25–33 es ABSOLUTO (no relativo → no 55–63); 31–39 absoluto se respeta.
+  const m0 = { start: 30, end: 120 };
+  assert.equal(T.readAvance({ inicio: 25, fin: 33 }, m0), null);
+  assert.deepEqual(T.readAvance({ inicio: 31, fin: 39 }, m0), { start: 31, end: 39, why: '' });
+  assert.deepEqual(T.readAvance({ inicio: 10, fin: 18 }, m0), { start: 40, end: 48, why: '' }); // ambos antes del inicio → relativo
 });
 
 test('IA: afina el final con las últimas palabras y el inicio al empezar una frase', () => {
