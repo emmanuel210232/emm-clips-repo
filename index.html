@@ -203,6 +203,10 @@
           <div class="row"><button id="analyzePauses" class="secondary">Buscar pausas</button></div>
           <div id="pauses" class="matches empty">Todavía no se ha analizado el audio.</div>
         </details>
+        <details class="card" id="fillersCard"><summary class="cardSummary">🗣️ Muletillas (opcional) <small style="font-weight:400;color:#8a968b">— "eh", "este…", "o sea", "¿no?": revisa y quita las que quieras</small></summary>
+          <p class="hint">Busca muletillas en la transcripción. Solo las <b>seguras</b> ("eh", "mmm") se marcan solas; las demás las revisas con ▶. Al quitarlas se cortan de la línea del tiempo sin dejar hueco (Ctrl+Z para regresar). Funciona en modo <b>Cortar</b>.</p>
+          <div id="fillersBody"></div>
+        </details>
         <div class="stepNav"><button type="button" class="secondary prev" data-go="1">← Atrás</button><button type="button" class="primary next" data-go="3">Siguiente: Momentos →</button></div>
       </section>
 
@@ -342,5 +346,9 @@
   <script src="/lib/thumbs.js"></script>
   <script src="/miniaturas.js"></script>
   <script src="/cola.js"></script>
+  <script src="/lib/pace.js"></script>
+  <script src="/ritmo.js"></script>
+  <script src="/lib/fillers.js"></script>
+  <script src="/muletillas.js"></script>
 </body>
 </html>

@@ -30,6 +30,8 @@
     "miniaturas.js",
     "cola.js",
     "lib/autozoom.js",
-    "lib/fillers.js"
+    "lib/fillers.js",
+    "ritmo.js",
+    "muletillas.js"
   ]
 }

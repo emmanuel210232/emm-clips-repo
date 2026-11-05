@@ -2120,7 +2120,7 @@ async function thumbsQueueRoute(req,res,url){
   return false;
 }
 
-const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/lib/thumbs.js':'lib/thumbs.js', '/miniaturas.js':'miniaturas.js', '/cola.js':'cola.js', '/timeline-core.js':'lib/timeline-core.js', '/lib/pace.js':'lib/pace.js' };
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/lib/thumbs.js':'lib/thumbs.js', '/miniaturas.js':'miniaturas.js', '/cola.js':'cola.js', '/timeline-core.js':'lib/timeline-core.js', '/lib/pace.js':'lib/pace.js', '/ritmo.js':'ritmo.js', '/lib/fillers.js':'lib/fillers.js', '/muletillas.js':'muletillas.js' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
   try {

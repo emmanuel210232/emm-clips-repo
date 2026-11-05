@@ -707,3 +707,24 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
 .queueTitle{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .queueSub{font-size:12px}
 .queueActs{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+
+/* Ritmo y márgenes (ajuste fino de silencios) */
+.paceBox{margin-top:8px;padding:8px 12px;border:1px solid var(--line, rgba(127,127,127,.3));border-radius:10px}
+.paceBox>summary{cursor:pointer;font-weight:600}
+.paceCtl{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.paceCtl[hidden]{display:none}
+.paceSlider{display:grid;grid-template-columns:130px 1fr 210px;align-items:center;gap:10px}
+.paceSlider input[type=range]{width:100%}
+.paceVal{font-variant-numeric:tabular-nums;font-size:13px}
+.paceSummary{font-weight:700;padding:6px 0}
+
+/* Muletillas */
+.fillersList{display:flex;flex-direction:column;gap:4px;margin-top:8px;max-height:340px;overflow:auto}
+.fillerItem{display:grid;grid-template-columns:auto 70px auto auto 1fr auto;gap:8px;align-items:center;font-size:13px;padding:4px 6px;border-radius:6px}
+.fillerItem:hover{background:rgba(127,127,127,.12)}
+.fillerWhen{font-variant-numeric:tabular-nums;opacity:.8}
+.fillerCtx{opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fillerTag{font-size:11px;padding:1px 6px;border-radius:4px;background:rgba(127,127,127,.2)}
+.fillerItem.safe .fillerTag{background:#2ea04366}
+.fillersChips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.fillerChip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:rgba(127,127,127,.18);font-size:12px}
