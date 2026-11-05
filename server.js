@@ -410,15 +410,30 @@ async function finalizeExport(bin,temporary,output,intro,outro,studio,clipIn='no
   await run(bin,['-y',...inputs,'-filter_complex',parts.join(';'),'-map','[v]','-map','[a]',...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',output]);
   for(const c of clips) await fsp.unlink(c).catch(()=>{});
 }
-async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false) {
+// Reserva `job` de forma SÍNCRONA antes del primer await: si no, la cola (cada 700 ms) o un segundo clic
+// ven job≠'running' durante durationOf() y arrancan otro export a la vez.
+async function exportVideo(...args) {
+  if (!project?.videoPath) throw Error('Abre un video primero.');
+  if (job.status === 'running') throw Error('Ya hay un proceso en curso.');
+  const prev = job;
+  const reserved = { status:'running', message:'Preparando export…', progress:'', percent:0, cancelRequested:false };
+  job = reserved;
+  try { return await exportVideoInner(reserved, ...args); }
+  catch (e) { if (job === reserved) job = reserved.cancelRequested ? { status:'cancelled', message:'Cancelado.', progress:'', percent:0 } : prev; throw e; } // falló antes de arrancar ffmpeg: se libera la reserva
+}
+async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false) {
   const q = QUALITY[quality] || QUALITY.original;
   const {chain:audioChain, studio:studioOn} = buildAudioFilter(enhance);
   const stdEnhance = !!audioChain;
   const bins = readiness();
   if (!project?.videoPath) throw Error('Abre un video primero.');
   if (!bins.ffmpeg || !bins.ffprobe) throw Error('Configura FFmpeg y ffprobe antes de exportar.');
-  if (job.status === 'running') throw Error('Ya hay un proceso en curso.');
+  if (job !== reserved) throw Error('Ya hay un proceso en curso.');
   const duration = await durationOf(project.videoPath);
+  // Se vuelve a revisar tras el await: otro proceso no debe haber tomado `job`, ni el usuario haber cancelado.
+  if (job !== reserved) throw Error('Ya hay un proceso en curso.');
+  if (reserved.cancelRequested) throw Error('Cancelado.');
+  if (!project?.videoPath) throw Error('Abre un video primero.');
   const matches = findMatches(transcript, dictionary);
   const words = tokenizeTranscript(transcript);
   const baseName = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
@@ -1383,7 +1398,8 @@ async function buildFilmstripFiles(bin){
 }
 // Spawn liviano para tareas EN SEGUNDO PLANO (miniaturas): NO toca activeProc, así no interfiere
 // con el Cancelar de un trabajo real ni lo bloquea. Puede correr a la par de transcribir/editar.
-function runBG(exe,args){ return new Promise((resolve,reject)=>{ const c=spawn(exe,args,{windowsHide:true,cwd:ROOT}); let err=''; c.stderr.on('data',b=>{err=(err+b.toString()).slice(-800);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('bg '+code))); }); }
+// timeoutMs (opcional): si ffmpeg se cuelga (archivo dañado, disco de red), se mata y se rechaza; no se queda ocupando un turno.
+function runBG(exe,args,{timeoutMs=0}={}){ return new Promise((resolve,reject)=>{ const c=spawn(exe,args,{windowsHide:true,cwd:ROOT}); let err='', timedOut=false; const timer=timeoutMs>0?setTimeout(()=>{ timedOut=true; try{ c.kill(); }catch{} },timeoutMs):null; c.stderr.on('data',b=>{err=(err+b.toString()).slice(-800);}); c.on('error',e=>{ if(timer) clearTimeout(timer); reject(e); }); c.on('close',code=>{ if(timer) clearTimeout(timer); if(timedOut) reject(Error(`ffmpeg tardó más de ${Math.round(timeoutMs/1000)} s y se detuvo.`)); else code===0?resolve():reject(Error('bg '+code)); }); }); }
 // Miniaturas de la línea de tiempo EN SEGUNDO PLANO: el video ya se puede usar mientras se generan
 // (no hay segunda barra de carga). Se exponen por /api/job (stripBuilding) para que el frontend las muestre al terminar.
 // (La onda de audio se quitó: el frontend nunca la dibujaba, solo gastaba tiempo de carga.)
@@ -1817,6 +1833,7 @@ function frameArgs(t,info,{size,fmt},outArgs){
 // Varias imágenes a la vez desde el navegador → máximo 2 ffmpeg al mismo tiempo (no frenar la PC ni un export).
 let thumbSlots=2; const thumbWaiters=[];
 async function withThumbSlot(fn){ while(thumbSlots<=0) await new Promise(r=>thumbWaiters.push(r)); thumbSlots--; try{ return await fn(); } finally { thumbSlots++; const w=thumbWaiters.shift(); if(w) w(); } }
+const THUMB_TIMEOUT_MS=30000; // miniaturas: ffmpeg se mata si tarda más de 30 s
 async function thumbFrameFile(t,w){
   const info=await thumbInfo(); const bin=readiness().ffmpeg; if(!bin) throw Error('Configura FFmpeg para sacar fotogramas.');
   t=Math.max(0,Math.min(info.duration-1/info.fps,Number(t)||0));
@@ -1824,7 +1841,13 @@ async function thumbFrameFile(t,w){
   const dir=thumbsDir(); await fsp.mkdir(dir,{recursive:true});
   const file=path.join(dir,`f${Math.round(t*1000)}_${W}.jpg`);
   if(fs.existsSync(file)) return file;
-  await withThumbSlot(()=>runBG(bin,frameArgs(t,info,{size:`${W}:-2`,fmt:'format=yuvj420p'},['-q:v','3',file])));
+  // Se escribe a .tmp y se renombra: un JPEG a medias (ffmpeg matado/cortado) nunca queda en caché con el nombre final.
+  const tmp=`${file}.${crypto.randomUUID().slice(0,8)}.tmp`;
+  try{
+    await withThumbSlot(()=>runBG(bin,frameArgs(t,info,{size:`${W}:-2`,fmt:'format=yuvj420p'},['-q:v','3','-c:v','mjpeg','-f','mjpeg',tmp]),{timeoutMs:THUMB_TIMEOUT_MS}));
+    if(!fs.existsSync(tmp)||!fs.statSync(tmp).size) throw Error('No pude sacar ese fotograma.');
+    try{ fs.renameSync(tmp,file); }catch(e){ if(!fs.existsSync(file)) throw e; } // Windows: otra petición ya lo dejó listo
+  } finally { try{ fs.unlinkSync(tmp); }catch{} }
   if(!fs.existsSync(file)) throw Error('No pude sacar ese fotograma.');
   return file;
 }
@@ -1836,7 +1859,7 @@ async function saveThumbPng(t){
   const baseName=path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
   const output=path.join(EXPORTS,`${baseName}_miniatura_${Thumbs.fileStamp(t)}.png`);
   // PNG = sin pérdida, mismo tamaño que el original (sin reescalar), color convertido con precisión.
-  await withThumbSlot(()=>runBG(bin,frameArgs(t,info,{size:'iw:ih',fmt:'format=rgb24'},['-c:v','png',output])));
+  await withThumbSlot(()=>runBG(bin,frameArgs(t,info,{size:'iw:ih',fmt:'format=rgb24'},['-c:v','png',output]),{timeoutMs:THUMB_TIMEOUT_MS}));
   if(!fs.existsSync(output)) throw Error('No se pudo guardar la miniatura.');
   const dl=toDownloads(output);
   return {name:path.basename(output),t:+t.toFixed(3),width:info.width,height:info.height,download:dl?path.basename(dl):'',message:dl?`🖼️ Miniatura guardada en Descargas: ${path.basename(dl)}`:`🖼️ Miniatura guardada en exports: ${path.basename(output)}`};
@@ -1846,9 +1869,29 @@ async function saveThumbPng(t){
 // Uno tras otro, con las opciones guardadas al agregar. La lógica (estados, orden) está en lib/queue.js.
 // Solo llama a exportFromBody (= botón Exportar MP4) y a renderShortClip (= botón Crear Short): misma calidad y método.
 const QUEUE_FILE=path.join(DATA,'export_queue.json');
-let exportQueue=Q.recoverQueue(readJson(QUEUE_FILE,null));
+function loadQueueFile(){
+  if(!fs.existsSync(QUEUE_FILE)) return null;
+  try{ return JSON.parse(fs.readFileSync(QUEUE_FILE,'utf8')); }
+  catch(e){
+    // Existe pero no se puede leer: se aparta como .bad (no se sobrescribe la cola del usuario).
+    try{ fs.renameSync(QUEUE_FILE,QUEUE_FILE+'.bad'); }catch{}
+    return null;
+  }
+}
+let exportQueue=Q.recoverQueue(loadQueueFile());
 let queueRun=null; // {id, before:Set(nombres en exports/), cancel}
-function saveQueue(){ try{ writeJson(QUEUE_FILE,exportQueue); }catch{} }
+let lastQueueJson='';
+function saveQueue(){
+  try{
+    const txt=JSON.stringify(exportQueue,null,2);
+    if(txt===lastQueueJson) return; // sin cambios: no se escribe (se llama cada 700 ms)
+    const tmp=QUEUE_FILE+'.tmp';
+    fs.writeFileSync(tmp,txt,'utf8');
+    try{ fs.renameSync(tmp,QUEUE_FILE); }
+    catch{ fs.writeFileSync(QUEUE_FILE,txt,'utf8'); try{ fs.unlinkSync(tmp); }catch{} } // Windows: destino bloqueado (antivirus/indexador)
+    lastQueueJson=txt;
+  }catch{}
+}
 saveQueue();
 const exportNames=()=>{ try{ return new Set(fs.readdirSync(EXPORTS)); }catch{ return new Set(); } };
 function queueState(){ return {items:exportQueue.items.map(i=>({id:i.id,kind:i.kind,label:i.label,status:i.status,statusLabel:Q.STATUS_LABEL[i.status],message:i.message,output:i.output,addedAt:i.addedAt,startedAt:i.startedAt,finishedAt:i.finishedAt,otherVideo:!!(project?.videoPath&&i.videoPath!==project.videoPath)})),summary:Q.summary(exportQueue),job:{status:job.status,message:job.message,percent:job.percent}}; }

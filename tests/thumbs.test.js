@@ -58,3 +58,13 @@ test('sugerencias: las mejores sin repetir casi el mismo momento', () => {
   const r = T.rankFrames([f(10, 0.9), f(10.5, 0.85), f(30, 0.6), f(50, 0.02), { t: 60, faces: [] }], { top: 3, minGap: 2 });
   assert.deepEqual(r.map(x => x.t), [10, 30]);
 });
+
+test("modo 'bestof' (lo que manda el select) equivale a 'best'", () => {
+  const bestof = [{ start: 100, end: 110, score: 9 }];
+  const a = T.sampleTimes({ duration: 600, count: 4, mode: 'bestof', bestof });
+  const b = T.sampleTimes({ duration: 600, count: 4, mode: 'best', bestof });
+  assert.deepEqual(a.times, b.times);
+  assert.equal(a.mode, 'best');
+  assert.ok(!a.fallback);
+  assert.ok(a.times.every(t => t >= 100 && t <= 110));
+});

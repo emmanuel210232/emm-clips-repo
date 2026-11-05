@@ -69,7 +69,8 @@
     plan = await post('/api/thumbs/plan', { mode: mode.value, count: +count.value, around: v ? v.currentTime || 0 : 0 });
     times = (plan.times || []).map(Number).filter(Number.isFinite);
     scores = new Map();
-    loadedFor = String((window.state && state.project && state.project.videoPath) || '');
+    const st = typeof state !== 'undefined' ? state : null;
+    loadedFor = String(st?.project?.videoPath || '');
     info.textContent = `${times.length} cuadros · original ${plan.width}×${plan.height} a ${Math.round(plan.fps)} fps` + (mode.value === 'bestof' && !plan.hasBestof ? ' · (sin Resumen del directo: se usa todo el video)' : '');
     suggest.disabled = !times.length;
     draw();
@@ -139,5 +140,5 @@
     finally { suggest.disabled = false; suggest.textContent = label; }
   };
   // Si cambia el video, la galería anterior ya no sirve.
-  setInterval(() => { const vp = String((window.state && state.project && state.project.videoPath) || ''); if (loadedFor && vp !== loadedFor) { loadedFor = ''; times = []; scores = new Map(); cur = null; grid.replaceChildren(); view.hidden = true; info.textContent = ''; suggest.disabled = true; } }, 3000);
+  setInterval(() => { const st = typeof state !== 'undefined' ? state : null; const vp = String(st?.project?.videoPath || ''); if (loadedFor && vp !== loadedFor) { loadedFor = ''; times = []; scores = new Map(); cur = null; grid.replaceChildren(); view.hidden = true; info.textContent = ''; suggest.disabled = true; } }, 3000);
 })();
