@@ -2172,6 +2172,10 @@ const server=http.createServer(async (req,res) => {
       if (job.status==='running') throw Error('Espera a que termine el proceso actual antes de cambiar de video.');
       const body=await jsonBody(req), videoPath=path.resolve(String(body.path||''));
       if (!fs.existsSync(videoPath) || !fs.statSync(videoPath).isFile()) throw Error('No encuentro ese archivo de video.');
+      // Descargas que fallaron dejan archivos de 0 bytes o cortados: avisar claro ANTES de borrar el proyecto actual
+      // (antes salía el error crudo de ffmpeg "Invalid data found when processing input").
+      if (fs.statSync(videoPath).size === 0) throw Error(`"${path.basename(videoPath)}" está vacío (0 bytes): la descarga no se completó. Vuelve a descargar el directo o abre el archivo bueno.`);
+      try { await durationOf(videoPath); } catch { throw Error(`No pude leer "${path.basename(videoPath)}": el archivo está dañado o incompleto (¿la descarga se cortó?). Vuelve a descargarlo.`); }
       if (!['.mp4','.mov','.mkv','.webm','.avi','.m4v','.mpg','.mpeg'].includes(path.extname(videoPath).toLowerCase())) throw Error('Formato de video no admitido.');
       project={videoPath,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null; clearBestof();writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
       prepareProject(); // genera vista previa (si hace falta) + miniaturas + onda automáticamente
