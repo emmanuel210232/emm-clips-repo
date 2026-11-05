@@ -1,6 +1,6 @@
 {
-  "version": "1.27.12",
-  "notes": "Los videos nuevos de Kick que se descargan como .mp4 pero por dentro son MPEG-TS ya se ven en el editor (antes salía gris): la app detecta el formato real y crea la vista previa sola.",
+  "version": "1.27.13",
+  "notes": "En computadoras sin tarjeta NVIDIA, la transcripción ya no falla: si la versión con GPU no arranca, la app transcribe sola con el procesador.",
   "files": [
     "server.js",
     "app.js",
