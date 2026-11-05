@@ -67,7 +67,7 @@
 
     <!-- CENTRO: reproductor grande -->
     <section class="stage" id="stage" aria-label="Reproductor">
-      <div class="player"><video id="video" controls preload="metadata"></video><img id="scrubThumb" class="scrubThumb" alt=""><div id="animOverlay" class="animOverlay"></div><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
+      <div class="player"><video id="video" controls preload="metadata"></video><img id="scrubThumb" class="scrubThumb" alt=""><div id="animOverlay" class="animOverlay"></div><div id="editViewBadge" class="editViewBadge" hidden></div><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
       <div class="stageBar"><button id="grabFrame" class="secondary">📸 Exportar frame</button><span class="muted">Pausa donde quieras y pícalo: sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
     </section>
 
@@ -84,18 +84,23 @@
         <button id="tlFwd1s" class="tl-btn" type="button" title="+1 segundo">⏭</button>
         <button id="tlLoadStrip" class="tl-btn" type="button" title="Generar miniaturas y onda de audio">🎞️ Miniaturas</button>
         <span style="width:12px"></span>
-        <button id="tlZoomOut" class="tl-btn" type="button" title="Alejar">−</button>
-        <button id="tlZoomIn" class="tl-btn" type="button" title="Acercar">+</button>
+        <button id="tlZoomOut" class="tl-btn" type="button" title="Alejar (tecla − o Ctrl+rueda)">−</button>
+        <button id="tlZoomIn" class="tl-btn" type="button" title="Acercar (tecla + o Ctrl+rueda)">+</button>
+        <button id="tlZoomFit" class="tl-btn" type="button" title="Ver todo el video en la línea del tiempo">↔ Ajustar</button>
+        <span id="tlZoomLevel" class="tl-zoomlvl"></span>
+        <span id="tlRate" class="tl-rate" hidden></span>
       </div>
       <div class="tl-legend2"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías <i class="lg-cut"></i>se quita · arrastra la regla para buscar</div>
       <div class="tl-cutbar">
-        <button id="tlSplit" class="tl-btn primaryMini" type="button" title="Divide el clip donde está la línea del tiempo (tecla D)">✂️ Dividir (D)</button>
+        <button id="tlSplit" class="tl-btn primaryMini" type="button" title="Divide el clip donde está la línea del tiempo (tecla S o D)">✂️ Dividir (S)</button>
         <button id="tlDelSel" class="tl-btn danger" type="button" title="Borra el/los clip(s) seleccionado(s) y cierra el hueco (tecla Supr)" disabled>🗑️ Borrar clip (Supr)</button>
         <button id="tlMerge" class="tl-btn" type="button" title="Une los clips seguidos (quita divisiones). Arrastra en el espacio de arriba/abajo para seleccionar varios." disabled>🔗 Unir</button>
         <button id="tlZoomClip" class="tl-btn" type="button" title="Pone/quita un acercamiento (punch-in) en el clip seleccionado (tecla Z)" disabled>🔍 Zoom</button>
         <button id="tlZoomAuto" class="tl-btn" type="button" title="La IA escucha el audio y pone acercamientos en los momentos más enfáticos (puedes quitarlos uno por uno)">✨ Sugerir zooms</button>
         <button id="tlTopics" class="tl-btn" type="button" title="La IA lee la transcripción, detecta dónde cambia el tema y pone una transición (fundido suave) ahí">🎬 Transición por tema</button>
         <button id="tlUndo" class="tl-btn" type="button" title="Deshacer (Ctrl+Z)" disabled>↶ Deshacer</button>
+        <button id="tlRedo" class="tl-btn" type="button" title="Rehacer (Ctrl+Y)" disabled>↷ Rehacer</button>
+        <button id="tlEditView" class="tl-btn" type="button" title="Reproduce como quedará: se salta lo que quitaste y silencia las groserías, sin exportar">👁️ Vista de la edición</button>
         <button id="tlResetFull" class="tl-btn" type="button" title="Quita TODOS los cortes y deja el video completo (empezar de cero)">🔄 Video completo</button>
         <button id="tlClearSel" class="tl-btn" type="button" title="Quita la selección del clip">✖ Deseleccionar</button>
         <span style="flex:1"></span>
@@ -103,7 +108,7 @@
         <button id="tlGoCut" class="tl-btn primaryMini" type="button" title="Ir a Exportar con los clips borrados quitados" hidden>Exportar recortado →</button>
       </div>
       <div id="timeline" class="timelineBar"></div>
-      <details class="tlHelp"><summary>❔ Cómo editar en la línea de tiempo</summary><p class="hint"> <b>arrastra en la regla de arriba</b> para moverte por el video (scrub) · <b>pica un clip</b> para seleccionarlo y <b>arrástralo</b> para moverlo/reordenar · <b>D</b> divide · <b>Supr</b> borra el seleccionado · <b>arrastra sus bordes</b> para recortarlo (trim) · <b>Ctrl+clic</b> (o arrastra en el <b>espacio de arriba/abajo</b>) selecciona varios para <b>Unir</b> o borrar · <b>Z</b> zoom · <b>Ctrl+Z</b> deshace. Al <b>Exportar recortado</b> queda justo lo que ves.</p></details>
+      <details class="tlHelp"><summary>❔ Cómo editar en la línea de tiempo</summary><p class="hint"> <b>arrastra en la regla de arriba</b> para moverte por el video (scrub) · <b>pica un clip</b> para seleccionarlo y <b>arrástralo</b> para moverlo/reordenar · <b>S</b> o <b>D</b> divide · <b>Supr</b> borra el seleccionado · <b>arrastra sus bordes</b> para recortarlo (trim) · <b>Ctrl+clic</b> (o arrastra en el <b>espacio de arriba/abajo</b>) selecciona varios para <b>Unir</b> o borrar · <b>Z</b> zoom · <b>Ctrl+Z</b> deshace y <b>Ctrl+Y</b> rehace (se guarda aunque cierres) · <b>Espacio</b> reproduce · <b>J/K/L</b> atrás/pausa/adelante (L otra vez = más rápido) · <b>Ctrl+rueda</b> acerca la línea del tiempo · <b>👁️ Vista de la edición</b> reproduce como quedará. Al <b>Exportar recortado</b> queda justo lo que ves.</p></details>
       <div class="row wrap silenceRow">
         <button id="rmSilence" class="tl-btn primaryMini" type="button" title="Detecta los silencios y los quita, uniendo el video">🤫 Quitar silencios</button>
         <label>Sensibilidad <select id="silSens"><option value="suave">Suave · solo pausas largas (1 s)</option><option value="normal" selected>Normal (0.6 s)</option><option value="fuerte">Fuerte · silencios cortos (0.35 s)</option><option value="max">Máxima · muy apretado (0.25 s)</option></select></label>
@@ -321,6 +326,7 @@
       <div id="rsRoot"></div>
     </section>
   </main>
+  <script src="/timeline-core.js"></script>
   <script src="/app.js"></script>
   <script src="/vision.js"></script>
   <script src="/investigar.js"></script>
