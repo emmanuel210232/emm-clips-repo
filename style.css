@@ -543,7 +543,7 @@ body.research-mode #wizard, body.research-mode section.step, body.research-mode 
    derecha · línea del tiempo abajo. Tema oscuro por defecto (el claro sigue funcionando).
    Todo va al final para no chocar con las reglas de arriba; usa .appShell para ganar especificidad.
    =================================================================================================== */
-:root{--sh-top:56px;--sh-rail:210px;--sh-side:clamp(340px,28vw,470px);
+:root{--sh-top:56px;--sh-rail:210px;--sh-side:clamp(380px,30vw,540px);
   --sh-bg:#eceee9;--sh-panel:#ffffff;--sh-panel2:#f5f7f3;--sh-panel3:#eef1ec;--sh-line:#dce2d8;--sh-tx:#1d2420;--sh-tx2:#5f6b63;
   --sh-acc:#1f8a4c;--sh-acc-tx:#ffffff;--sh-acc-soft:rgba(31,138,76,.11);--sh-stage:#0a0c0e;--sh-radius:10px}
 :root[data-theme="dark"]{--sh-bg:#0e1013;--sh-panel:#16191d;--sh-panel2:#1c2025;--sh-panel3:#22272d;--sh-line:#2a3037;--sh-tx:#e6e9e7;--sh-tx2:#98a29d;
@@ -638,7 +638,7 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
   body{overflow:hidden}
   main.appShell{max-width:none;margin:0;padding:0;height:calc(100vh - var(--sh-top));display:grid;
     grid-template-columns:var(--sh-rail) minmax(0,1fr) var(--sh-side);grid-template-rows:auto minmax(0,1fr) auto;
-    grid-template-areas:"rail msgs msgs" "rail stage side" "rail dock dock";overflow:hidden}
+    grid-template-areas:"rail msgs side" "rail stage side" "rail dock side";overflow:hidden}
   .appShell .rail{grid-area:rail}
   .appShell .msgs{grid-area:msgs}
   .appShell .stage{grid-area:stage}
@@ -735,3 +735,20 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
 #thumbsPanel[open]{position:fixed;inset:28px;z-index:80;margin:0;overflow:auto;padding:14px 18px 22px;border-radius:14px;background:var(--sh-panel,#1f242a);color:var(--sh-tx,inherit);box-shadow:0 24px 80px rgba(0,0,0,.6)}
 #thumbsPanel[open]>summary{position:sticky;top:-14px;z-index:1;padding:10px 0;background:inherit;font-weight:700}
 #thumbsPanel[open]>summary::after{content:'   ✕ Cerrar';float:right;font-weight:600;opacity:.8}
+
+/* El panel de la derecha (pasos) ocupa TODO el alto de la ventana: antes quedaba apretado entre el video y la línea
+   del tiempo y había que hacer scroll para todo. Los avisos y la línea del tiempo quedan en la columna del centro. */
+.appShell .dock .tl-time{white-space:nowrap}
+.appShell .dock .tl-controls{flex-wrap:wrap}
+.appShell .dock .tl-legend2{grid-column:1/-1;grid-row:auto;justify-self:start;margin:0 0 2px}
+.appShell .inspector{overflow-wrap:anywhere}
+.appShell .inspector .pill,.appShell .inspector .status{max-width:100%;white-space:normal}
+/* Con el panel más ancho, las opciones de audio y el modo (Silenciar/Cortar) van de 2 en 2 */
+@media (min-width:1500px){
+  .appShell .inspector .audioPanel{grid-template-columns:1fr 1fr}
+  .appShell .inspector .censorMode{flex-direction:row;align-items:stretch}
+  .appShell .inspector .censorMode>label{flex:1 1 0}
+}
+/* "Exportar MP4" siempre a la vista (pegado abajo del panel, encima de "← Atrás"), sin tener que bajar */
+.appShell .inspector .row:has(> #export){position:sticky;bottom:62px;z-index:3;margin:10px -13px -13px;padding:10px 13px;background:var(--sh-panel2);border-top:1px solid var(--sh-line);box-shadow:0 -8px 18px rgba(0,0,0,.18)}
+.appShell .inspector .row:has(> #export) #export{flex:1 1 auto;padding:11px 16px;font-size:14px}
