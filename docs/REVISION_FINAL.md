@@ -69,5 +69,15 @@ Sin bugs que rompan sincronía, calidad o cortes: todos los comandos con `-copyt
 7. ffprobe y ffmpeg deben ser el **mismo binario** (`tools/`). Probar en Windows con `-output_ts_offset 95420` y un directo real.
 8. `check_cut.js` no cubre lo anterior: agregar casos de vuelta de 33 bits, salto de marcas y medición de audio.
 
-## Arreglos en curso al cerrar la sesión
-Se lanzaron agentes para corregir: miniaturas-cola (1–5), export-intro (runDec, límite de entradas GPU, startTimeOf), teaser-ia (1–2), muletillas (1–4), ritmo (1–4) y autozoom (1–2). Revisar con `git log` de cada rama qué alcanzó a subirse.
+## Arreglos aplicados al cerrar la sesión (todas las pruebas pasan en cada rama)
+| Rama | Commit | Qué se corrigió |
+|---|---|---|
+| `nube/miniaturas-cola` | `d7c7b57` | "Mejores momentos" (`bestof`), galería que no se reiniciaba (`window.state`), cola guardada solo si cambia con `.tmp` + rename y `.bad` si está dañada, `exportVideo` reserva el trabajo antes del primer `await` (no más dos exports a la vez), miniaturas con límite de 30 s y JPEG vía `.tmp` (`-c:v mjpeg -f mjpeg`, comprobado con ffmpeg). |
+| `nube/export-intro` | `b558758` | `runDec` reintenta por CPU solo si el error es de GPU (stderr de ~5000 caracteres); sin GPU si hay > 16 entradas de video; `startTimeOf` acepta start_time negativo y su caché usa ruta + tamaño + fecha. |
+| `nube/calidad` | `7f32a7f` | `lib/seek.js` acepta start_time negativo (corte vacío cerca de la vuelta de 33 bits). |
+| `nube/teaser-ia` | `7059857` | Bloque de avance solo con la nube (la IA local ya no pierde momentos); lectura correcta de tiempos absolutos en los primeros minutos. |
+| `nube/muletillas` | `369a330` | `removeFromClips` lineal (20 000×20 000 < 1 s), muletillas propias vacías, "¿Eh?" y "¿no?" con signos. |
+| `nube/ritmo` | `9541400` | `silences:null`, video casi todo silencio, colas cortas al inicio/final, notación científica. |
+| `nube/autozoom` | `8fd75ff` | `zoom:1` ya no es 1.12×; "Quitar zooms automáticos" respeta los zooms manuales. |
+
+**Siguen sin arreglar** (ver arriba): saltos de marcas de tiempo en directos reconectados y desfase por `PTS-STARTPTS` por stream (`lib/seek.js` 2–4), Esc doble en integración, PNG que se sobrescribe, opciones de la cola leídas al exportar, cuota de localStorage de la línea del tiempo (ver `SIGUIENTES_PASOS.md`). Copias de `lib/seek.js`: la de `nube/miniaturas-cola` aún no acepta start_time negativo; al fusionar, quedarse con la de `nube/export-intro`.
