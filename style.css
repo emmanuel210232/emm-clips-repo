@@ -662,3 +662,7 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
 .appShell .stage{overflow:hidden}
 .appShell .stage .player{min-height:0}
 @media (min-width:1100px) and (max-height:820px){.appShell .dock{max-height:42vh}.appShell .stage{padding-top:8px}}
+/* Contraste en tema oscuro: etiquetas de efectos y modos de exportar heredaban verde oscuro del tema claro. */
+.appShell .inspector .animRow label,.appShell .inspector .censorMode label,.appShell .inspector .censorMode strong{color:var(--sh-tx)}
+.appShell .inspector .censorMode label span{color:var(--sh-tx2)}
+.appShell .inspector .animHead small,.appShell .inspector .matches.empty{color:var(--sh-tx2)}
