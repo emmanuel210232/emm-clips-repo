@@ -157,7 +157,9 @@ function loadClips(){const dur=tlDuration();
   if(dur && (state?.manualCuts||[]).length){ clips=keptFromCuts(state.manualCuts,dur); saveClips(); return; }
   clips=dur?[{start:0,end:dur}]:[];}
 function saveClips(){try{localStorage.setItem(clipsKey(),JSON.stringify(clips));}catch{}trackHistory();}
-function ensureClips(){const dur=tlDuration();if(!clips)loadClips();if((!clips||!clips.length)&&dur)clips=[{start:0,end:dur}];return clips||[];}
+function ensureClips(){const dur=tlDuration();if(!clips)loadClips();if((!clips||!clips.length)&&dur){clips=[{start:0,end:dur}];
+  // base del historial: sin esto el PRIMER cambio de un video recién abierto no se podía deshacer
+  try{if(lastSavedClips==null)lastSavedClips=encClips(clips);}catch{}}return clips||[];}
 function clipsSig(){return (clips||[]).map(c=>c.start.toFixed(1)+'-'+c.end.toFixed(1)+(c.zoom?'z':'')+(c.trans?'t':'')+(c.join?'j':'')).join(',');}
 function totalOut(){return (clips||[]).reduce((a,c)=>a+(c.end-c.start),0);}
 function clipOutBounds(){let acc=0;return (clips||[]).map(c=>{const o={outStart:acc,outEnd:acc+(c.end-c.start)};acc=o.outEnd;return o;});}
@@ -723,7 +725,7 @@ function setShuttle(rate){const v=$('video');if(!v||!v.getAttribute('src'))retur
   v.pause();v.playbackRate=1;showRate('◀◀ '+(-rate)+'×');let last=performance.now();
   shuttleTimer=setInterval(()=>{const now=performance.now(),dt=(now-last)/1000;last=now;const t=Math.max(0,(v.currentTime||0)+rate*dt);try{v.currentTime=t;}catch{}positionHead();updateTlTime();if(t<=0)setShuttle(0);},120);}
 function shuttleKey(k){const action=k==='j'?'shuttleBack':k==='k'?'shuttleStop':'shuttleFwd';const cur=currentShuttle();setShuttle(TL?TL.shuttle(cur,action):(action==='shuttleStop'?0:action==='shuttleFwd'?Math.min(8,cur>0?cur*2:1):-1));}
-$('video').addEventListener('pause',()=>{if(!shuttleTimer){shuttleRate=0;showRate('');}});
+$('video').addEventListener('pause',()=>{if(!shuttleTimer){shuttleRate=0;showRate('');const v=$('video');if(v&&v.playbackRate!==1)v.playbackRate=1;}}); // si no, al dar play con los controles seguía a 2×/4× sin indicador
 // ===== Vista de la edición: reproduce como quedará, sin exportar =====
 // Salta lo que se quita (clips borrados, silencios quitados, cortes) siguiendo el ORDEN de los clips, y deja en
 // silencio las groserías que se van a silenciar. Mismas reglas que el export (TimelineCore.editPlan).
@@ -745,7 +747,9 @@ function startEditView(){
   const plan=currentEditPlan();if(!plan.clips.length)return notice('No hay nada que reproducir.',true);
   reviewClip=false;v.ontimeupdate=null;clearInterval(shuttleTimer);shuttleTimer=null;v.playbackRate=1;showRate('');
   const ev={plan,idx:-1,lastSeek:0,wasMuted:v.muted,stopped:false};
-  ev.schedule=()=>{if(ev.stopped)return;if(v.requestVideoFrameCallback&&!v.paused)ev.h=v.requestVideoFrameCallback(()=>editViewTick());else ev.h=setTimeout(editViewTick,30);};
+  // Un solo tick pendiente a la vez: antes cada play agregaba otra cadena de callbacks (se duplicaban al pausar/reanudar).
+  ev.cancel=()=>{if(ev.h==null)return;try{if(ev.hk==='r'){if(v.cancelVideoFrameCallback)v.cancelVideoFrameCallback(ev.h);}else clearTimeout(ev.h);}catch{}ev.h=null;};
+  ev.schedule=()=>{if(ev.stopped)return;ev.cancel();if(v.requestVideoFrameCallback&&!v.paused){ev.hk='r';ev.h=v.requestVideoFrameCallback(()=>{ev.h=null;editViewTick();});}else{ev.hk='t';ev.h=setTimeout(()=>{ev.h=null;editViewTick();},30);}};
   editView=ev;
   const first=TL.previewStep(plan.clips,-1,v.currentTime||0,0.035);
   if(first.end){ev.idx=0;try{v.currentTime=plan.clips[0].start;}catch{}}else{ev.idx=first.idx;if(first.seek!=null)try{v.currentTime=first.seek;}catch{}}
@@ -757,12 +761,14 @@ function startEditView(){
   const btn=$('tlEditView');if(btn){btn.textContent='⏹ Salir de la vista';btn.classList.add('active');}
   notice('👁️ '+txt+'. Así quedará al exportar.');}
 function stopEditView(msg){const ev=editView;if(!ev)return;ev.stopped=true;editView=null;const v=$('video');
-  try{if(ev.h!=null){if(v&&v.cancelVideoFrameCallback)v.cancelVideoFrameCallback(ev.h);clearTimeout(ev.h);}}catch{}
+  if(ev.cancel)ev.cancel();
   if(v)v.muted=ev.wasMuted;const b=$('editViewBadge');if(b)b.hidden=true;
   const btn=$('tlEditView');if(btn){btn.textContent='👁️ Vista de la edición';btn.classList.remove('active');}
   if(msg)notice(msg);}
 if($('tlEditView'))$('tlEditView').onclick=()=>{if(editView)stopEditView('Saliste de la vista de la edición.');else startEditView();};
 $('video').addEventListener('play',()=>{if(editView)editView.schedule();});
+// al pausar (o terminar) el callback de cuadro ya no llega: se pasa a revisar con temporizador para no quedarse trabado
+['pause','ended'].forEach(n=>$('video').addEventListener(n,()=>{if(editView)editView.schedule();}));
 if($('tlRedo'))$('tlRedo').onclick=()=>redoClip();
 $('getDf').onclick=async()=>{const b=$('getDf');try{b.disabled=true;b.textContent='Descargando… (25 MB)';await api('/api/download-df',{});notice('✅ Voz Estudio activada. Marca “Realzar voz · Estudio” en el panel de audio.');await refresh();const av=$('auVoice');if(av)av.checked=true;}catch(e){notice('No se pudo activar: '+e.message,true);}finally{b.disabled=false;b.textContent='⬇️ Activar voz Estudio (25 MB)';}};
 $('auOff').onclick=()=>{['auDenoise','auCompress','auNormalize','auVoice'].forEach(id=>{const el=$(id);if(el)el.checked=false;});notice('Audio sin procesar: saldrá igual que el original (con las groserías silenciadas).');};
