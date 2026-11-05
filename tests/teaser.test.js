@@ -97,3 +97,66 @@ test('valida los fragmentos que manda la interfaz',()=>{
   const s=T.sanitizeFragments([{start:50,end:60},{start:55,end:65},{start:-5},{start:'x'},{start:595,end:640}],600);
   assert.deepEqual(s.map(f=>[f.start,f.end]),[[0,10],[50,60],[595,600]]);
 });
+
+test('lee la energía del audio de la salida de ffmpeg (astats)',()=>{
+  const log='frame:0 pts:0 pts_time:0\nlavfi.astats.Overall.RMS_level=-23.5\nframe:1 pts:16000 pts_time:1\nlavfi.astats.Overall.RMS_level=-inf\n';
+  assert.deepEqual(T.parseEnergyLog(log),[{t:0,db:-23.5},{t:1,db:-120}]);
+});
+
+test('lo que el video final quitó: huecos entre los clips (y solo los largos se evitan)',()=>{
+  const keep=[{start:10,end:20},{start:20.5,end:40},{start:100,end:120}];
+  assert.deepEqual(T.removedRanges(keep,130),[{start:0,end:10},{start:20,end:20.5},{start:40,end:100},{start:120,end:130}]);
+  assert.deepEqual(T.avoidRanges(keep,130),[{start:0,end:10},{start:40,end:100},{start:120,end:130}]);
+  assert.deepEqual(T.mergeRanges([{start:5,end:6},{start:1,end:2},{start:1.5,end:3}]),[{start:1,end:3},{start:5,end:6}]);
+});
+
+test('silencio de groserías dentro de un fragmento: mismo margen 0.15 s, tiempos relativos, sin bip',()=>{
+  const r=[{start:105,end:106},{start:300,end:301}];
+  assert.equal(T.muteFilter(r,100,110),",volume=enable='between(t,4.850,6.150)':volume=0");
+  assert.equal(T.muteFilter(r,200,210),'');
+  assert.doesNotMatch(T.muteFilter(r,100,110),/sine|beep/);
+  // muchas groserías → varios filtros de 20 (para no agotar memoria)
+  const many=Array.from({length:45},(_,i)=>({start:100+i*0.2,end:100+i*0.2+0.1}));
+  assert.equal((T.muteFilter(many,100,110).match(/volume=enable/g)||[]).length,3);
+});
+
+test('sin resumen del directo usa la ENERGÍA del audio (antes que la transcripción)',()=>{
+  const energy=[]; for(let t=0;t<600;t++) energy.push({t,db:(t>=300&&t<330)?-8:-35});
+  const tr=[]; for(let t=0;t<600;t+=5) tr.push({start:t,end:t+4,text:'¡jajaja no mames!'}); // la transcripción no decide
+  const m=T.pickMoments({energy,transcript:tr,duration:600,count:3});
+  assert.equal(m[0].source,'energy');
+  assert.ok(m[0].start>=295 && m[0].end<=335,'el momento más fuerte es el del grito');
+  for(let i=0;i<m.length;i++) for(let j=i+1;j<m.length;j++) assert.ok(m[i].end+30<=m[j].start||m[j].end+30<=m[i].start,'separados');
+});
+
+test('energyMoments aguanta un directo de 6 h rápido',()=>{
+  const energy=Array.from({length:6*3600},(_,t)=>({t,db:-30+10*Math.sin(t/97)}));
+  const t0=Date.now(); const m=T.energyMoments(energy,6*3600); assert.ok(m.length>1000); assert.ok(Date.now()-t0<2000);
+});
+
+test('ninguna ventana libre → el momento se salta (no enseña lo que se quitó)',()=>{
+  assert.equal(T.strongestWindow([{t:5,db:-10}],0,12,10,[{start:0,end:12}]),null);
+  const p=T.planTeaser({moments:[{start:0,end:12},{start:100,end:140}],energyOf:()=>[],avoid:[{start:0,end:12}],fragLen:10});
+  assert.deepEqual(p.fragments.map(f=>[f.start,f.end]),[[115,125]]);
+});
+
+test('plan completo: usa bestof y NO toma fragmentos de lo que el video quitó',()=>{
+  const candidates=[{start:100,end:160,score:10},{start:400,end:460,score:9},{start:800,end:860,score:8}];
+  const energy=[]; for(let t=0;t<1000;t++) energy.push({t,db:(t>=120&&t<130)?-5:-30});
+  const keep=[{start:0,end:300},{start:700,end:1000}]; // 300..700 no sale en el video
+  const p=T.buildPlan({candidates,energy,duration:1000,keep});
+  assert.ok(p.fragments.length>=2);
+  assert.ok(p.fragments.every(f=>f.end<=300||f.start>=700),'nada de 300..700');
+  assert.ok(p.fragments.some(f=>Math.min(f.end,130)-Math.max(f.start,120)>=9),'el grito de 120-130 entra');
+  assert.equal(p.fragments.length,6,'completa con la energía hasta 6');
+  assert.ok(p.fragments.every(f=>Math.abs((f.end-f.start)-10)<1e-6));
+});
+
+test('audio del avance: misma frecuencia/canales que el video y largo EXACTO al de la imagen',()=>{
+  const frags=[{start:5,end:15},{start:100,end:110}];
+  const g=T.buildTeaserGraph({frags,firstInput:0,videoPath:'v.ts',fps:60,width:1920,height:1080,sampleRate:44100,layout:'mono'});
+  const f=g.filters.join(';');
+  assert.match(f,/aresample=44100,aformat=sample_fmts=fltp:channel_layouts=mono,apad,atrim=end=19\.500\[tza\]/);
+  assert.doesNotMatch(f,/stereo/);
+  assert.match(T.prependFilter(g,'[v]','[a]',{fps:60}).join(';'),/\[v\]settb=AVTB,fps=60,format=yuv420p,setsar=1\[tzomv\]/);
+});

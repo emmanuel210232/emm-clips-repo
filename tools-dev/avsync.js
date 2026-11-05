@@ -43,10 +43,10 @@ async function measureSync(file, { fps = 60, threshold = 200 } = {}) {
   }
   const alog = await sh(FFMPEG, ['-hide_banner', '-i', file, '-map', '0:a:0', '-af', 'highpass=f=600,silencedetect=n=-30dB:d=0.1', '-f', 'null', '-']);
   const beeps = [...alog.matchAll(/silence_end:\s*([\d.]+)/g)].map(m => +m[1]);
-  const offsets = [];
-  for (const f of flashes) { let best = null; for (const b of beeps) if (best == null || Math.abs(b - f) < Math.abs(best - f)) best = b; if (best != null && Math.abs(best - f) < 0.3) offsets.push(+((best - f) * 1000).toFixed(1)); }
+  const offsets = [], pairs = [], unpaired = [];
+  for (const f of flashes) { let best = null; for (const b of beeps) if (best == null || Math.abs(b - f) < Math.abs(best - f)) best = b; if (best != null && Math.abs(best - f) < 0.3) { const ms = +((best - f) * 1000).toFixed(1); offsets.push(ms); pairs.push({ t: f, ms }); } else unpaired.push(f); }
   const abs = offsets.map(Math.abs); const maxAbs = abs.length ? Math.max(...abs) : null;
-  return { flashes: flashes.length, beeps: beeps.length, paired: offsets.length, maxAbsMs: maxAbs, meanMs: offsets.length ? +(offsets.reduce((a, b) => a + b, 0) / offsets.length).toFixed(1) : null, withinOneFrame: maxAbs != null && maxAbs <= 1000 / fps + 0.5, offsets };
+  return { flashes: flashes.length, beeps: beeps.length, paired: offsets.length, maxAbsMs: maxAbs, meanMs: offsets.length ? +(offsets.reduce((a, b) => a + b, 0) / offsets.length).toFixed(1) : null, withinOneFrame: maxAbs != null && maxAbs <= 1000 / fps + 0.5, offsets, pairs, unpaired, flashTimes: flashes, beepTimes: beeps };
 }
 
 async function probe(file) {
@@ -70,5 +70,5 @@ async function decodeErrors(file) {
 module.exports = { FFMPEG, FFPROBE, sh, makeSyncSource, measureSync, probe, quality, decodeErrors };
 
 if (require.main === module) {
-  (async () => { const f = process.argv[2]; console.log(JSON.stringify({ ...(await probe(f)), sync: await measureSync(f) }, (k, v) => k === 'offsets' ? undefined : v, 1)); })().catch(e => { console.error(e.message); process.exit(1); });
+  (async () => { const f = process.argv[2]; console.log(JSON.stringify({ ...(await probe(f)), sync: await measureSync(f) }, (k, v) => ['offsets', 'pairs', 'flashTimes', 'beepTimes'].includes(k) ? undefined : v, 1)); })().catch(e => { console.error(e.message); process.exit(1); });
 }
