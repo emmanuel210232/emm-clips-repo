@@ -2475,7 +2475,11 @@ const server=http.createServer(async (req,res) => {
     if (req.method==='POST' && url.pathname==='/api/shorts/render-all') return respond(res,202,await renderAllShorts());
     if (req.method==='POST' && url.pathname==='/api/suggest-zooms') return respond(res,200,await suggestZooms());
     if (req.method==='POST' && url.pathname==='/api/topics') return respond(res,200,await detectTopics());
-    if (req.method==='POST' && url.pathname==='/api/bestof/analyze') { const body=await jsonBody(req); detectBestMoments(body||{}); return respond(res,202,{started:true}); }
+    if (req.method==='POST' && url.pathname==='/api/bestof/analyze') { const body=await jsonBody(req);
+      // Antes: si había otro proceso, detectBestMoments (async) rechazaba SIN que nadie lo atrapara y se caía TODO el servidor.
+      if(job.status==='running') throw Error('Espera a que termine el proceso actual (mira la barra de arriba) y vuelve a picar Procesar directo.');
+      detectBestMoments(body||{}).catch(e=>{ if(job.status!=='running') job={status:'error',message:e.message,progress:'',percent:0}; });
+      return respond(res,202,{started:true}); }
     if (req.method==='GET' && url.pathname==='/api/bestof') return respond(res,200,currentBestof()||{candidates:[]});
     if (req.method==='GET' && url.pathname==='/api/usage') return respond(res,200,usageSummary());
     if (req.method==='POST' && url.pathname==='/api/bestof/config') { const b=await jsonBody(req)||{};
@@ -2498,4 +2502,9 @@ const server=http.createServer(async (req,res) => {
     return error(res,'No encontrado.',404);
   } catch(e) { return error(res,e); }
 });
+// Red de seguridad: un error que nadie atrapó en un proceso de fondo NO debe tumbar la app (el navegador mostraba
+// 'Failed to fetch' y había que reabrirla). Se registra y, si había un trabajo corriendo, se marca con error.
+const logCrash = e => { try { fs.appendFileSync(path.join(DATA,'errores.log'), new Date().toISOString()+' '+String((e&&e.stack)||e)+'\n'); } catch {} console.error('Error sin atrapar:', String((e&&e.message)||e)); };
+process.on('unhandledRejection', logCrash);
+process.on('uncaughtException', logCrash);
 server.listen(PORT,'127.0.0.1',()=>console.log(`Editor IRL: http://127.0.0.1:${PORT}`));
