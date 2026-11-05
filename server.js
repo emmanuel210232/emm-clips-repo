@@ -154,7 +154,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.12';
+const APP_VERSION = '1.27.13';
 // EMM_UPDATE_URL solo sirve para PROBAR con un servidor de actualizaciones falso (nunca contra main).
 const UPDATE_RAW = process.env.EMM_UPDATE_URL || 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 async function fetchText(url){const r=await fetch(url,{signal:AbortSignal.timeout(20000),cache:'no-store'});if(!r.ok)throw Error('No se pudo descargar ('+r.status+')');return r.text();}
@@ -212,7 +212,14 @@ async function transcribe(opts) {
       const prompt = channelStyle.transcriptionPrompt || 'Conversación informal en español de México. Directo, chat, güey, no mames.';
       const wargs=['-m',bins.model,'-f',wav,'-l','es','-ml','1','-sow','-ojf','-of',outputBase,'--prompt',prompt];
       if(useVad){ wargs.push('--vad','--vad-model',vadModel); job.message='Transcribiendo en español (saltando silencios)…'; }
-      await run(bins.whisper, wargs, progress(total,'Texto'));
+      try { await run(bins.whisper, wargs, progress(total,'Texto')); }
+      catch(gpuErr){
+        // La versión GPU (CUDA) de whisper no arranca en PCs sin tarjeta NVIDIA → se repite con la versión de CPU.
+        const cpu=path.join(ROOT,'tools',process.platform==='win32'?'whisper-cli.exe':'whisper-cli');
+        if(job.cancelRequested||!bins.whisperGpu||!fs.existsSync(cpu)) throw gpuErr;
+        job.message='Tu PC no tiene una tarjeta NVIDIA compatible: transcribiendo con el procesador (tarda más)…'; job.percent=0;
+        await run(cpu, wargs, progress(total,'Texto'));
+      }
       await importTranscript(outputBase + '.json');
       job = { status:'done', message:`Transcripción lista: ${transcript.length} segmentos.`, progress:'', percent:100 };
     } catch (e) { job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
