@@ -42,7 +42,8 @@ La prueba e2e copia la app a una carpeta temporal y prueba Cortar (A), Silenciar
 ## Mediciones (nube, CPU, sin GPU)
 - La fuente sintética ya trae 21.2 ms de desfase por sí sola (arranque del AAC en MPEG-TS).
 - **Caso A** (Cortar, 3 clips + avance desde `bestof.json` + normalizar volumen): duración 249.000 s = esperada; 0 errores de decodificación; grosería callada; **avance: 4.7 ms en 27 pares**; video principal: entre 4.7 y 21.4 ms. La diferencia entre clips (17.2 ms) rebasa por 0.5 ms el límite de la prueba (17.17 ms), por eso A salió `ok:false`. El clip que empieza en 0 conserva el desfase de la fuente y los abiertos con `-ss` dan 4.7 ms: viene del método de corte que ya existía, **pero falta confirmarlo corriendo el mismo export sin avance**.
-- **Casos B (Silenciar + avance por energía) y C (133 clips por tandas):** pendientes; seguían corriendo al cerrar la sesión.
+- **Caso B** (Silenciar, calidad "lite", avance por energía del audio): duración 269.021 s = esperada; 0 errores de decodificación; grosería callada; avance 4.7 ms en 27 pares; video principal 4.7 ms parejo en los 238 pares. Salió `ok:false` por lo mismo que A: queda 16.5 ms (menos de 1 cuadro) distinto a la fuente (21.2 ms). En Silenciar **sin** avance el video se copia tal cual y conserva los 21 ms; **con** avance todo el video se reencoda y queda en 4.7 ms. Probablemente los 21 ms son el retraso de arranque del AAC en MPEG-TS y 4.7 ms está más cerca de la sincronía real, pero **no está comprobado**: hay que verlo en la RTX 3070, en un reproductor real y en YouTube.
+- **Caso C (133 clips por tandas):** pendiente; seguía corriendo al cerrar la sesión.
 
 ## Riesgos
 - Al publicar hay que agregar **`lib/teaser.js`** a `version.json` → `files`.
