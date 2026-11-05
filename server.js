@@ -154,8 +154,12 @@ const hwDecode = { on: null };
 // Más de MAX_HW_INPUTS entradas de video (camino SEG con hasta 120 pedazos / cutBase): cada una abriría su propio
 // decodificador NVDEC y la memoria de video se llena → ese comando va por CPU (sin apagar la GPU para los demás).
 const MAX_HW_INPUTS = 16;
+// Medido en la PC del dueño (Ryzen 9 5900X + RTX 3070, tools-dev/bench_export.js): leer con la GPU sale IGUAL de calidad
+// (bit a bit) pero 3–10 % MÁS LENTO que con el procesador → apagado por defecto. EMM_GPU_DECODE=1 lo prende (PCs con
+// procesador débil y NVIDIA buena, después de medir con el benchmark).
+const GPU_DECODE = process.env.EMM_GPU_DECODE === '1';
 async function runDec(exe, args, onOutput, want = true) {
-  if (!want) return run(exe, args, onOutput);
+  if (!want || !GPU_DECODE) return run(exe, args, onOutput);
   if (hwDecode.on === null) hwDecode.on = await hwaccel.probeCuda(exe);
   if (!hwDecode.on) return run(exe, args, onOutput);
   const hwArgs = hwaccel.withHwaccel(args, { gpu: true });
