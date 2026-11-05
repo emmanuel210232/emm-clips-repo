@@ -18,6 +18,12 @@ const hwaccel = require('./lib/hwaccel'); // decodificación por GPU (NVDEC) con
 // Opcional a propósito: si una actualización llegara sin lib/teaser.js (falta en version.json), la app SÍ arranca;
 // solo la opción del avance avisa que falta.
 let teaserLib = null; try { teaserLib = require('./lib/teaser'); } catch {}
+const Thumbs = require('./lib/thumbs');
+const Q = require('./lib/queue');
+const { COPYTS, startTimeOf, exactInput } = require('./lib/seek');
+// Entrada EXACTA del tramo [start, start+dur) del original (ver lib/seek.js): -ss directo en MPEG-TS cae corrido
+// (medido: Shorts empezaban 0.5–0.75 s tarde y los subtítulos/zooms, que cuentan desde el inicio pedido, se desfasaban).
+function exactClip(start,dur,pre){ const fmtStart=startTimeOf(readiness().ffprobe||'ffprobe',project.videoPath); return exactInput(project.videoPath,Number(start),Number(start)+Number(dur),{fmtStart,...(pre!=null?{pre}:{})}); }
 const channelStyle = require('./channel_style.json');
 
 const ROOT = __dirname;
@@ -453,7 +459,18 @@ async function teaserPlanFor({keep=null,duration,frags=null,onPct}={}){
   const energy=await audioEnergy(project.videoPath,{onPct}).catch(()=>[]);
   return teaserLib.buildPlan({candidates:bo?bo.candidates:[],energy,transcript,duration,keep});
 }
-async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false,teaser=null) {
+// Reserva `job` de forma SÍNCRONA antes del primer await: si no, la cola (cada 700 ms) o un segundo clic
+// ven job≠'running' durante durationOf() y arrancan otro export a la vez.
+async function exportVideo(...args) {
+  if (!project?.videoPath) throw Error('Abre un video primero.');
+  if (job.status === 'running') throw Error('Ya hay un proceso en curso.');
+  const prev = job;
+  const reserved = { status:'running', message:'Preparando export…', progress:'', percent:0, cancelRequested:false };
+  job = reserved;
+  try { return await exportVideoInner(reserved, ...args); }
+  catch (e) { if (job === reserved) job = reserved.cancelRequested ? { status:'cancelled', message:'Cancelado.', progress:'', percent:0 } : prev; throw e; } // falló antes de arrancar ffmpeg: se libera la reserva
+}
+async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false,teaser=null) {
   const wantTeaser = !!(teaser && teaser.on);
   if (wantTeaser && !teaserLib) throw Error('Falta el archivo lib/teaser.js para el avance. Busca actualizaciones o exporta sin avance.');
   const teaserFrags = wantTeaser && Array.isArray(teaser.frags) ? teaser.frags.slice(0,10) : null;
@@ -463,8 +480,12 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   const bins = readiness();
   if (!project?.videoPath) throw Error('Abre un video primero.');
   if (!bins.ffmpeg || !bins.ffprobe) throw Error('Configura FFmpeg y ffprobe antes de exportar.');
-  if (job.status === 'running') throw Error('Ya hay un proceso en curso.');
+  if (job !== reserved) throw Error('Ya hay un proceso en curso.');
   const duration = await durationOf(project.videoPath);
+  // Se vuelve a revisar tras el await: otro proceso no debe haber tomado `job`, ni el usuario haber cancelado.
+  if (job !== reserved) throw Error('Ya hay un proceso en curso.');
+  if (reserved.cancelRequested) throw Error('Cancelado.');
+  if (!project?.videoPath) throw Error('Abre un video primero.');
   const matches = findMatches(transcript, dictionary);
   const words = tokenizeTranscript(transcript);
   const baseName = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
@@ -1358,6 +1379,12 @@ async function renderShort(id) {
   if (!project?.videoPath) throw Error('Abre un video primero.');
   const clip=shorts.find(s=>s.id===id);
   if (!clip) throw Error('No encuentro esa propuesta de Short.');
+  return renderShortClip(clip);
+}
+// Igual que renderShort pero con el Short ya dado (la cola guarda una copia del Short al momento de agregarlo).
+async function renderShortClip(clip) {
+  if (job.status==='running') throw Error('Espera a que termine el proceso actual.');
+  if (!project?.videoPath) throw Error('Abre un video primero.');
   const bin=readiness().ffmpeg;
   if (!bin) throw Error('Configura FFmpeg antes de crear el Short.');
   job={status:'running',message:`Creando Short ${clip.rank} con subtítulos…`,progress:'',percent:0,cancelRequested:false};
@@ -1504,7 +1531,8 @@ async function buildFilmstripFiles(bin){
 }
 // Spawn liviano para tareas EN SEGUNDO PLANO (miniaturas): NO toca activeProc, así no interfiere
 // con el Cancelar de un trabajo real ni lo bloquea. Puede correr a la par de transcribir/editar.
-function runBG(exe,args){ return new Promise((resolve,reject)=>{ const c=spawn(exe,args,{windowsHide:true,cwd:ROOT}); let err=''; c.stderr.on('data',b=>{err=(err+b.toString()).slice(-800);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('bg '+code))); }); }
+// timeoutMs (opcional): si ffmpeg se cuelga (archivo dañado, disco de red), se mata y se rechaza; no se queda ocupando un turno.
+function runBG(exe,args,{timeoutMs=0}={}){ return new Promise((resolve,reject)=>{ const c=spawn(exe,args,{windowsHide:true,cwd:ROOT}); let err='', timedOut=false; const timer=timeoutMs>0?setTimeout(()=>{ timedOut=true; try{ c.kill(); }catch{} },timeoutMs):null; c.stderr.on('data',b=>{err=(err+b.toString()).slice(-800);}); c.on('error',e=>{ if(timer) clearTimeout(timer); reject(e); }); c.on('close',code=>{ if(timer) clearTimeout(timer); if(timedOut) reject(Error(`ffmpeg tardó más de ${Math.round(timeoutMs/1000)} s y se detuvo.`)); else code===0?resolve():reject(Error('bg '+code)); }); }); }
 // Miniaturas de la línea de tiempo EN SEGUNDO PLANO: el video ya se puede usar mientras se generan
 // (no hay segunda barra de carga). Se exponen por /api/job (stripBuilding) para que el frontend las muestre al terminar.
 // (La onda de audio se quitó: el frontend nunca la dibujaba, solo gastaba tiempo de carga.)
@@ -1904,7 +1932,171 @@ async function researchRoute(req, res, url) {
   return false;
 }
 
-const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/timeline-core.js':'lib/timeline-core.js' };
+// Mismas opciones que el botón "Exportar MP4" (el botón y la cola usan esta función: misma calidad, mismo método).
+function exportFromBody(body){ body=body||{}; const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); return exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu,(body.teaser&&typeof body.teaser==='object')?{on:!!body.teaser.on,frags:Array.isArray(body.teaser.frags)?body.teaser.frags:null}:null); }
+
+// ===== MINIATURAS: fotogramas del ORIGINAL a resolución completa =====
+// Fotograma EXACTO: en MPEG-TS el salto -ss no cae donde se pide (y ffmpeg pone el 0 donde cayó), así que se usa
+// lib/seek.js: se abre THUMB_PRE s antes con -copyts y trim corta en el tiempo ABSOLUTO (start_time + t) = el cuadro
+// que muestra el reproductor en t. Medido: 0 cuadros de diferencia (tests/thumbs-exacto.test.js).
+const THUMB_PRE = 3;
+const thumbsDir = () => path.join(DATA,'thumbs',crypto.createHash('sha1').update(String(project?.videoPath||'')).digest('hex').slice(0,12));
+let thumbVideoInfo = null; // {videoPath,width,height,fps,duration,matrix}
+async function thumbInfo(){
+  if(!project?.videoPath) throw Error('Abre un video primero.');
+  if(thumbVideoInfo&&thumbVideoInfo.videoPath===project.videoPath) return thumbVideoInfo;
+  const bin=readiness().ffprobe; if(!bin) throw Error('Configura ffprobe para sacar fotogramas.');
+  const out=spawnSync(bin,['-v','error','-select_streams','v:0','-show_entries','stream=width,height,avg_frame_rate,color_space','-of','json',project.videoPath],{encoding:'utf8',windowsHide:true});
+  const st=JSON.parse(out.stdout||'{}').streams?.[0]||{};
+  const fr=String(st.avg_frame_rate||'60/1').split('/'); const fps=(+fr[0])/(+fr[1]||1);
+  const duration=await durationOf(project.videoPath);
+  // Sin etiqueta de color, el HD es BT.709 (si no, swscale asume BT.601 y los colores salen un poco corridos).
+  const tagged=st.color_space&&st.color_space!=='unknown'&&st.color_space!=='reserved';
+  const matrix=tagged?'auto':((+st.height||1080)>=720?'bt709':'bt601');
+  thumbVideoInfo={videoPath:project.videoPath,width:+st.width||0,height:+st.height||0,fps:Number.isFinite(fps)&&fps>0?+fps.toFixed(3):60,duration,matrix};
+  return thumbVideoInfo;
+}
+function frameArgs(t,info,{size,fmt},outArgs){
+  const fmtStart=startTimeOf(readiness().ffprobe||'ffprobe',project.videoPath);
+  const e=exactInput(project.videoPath,t,t+0.5,{pre:THUMB_PRE,fmtStart});
+  const conv=`scale=${size}:flags=lanczos+accurate_rnd+full_chroma_int:in_color_matrix=${info.matrix}`;
+  return ['-hide_banner','-loglevel','error','-y',...COPYTS,...e.input,'-map','0:v:0','-an','-sn','-dn',
+    '-vf',`${e.vtrim},${conv},${fmt}`,'-frames:v','1',...outArgs];
+}
+// Varias imágenes a la vez desde el navegador → máximo 2 ffmpeg al mismo tiempo (no frenar la PC ni un export).
+let thumbSlots=2; const thumbWaiters=[];
+async function withThumbSlot(fn){ while(thumbSlots<=0) await new Promise(r=>thumbWaiters.push(r)); thumbSlots--; try{ return await fn(); } finally { thumbSlots++; const w=thumbWaiters.shift(); if(w) w(); } }
+const THUMB_TIMEOUT_MS=30000; // miniaturas: ffmpeg se mata si tarda más de 30 s
+async function thumbFrameFile(t,w){
+  const info=await thumbInfo(); const bin=readiness().ffmpeg; if(!bin) throw Error('Configura FFmpeg para sacar fotogramas.');
+  t=Math.max(0,Math.min(info.duration-1/info.fps,Number(t)||0));
+  const W=Math.max(160,Math.min(info.width||1920,Math.round(Number(w)||480)));
+  const dir=thumbsDir(); await fsp.mkdir(dir,{recursive:true});
+  const file=path.join(dir,`f${Math.round(t*1000)}_${W}.jpg`);
+  if(fs.existsSync(file)) return file;
+  // Se escribe a .tmp y se renombra: un JPEG a medias (ffmpeg matado/cortado) nunca queda en caché con el nombre final.
+  const tmp=`${file}.${crypto.randomUUID().slice(0,8)}.tmp`;
+  try{
+    await withThumbSlot(()=>runBG(bin,frameArgs(t,info,{size:`${W}:-2`,fmt:'format=yuvj420p'},['-q:v','3','-c:v','mjpeg','-f','mjpeg',tmp]),{timeoutMs:THUMB_TIMEOUT_MS}));
+    if(!fs.existsSync(tmp)||!fs.statSync(tmp).size) throw Error('No pude sacar ese fotograma.');
+    try{ fs.renameSync(tmp,file); }catch(e){ if(!fs.existsSync(file)) throw e; } // Windows: otra petición ya lo dejó listo
+  } finally { try{ fs.unlinkSync(tmp); }catch{} }
+  if(!fs.existsSync(file)) throw Error('No pude sacar ese fotograma.');
+  return file;
+}
+async function saveThumbPng(t){
+  const info=await thumbInfo(); const bin=readiness().ffmpeg; if(!bin) throw Error('Configura FFmpeg para guardar la miniatura.');
+  t=Number(t);
+  if(!Number.isFinite(t)) throw Error('Tiempo no válido.');
+  t=Math.max(0,Math.min(info.duration-1/info.fps,t));
+  const baseName=path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
+  const output=path.join(EXPORTS,`${baseName}_miniatura_${Thumbs.fileStamp(t)}.png`);
+  // PNG = sin pérdida, mismo tamaño que el original (sin reescalar), color convertido con precisión.
+  await withThumbSlot(()=>runBG(bin,frameArgs(t,info,{size:'iw:ih',fmt:'format=rgb24'},['-c:v','png',output]),{timeoutMs:THUMB_TIMEOUT_MS}));
+  if(!fs.existsSync(output)) throw Error('No se pudo guardar la miniatura.');
+  const dl=toDownloads(output);
+  return {name:path.basename(output),t:+t.toFixed(3),width:info.width,height:info.height,download:dl?path.basename(dl):'',message:dl?`🖼️ Miniatura guardada en Descargas: ${path.basename(dl)}`:`🖼️ Miniatura guardada en exports: ${path.basename(output)}`};
+}
+
+// ===== COLA DE EXPORTS =====
+// Uno tras otro, con las opciones guardadas al agregar. La lógica (estados, orden) está en lib/queue.js.
+// Solo llama a exportFromBody (= botón Exportar MP4) y a renderShortClip (= botón Crear Short): misma calidad y método.
+const QUEUE_FILE=path.join(DATA,'export_queue.json');
+function loadQueueFile(){
+  if(!fs.existsSync(QUEUE_FILE)) return null;
+  try{ return JSON.parse(fs.readFileSync(QUEUE_FILE,'utf8')); }
+  catch(e){
+    // Existe pero no se puede leer: se aparta como .bad (no se sobrescribe la cola del usuario).
+    try{ fs.renameSync(QUEUE_FILE,QUEUE_FILE+'.bad'); }catch{}
+    return null;
+  }
+}
+let exportQueue=Q.recoverQueue(loadQueueFile());
+let queueRun=null; // {id, before:Set(nombres en exports/), cancel}
+let lastQueueJson='';
+function saveQueue(){
+  try{
+    const txt=JSON.stringify(exportQueue,null,2);
+    if(txt===lastQueueJson) return; // sin cambios: no se escribe (se llama cada 700 ms)
+    const tmp=QUEUE_FILE+'.tmp';
+    fs.writeFileSync(tmp,txt,'utf8');
+    try{ fs.renameSync(tmp,QUEUE_FILE); }
+    catch{ fs.writeFileSync(QUEUE_FILE,txt,'utf8'); try{ fs.unlinkSync(tmp); }catch{} } // Windows: destino bloqueado (antivirus/indexador)
+    lastQueueJson=txt;
+  }catch{}
+}
+saveQueue();
+const exportNames=()=>{ try{ return new Set(fs.readdirSync(EXPORTS)); }catch{ return new Set(); } };
+function queueState(){ return {items:exportQueue.items.map(i=>({id:i.id,kind:i.kind,label:i.label,status:i.status,statusLabel:Q.STATUS_LABEL[i.status],message:i.message,output:i.output,addedAt:i.addedAt,startedAt:i.startedAt,finishedAt:i.finishedAt,otherVideo:!!(project?.videoPath&&i.videoPath!==project.videoPath)})),summary:Q.summary(exportQueue),job:{status:job.status,message:job.message,percent:job.percent}}; }
+function queueFail(id,e){ if(queueRun&&queueRun.id===id&&job.status!=='running'){ Q.markFinished(exportQueue,id,{status:'error',message:e.message}); queueRun=null; saveQueue(); } }
+function queueTick(){
+  const cur=Q.running(exportQueue);
+  if(cur){
+    if(job.status==='running'||!queueRun||queueRun.id!==cur.id||!queueRun.started) return; // sigue exportando
+    // Terminó: el archivo nuevo en exports/ es el resultado (sirve igual para video largo y Shorts).
+    const fresh=[...exportNames()].filter(n=>!queueRun.before.has(n)&&/\.mp4$/i.test(n));
+    const cancelled=job.status==='cancelled'||queueRun.cancel;
+    const status=job.status==='done'&&!cancelled?'done':(cancelled?'cancelled':'error');
+    Q.markFinished(exportQueue,cur.id,{status,message:status==='done'?(job.message||'Listo.'):(cancelled?'Cancelado.':(job.message||'Falló el export.')),output:status==='done'?fresh.join(', '):''});
+    queueRun=null; saveQueue();
+  }
+  for(let guard=0;guard<=Q.MAX_ITEMS;guard++){
+    const d=Q.decide(exportQueue,{jobBusy:job.status==='running',currentVideo:project?.videoPath||''});
+    if(d.action==='skip'){ Q.markRunning(exportQueue,d.item.id); Q.markFinished(exportQueue,d.item.id,{status:'error',message:d.reason}); saveQueue(); continue; }
+    if(d.action!=='start'){ saveQueue(); return; }
+    const it=d.item;
+    Q.markRunning(exportQueue,it.id); queueRun={id:it.id,before:exportNames(),cancel:false,started:false};
+    saveQueue();
+    const go=it.kind==='video'?exportFromBody(it.params):renderShortClip(it.params.clip);
+    // exportVideo/renderShortClip validan y ponen job='running' antes de su primer await largo; si fallan, error aquí.
+    go.then(()=>{ if(queueRun&&queueRun.id===it.id) queueRun.started=true; }, e=>{ if(queueRun&&queueRun.id===it.id) queueRun.started=true; queueFail(it.id,e); });
+    return;
+  }
+}
+setInterval(()=>{ try{ queueTick(); }catch{} },700).unref();
+
+async function thumbsQueueRoute(req,res,url){
+  const body=req.method==='POST'?((await jsonBody(req).catch(()=>({})))||{}):{};
+  if(req.method==='POST'&&url.pathname==='/api/thumbs/plan'){
+    const info=await thumbInfo(); const b=currentBestof();
+    const plan=Thumbs.sampleTimes({duration:info.duration,count:Number(body.count)||24,mode:String(body.mode||'all'),around:Number(body.around)||0,window:Number(body.window)||6,bestof:b?b.candidates:[],fps:info.fps});
+    return respond(res,200,{...plan,duration:info.duration,fps:info.fps,width:info.width,height:info.height,hasBestof:!!(b&&b.candidates&&b.candidates.length)});
+  }
+  if(req.method==='GET'&&url.pathname==='/api/thumbs/frame'){
+    const file=await thumbFrameFile(url.searchParams.get('t'),url.searchParams.get('w'));
+    const b=await fsp.readFile(file); res.writeHead(200,{'content-type':'image/jpeg','content-length':b.length,'cache-control':'private, max-age=3600'}); res.end(b); return true;
+  }
+  if(req.method==='POST'&&url.pathname==='/api/thumbs/save') return respond(res,200,await saveThumbPng(body.t));
+  if(req.method==='GET'&&url.pathname==='/api/queue'){ queueTick(); return respond(res,200,queueState()); }
+  if(req.method==='POST'&&url.pathname==='/api/queue/add'){
+    if(!project?.videoPath) throw Error('Abre un video primero.');
+    let item;
+    if(body.kind==='short'){
+      const clip=shorts.find(s=>s.id===String(body.id||'')); if(!clip) throw Error('No encuentro esa propuesta de Short.');
+      const name=String(clip.title||clip.hook||'').slice(0,60);
+      item=Q.addItem(exportQueue,{kind:'short',label:`Short ${clip.rank||''}${name?': '+name:''}`,params:{clip:JSON.parse(JSON.stringify(clip))},videoPath:project.videoPath});
+    } else {
+      item=Q.addItem(exportQueue,{kind:'video',label:String(body.label||'Video largo'),params:body.params||{},videoPath:project.videoPath});
+    }
+    if(body.start) exportQueue.active=true;
+    saveQueue(); queueTick();
+    return respond(res,200,{added:item.id,...queueState()});
+  }
+  if(req.method==='POST'&&url.pathname==='/api/queue/start'){ if(!Q.nextWaiting(exportQueue)&&!Q.running(exportQueue)) throw Error('No hay exports en espera.'); exportQueue.active=true; saveQueue(); queueTick(); return respond(res,200,queueState()); }
+  if(req.method==='POST'&&url.pathname==='/api/queue/pause'){ exportQueue.active=false; saveQueue(); return respond(res,200,queueState()); }
+  if(req.method==='POST'&&url.pathname==='/api/queue/cancel'){
+    const r=Q.cancelItem(exportQueue,body.id);
+    if(r.action==='stop'&&queueRun&&queueRun.id===r.item.id){ queueRun.cancel=true; if(job.status==='running'){ job.cancelRequested=true; job.message='Cancelando…'; if(activeProc){ try{ activeProc.kill(); }catch{} } } }
+    saveQueue(); return respond(res,200,queueState());
+  }
+  if(req.method==='POST'&&url.pathname==='/api/queue/remove'){ Q.removeItem(exportQueue,body.id); saveQueue(); return respond(res,200,queueState()); }
+  if(req.method==='POST'&&url.pathname==='/api/queue/retry'){ Q.retryItem(exportQueue,body.id); saveQueue(); queueTick(); return respond(res,200,queueState()); }
+  if(req.method==='POST'&&url.pathname==='/api/queue/move'){ Q.moveItem(exportQueue,body.id,Number(body.dir)||1); saveQueue(); return respond(res,200,queueState()); }
+  if(req.method==='POST'&&url.pathname==='/api/queue/clear'){ Q.clearFinished(exportQueue); saveQueue(); return respond(res,200,queueState()); }
+  return false;
+}
+
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/lib/thumbs.js':'lib/thumbs.js', '/miniaturas.js':'miniaturas.js', '/cola.js':'cola.js', '/timeline-core.js':'lib/timeline-core.js' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
   try {
@@ -2239,7 +2431,8 @@ const server=http.createServer(async (req,res) => {
         const {width,height}=videoDimensions(project.videoPath);
         const side=Math.round(Math.max(90,Math.min(height,p.size*width*1.5))/2)*2;
         const x=Math.round(Math.max(0,Math.min(width-side,p.x*width-side/2))), y=Math.round(Math.max(0,Math.min(height-side,p.y*height-side*0.45)));
-        await runBG(readiness().ffmpeg,['-y','-ss',String(clip.start+p.t),'-i',project.videoPath,'-frames:v','1','-vf',`crop=${side}:${side}:${x}:${y},scale=160:160:flags=lanczos`,'-q:v','3',fp]);
+        const ex=exactClip(clip.start+p.t,0.5,3);
+        await runBG(readiness().ffmpeg,['-y',...COPYTS,...ex.input,'-frames:v','1','-vf',`${ex.vtrim},crop=${side}:${side}:${x}:${y},scale=160:160:flags=lanczos`,'-q:v','3',fp]);
       }
       return serveMedia(req,res,fp);
     }
@@ -2264,7 +2457,8 @@ const server=http.createServer(async (req,res) => {
       const segs=Array.isArray(body.segments)?body.segments.slice(0,2000).map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end)})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04):null;
       const plan=await teaserPlanFor({keep:segs&&segs.length?segs:null,duration});
       return respond(res,200,{fragments:plan.fragments.map(f=>({start:f.start,end:f.end,label:f.label||'',source:f.source||''})),duration:plan.duration,fromBestof:!!currentBestof()}); }
-    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu,(body.teaser&&typeof body.teaser==='object')?{on:!!body.teaser.on,frags:Array.isArray(body.teaser.frags)?body.teaser.frags:null}:null); return respond(res,202,result); }
+    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); return respond(res,202,await exportFromBody(body)); }
+    if (url.pathname.startsWith('/api/thumbs/') || url.pathname.startsWith('/api/queue')) { const handled=await thumbsQueueRoute(req,res,url); if(handled!==false) return; }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);
   } catch(e) { return error(res,e); }

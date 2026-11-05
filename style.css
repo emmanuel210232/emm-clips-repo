@@ -683,3 +683,27 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
 .teaserWhy{font-size:12px;opacity:.8;font-style:italic}
 .teaserItem{display:flex;align-items:center;gap:8px;font-size:13px}
 .teaserItem span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ===== Miniaturas y cola de exports (bloque agrupado) ===== */
+.thumbsBar{gap:8px;align-items:center}
+.thumbsView{margin:10px 0}
+.thumbsBig{display:block;width:100%;max-width:960px;aspect-ratio:16/9;object-fit:contain;background:#000;border-radius:8px}
+.thumbsCtl{gap:8px;align-items:center;margin-top:8px}
+.thumbsWhen{font-variant-numeric:tabular-nums;min-width:90px;text-align:center}
+.thumbsGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px}
+.thumbCell{position:relative;padding:0;border:2px solid transparent;border-radius:8px;overflow:hidden;background:#000;cursor:pointer}
+.thumbCell img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+.thumbCell.sel{border-color:#3fb950}
+.thumbCell.suggested{border-color:#d29922}
+.thumbTime{position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.7);color:#fff;font-size:11px;padding:1px 5px;border-radius:4px}
+.thumbBadge{position:absolute;right:4px;top:4px;background:#d29922;color:#000;font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px}
+.queueBar{gap:8px;align-items:center;margin:6px 0}
+.queueList{display:flex;flex-direction:column;gap:6px}
+.queueItem{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;border:1px solid rgba(127,127,127,.3)}
+.queueItem.q-running{border-color:#58a6ff}
+.queueItem.q-error{border-color:#f85149}
+.queueItem.q-done{opacity:.8}
+.queueMain{min-width:0;flex:1}
+.queueTitle{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.queueSub{font-size:12px}
+.queueActs{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}

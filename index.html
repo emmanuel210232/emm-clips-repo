@@ -69,6 +69,7 @@
     <section class="stage" id="stage" aria-label="Reproductor">
       <div class="player"><video id="video" controls preload="metadata"></video><img id="scrubThumb" class="scrubThumb" alt=""><div id="animOverlay" class="animOverlay"></div><div id="editViewBadge" class="editViewBadge" hidden></div><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
       <div class="stageBar"><button id="grabFrame" class="secondary">📸 Exportar frame</button><span class="muted">Pausa donde quieras y pícalo: sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
+      <details class="card thumbsPanel" id="thumbsPanel"><summary>🖼️ Miniaturas: galería a resolución completa</summary><div id="thumbsBody"></div></details>
     </section>
 
     <!-- ABAJO: línea del tiempo -->
@@ -264,7 +265,8 @@
             <div class="row wrap"><button id="teaserPreview" type="button" class="secondary compact">👀 Ver qué momentos entran</button><span id="teaserInfo" class="muted"></span></div>
             <div id="teaserList" class="teaserList"></div>
           </div>
-          <div class="row"><button id="export" class="primary">Exportar MP4</button><span id="exportInfo" class="muted"></span></div>
+          <div class="row"><button id="export" class="primary">Exportar MP4</button><button id="exportQueueAdd" type="button" class="secondary">➕ Agregar a la cola</button><span id="exportInfo" class="muted"></span></div>
+          <details class="card queuePanel" id="queuePanel" open><summary>📋 Cola de exports · <span id="queueBadge" class="muted">vacía</span></summary><div id="queueBody"></div></details>
           <div id="exportedFiles" class="exportedFiles"></div>
         </div>
         <div class="stepNav"><button type="button" class="secondary prev" data-go="3">← Atrás</button><span></span></div>
@@ -337,5 +339,8 @@
   <script src="/app.js"></script>
   <script src="/vision.js"></script>
   <script src="/investigar.js"></script>
+  <script src="/lib/thumbs.js"></script>
+  <script src="/miniaturas.js"></script>
+  <script src="/cola.js"></script>
 </body>
 </html>
