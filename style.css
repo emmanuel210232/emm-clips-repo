@@ -657,3 +657,8 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
   .appShell .inspector{border-left:0;padding-bottom:14px}
   .appShell .inspector .stepNav{position:static;margin:12px 0 0}
 }
+/* hidden siempre gana (hay reglas viejas con display que lo pisaban) */
+.appShell .bestofSection[hidden],.appShell .researchSection[hidden],.appShell [hidden]{display:none!important}
+.appShell .stage{overflow:hidden}
+.appShell .stage .player{min-height:0}
+@media (min-width:1100px) and (max-height:820px){.appShell .dock{max-height:42vh}.appShell .stage{padding-top:8px}}
