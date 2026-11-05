@@ -1762,7 +1762,7 @@ async function researchRoute(req, res, url) {
   return false;
 }
 
-const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js' };
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/timeline-core.js':'lib/timeline-core.js' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
   try {

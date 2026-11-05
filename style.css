@@ -528,3 +528,11 @@ body.research-mode #wizard, body.research-mode section.step, body.research-mode 
 .shotMenu{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px;border-radius:10px;background:rgba(128,140,130,.1)}
 .shotMenuTitle{flex-basis:100%;font-size:13px;font-weight:700}
 .shotFoot{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+
+/* ===== Línea del tiempo: zoom, J/K/L y Vista de la edición (rama nube/timeline) ===== */
+.tl-zoomlvl{font-size:11.5px;color:#748076;font-variant-numeric:tabular-nums;min-width:2.5em}
+.tl-rate{font-size:12px;font-weight:800;color:#fff;background:#2f5c3f;border-radius:6px;padding:3px 7px;font-variant-numeric:tabular-nums}
+.tl-rate[hidden]{display:none}
+.tl-cutbar .tl-btn#tlEditView.active{background:#b4231b;border-color:#b4231b;color:#fff}
+.editViewBadge{position:absolute;left:10px;top:10px;max-width:calc(100% - 20px);z-index:4;background:rgba(10,14,12,.78);color:#fff;font-size:12.5px;font-weight:700;padding:6px 10px;border-radius:8px;pointer-events:none;line-height:1.35}
+.editViewBadge[hidden]{display:none}

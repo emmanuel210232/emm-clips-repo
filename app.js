@@ -156,7 +156,7 @@ function loadClips(){const dur=tlDuration();
   // Sin clips guardados: si el proyecto ya trae cortes, derivo los clips conservados (consistente con el export).
   if(dur && (state?.manualCuts||[]).length){ clips=keptFromCuts(state.manualCuts,dur); saveClips(); return; }
   clips=dur?[{start:0,end:dur}]:[];}
-function saveClips(){try{localStorage.setItem(clipsKey(),JSON.stringify(clips));}catch{}}
+function saveClips(){try{localStorage.setItem(clipsKey(),JSON.stringify(clips));}catch{}trackHistory();}
 function ensureClips(){const dur=tlDuration();if(!clips)loadClips();if((!clips||!clips.length)&&dur)clips=[{start:0,end:dur}];return clips||[];}
 function clipsSig(){return (clips||[]).map(c=>c.start.toFixed(1)+'-'+c.end.toFixed(1)+(c.zoom?'z':'')+(c.trans?'t':'')+(c.join?'j':'')).join(',');}
 function totalOut(){return (clips||[]).reduce((a,c)=>a+(c.end-c.start),0);}
@@ -164,8 +164,30 @@ function clipOutBounds(){let acc=0;return (clips||[]).map(c=>{const o={outStart:
 function outToSource(outT){let acc=0;for(const c of (clips||[])){const d=c.end-c.start;if(outT<=acc+d+1e-6)return c.start+Math.max(0,Math.min(d,outT-acc));acc+=d;}const last=(clips||[])[(clips||[]).length-1];return last?last.end:0;}
 function sourceToOut(srcT){let acc=0;for(const c of (clips||[])){const d=c.end-c.start;if(srcT>=c.start-1e-6&&srcT<=c.end+1e-6)return acc+(srcT-c.start);acc+=d;}return null;}
 function nearestKeptSource(srcT){for(const c of (clips||[])){if(srcT<=c.end)return Math.max(c.start,Math.min(srcT,c.end));}const last=(clips||[])[(clips||[]).length-1];return last?last.end:0;}
-function pushUndo(){try{clipUndo.push(JSON.stringify(clips));if(clipUndo.length>40)clipUndo.shift();}catch{}}
-function undoClip(){if(!clipUndo.length)return notice('Nada que deshacer.');try{clips=JSON.parse(clipUndo.pop());saveClips();selectedClipIdx=-1;multiSel.clear();syncRemoved();buildTimeline();notice('↶ Deshecho.');}catch{}}
+// ===== Deshacer / rehacer que SE GUARDA (sobrevive a recargar) =====
+// Se guarda en localStorage por video, junto a los clips (que ya viven ahí): así el historial y los clips nunca se
+// desincronizan. Últimos 50 pasos; si no cabe (directos con miles de clips), se tiran los pasos más viejos.
+// Cada vez que se guardan los clips se compara con lo último guardado: CUALQUIER cambio queda en el historial,
+// aunque la función que lo hizo no llame pushUndo (quitar silencios, resumen del directo, recortes…).
+const TL=window.TimelineCore||null;
+let hist=TL?TL.createHistory({limit:50}):null, lastSavedClips=null, pendingUndoLabel='', restoringHist=false;
+function histKey(){return 'eirl_hist_'+(state?.project?.videoPath||'');}
+function encClips(c){return JSON.stringify(TL?TL.encodeClips(c||[]):(c||[]));}
+function loadHist(){hist=TL?TL.createHistory({limit:50}):null;if(!hist)return;try{const raw=JSON.parse(localStorage.getItem(histKey())||'null');if(raw)hist.load(raw);}catch{}}
+function persistHist(){if(!hist)return;let max=1500000;for(let i=0;i<8;i++){try{localStorage.setItem(histKey(),JSON.stringify(TL.fitHistory(hist.toJSON(),max)));return;}catch{max=Math.floor(max/2);}}}
+function trackHistory(){
+  if(!hist||!clips)return;
+  const enc=encClips(clips), label=pendingUndoLabel; pendingUndoLabel='';
+  if(restoringHist||lastSavedClips==null||enc===lastSavedClips){lastSavedClips=enc;return;}
+  const before=TL.decodeClips(JSON.parse(lastSavedClips)); lastSavedClips=enc;
+  if(!before.length)return; // estado vacío (el video aún no cargaba): no es un paso real
+  hist.record({clips:before,label:label||TL.describeChange(before,clips)}); persistHist(); updateCutButtons();
+}
+function pushUndo(label){if(hist){pendingUndoLabel=label||'';return;}try{clipUndo.push(JSON.stringify(clips));if(clipUndo.length>40)clipUndo.shift();}catch{}}
+function applyHistClips(c){restoringHist=true;try{clips=c;saveClips();}finally{restoringHist=false;}persistHist();selectedClipIdx=-1;multiSel.clear();syncRemoved();const bar=$('timeline');if(bar)bar.dataset.fp='';buildTimeline();updateCutButtons();}
+function redoClip(){if(!hist||!hist.canRedo())return notice('Nada que rehacer.');const label=hist.peekRedoLabel();const next=hist.redo({clips,label});applyHistClips(next.clips);notice('↷ Rehice: '+(label||'el cambio')+'.');}
+function undoClip(){if(hist){if(!hist.canUndo())return notice('Nada que deshacer.');const label=hist.peekUndoLabel();const prev=hist.undo({clips,label});applyHistClips(prev.clips);return notice('↶ Deshice: '+(label||'el último cambio')+'. (Ctrl+Y para rehacer)');}
+  if(!clipUndo.length)return notice('Nada que deshacer.');try{clips=JSON.parse(clipUndo.pop());saveClips();selectedClipIdx=-1;multiSel.clear();syncRemoved();buildTimeline();notice('↶ Deshecho.');}catch{}}
 // Une clips contiguos (quita divisiones sin quitar contenido). Si hay varios seleccionados, une esos; si no, une todos.
 async function resetToFullVideo(){
   const dur=tlDuration();
@@ -340,7 +362,8 @@ function updateCutButtons(){
   const del=$('tlDelSel');if(del)del.disabled=!canDelete;
   const mg=$('tlMerge');if(mg)mg.disabled=!(clips&&clips.length>1);
   const zb=$('tlZoomClip');if(zb)zb.disabled=!(clips&&(n>0||selectedClipIdx>=0));
-  const un=$('tlUndo');if(un)un.disabled=!clipUndo.length;
+  const un=$('tlUndo');if(un){un.disabled=!(hist?hist.canUndo():clipUndo.length);un.title=hist&&hist.canUndo()?'Deshacer: '+hist.peekUndoLabel()+' (Ctrl+Z)':'Deshacer (Ctrl+Z)';}
+  const rd=$('tlRedo');if(rd){rd.disabled=!(hist&&hist.canRedo());rd.title=hist&&hist.canRedo()?'Rehacer: '+hist.peekRedoLabel()+' (Ctrl+Y)':'Rehacer (Ctrl+Y)';}
   const edited=clipsEdited();
   const info=$('tlCutInfo');if(info){
     if(n>1) info.textContent=n+' clips seleccionados';
@@ -353,7 +376,9 @@ function drawMarquee(x0,x1){const inner=tlInner();if(!inner)return;let m=inner.q
 function clearMarquee(){const inner=tlInner();if(inner){const m=inner.querySelector('.tl-marquee');if(m)m.remove();}}
 function refreshOverlays(){drawSelection();}
 function tlDuration(){const v=$('video');if(v&&v.duration&&isFinite(v.duration))return v.duration;const t=state?.transcript;return t&&t.length?Number(t[t.length-1].end)||0:0;}
-function positionHead(){const head=$('tlHead');if(!head)return;const v=$('video');const src=(v?.currentTime||0)+(playerSourceOffset||0);let o=sourceToOut(src);if(o==null)o=sourceToOut(nearestKeptSource(src));if(o==null)o=0;head.style.left=tlXofOut(o)+'px';}
+function positionHead(){const head=$('tlHead');if(!head)return;const v=$('video');const src=(v?.currentTime||0)+(playerSourceOffset||0);let o=sourceToOut(src);if(o==null)o=sourceToOut(nearestKeptSource(src));if(o==null)o=0;const x=tlXofOut(o);head.style.left=x+'px';
+  // con zoom, si el video avanza y el cabezal se sale de la vista, la línea del tiempo lo sigue
+  const bar=$('timeline');if(bar&&tlZoom>1&&!tlDrag&&!dragMode&&v&&!v.paused&&(x<bar.scrollLeft||x>bar.scrollLeft+bar.clientWidth-30))bar.scrollLeft=Math.max(0,x-60);}
 // Scrub FLUIDO: mientras arrastras, muestra la miniatura del filmstrip más cercana sobre el preview
 // (instantáneo, sin esperar el seek lento del <video>). Al soltar se hace un seek preciso y se ve el frame real.
 function nearestStripIndex(src){const N=state.filmstrip?state.filmstrip.count:0;if(!N)return 0;const dur=tlDuration();if(!dur)return 0;const interval=dur/N;let k=Math.round(src/interval+0.5);return Math.max(1,Math.min(N,k));}
@@ -367,6 +392,7 @@ function updateTlTime(){const v=$('video'),el=$('tlTime');if(!el)return;const sr
 // Reproducción EDITADA: al reproducir, salta automáticamente los huecos borrados.
 let editPlayGuard=0;
 function editedPlaybackTick(){
+  if(editView)return; // la Vista de la edición maneja sus propios saltos
   if(reviewClip)return; // reproduciendo un Short/fragmento: no saltar huecos de la edición (evita el play/pausa trabado)
   const v=$('video');if(!v||v.paused||!clips||clips.length<2)return;
   const src=(v.currentTime||0)+(playerSourceOffset||0);
@@ -388,11 +414,8 @@ function buildTimeline(){
   const px=Math.round((bar.clientWidth||700)*tlZoom);
   inner.style.width=px+'px';
   const outX=o=>Math.max(0,Math.min(px,o/T*px));
-  // Regla en tiempo de SALIDA
+  // Regla en tiempo de SALIDA (las marcas se dibujan solo en la parte visible: drawRuler)
   const ruler=document.createElement('div');ruler.className='tl-ruler';
-  const approx=T/(px/90);
-  const nice=[1,2,5,10,15,30,60,120,300,600,900].find(n=>n>=approx)||1200;
-  for(let o=0;o<=T+0.1;o+=nice){const tick=document.createElement('div');tick.className='tl-tick';tick.style.left=outX(o)+'px';const lab=document.createElement('span');lab.textContent=fmt(o).replace(/^0:/,'');tick.append(lab);ruler.append(tick);}
   inner.append(ruler);
   // Clips como BLOQUES separados, cada uno con su rebanada de miniaturas
   const N=state.filmstrip?state.filmstrip.count:0, interval=(state.filmstrip&&state.filmstrip.interval)||(N?dur/N:0), bounds=clipOutBounds();
@@ -410,7 +433,17 @@ function buildTimeline(){
     inner.append(block);
   });
   const head=document.createElement('div');head.className='tl-head';head.id='tlHead';inner.append(head);
-  bar.append(inner); positionHead(); updateTlTime(); drawSelection();
+  bar.append(inner); drawRuler(); positionHead(); updateTlTime(); drawSelection();
+}
+function drawRuler(){
+  const bar=$('timeline'),inner=tlInner();if(!bar||!inner)return;const ruler=inner.querySelector('.tl-ruler');if(!ruler)return;
+  const T=totalOut(),px=inner.offsetWidth;if(!T||!px)return;
+  const nice=[1,2,5,10,15,30,60,120,300,600,900,1800,3600].find(n=>n>=T/(px/90))||7200;
+  const v0=Math.max(0,(bar.scrollLeft-bar.clientWidth)/px*T),v1=Math.min(T,(bar.scrollLeft+2*bar.clientWidth)/px*T);
+  const key=nice+'|'+Math.floor(v0/nice)+'|'+Math.ceil(v1/nice)+'|'+px;if(ruler.dataset.k===key)return;ruler.dataset.k=key;
+  const frag=document.createDocumentFragment();
+  for(let o=Math.floor(v0/nice)*nice;o<=v1+0.1;o+=nice){const tick=document.createElement('div');tick.className='tl-tick';tick.style.left=Math.max(0,Math.min(px,o/T*px))+'px';const lab=document.createElement('span');lab.textContent=fmt(o).replace(/^0:/,'');tick.append(lab);frag.append(tick);}
+  ruler.replaceChildren(frag);
 }
 function frameStep(d){const v=$('video');if(!v)return;try{v.pause();v.currentTime=Math.max(0,(v.currentTime||0)+d);}catch{}positionHead();updateTlTime();}
 // Vista previa de la animación del clip (simula el fade con un overlay sobre el reproductor).
@@ -479,7 +512,7 @@ function render() {
   {const ps=$('projStatus');if(ps)ps.textContent=p?('Proyecto actual: '+p.videoPath.split(/[\\/]/).at(-1)):'Sin proyecto abierto.';}
   const videoKey=(p?.videoPath||'')+'|'+(p?.previewPath||'');
   if(p?.videoPath!==lastSourceVideo){lastSourceVideo=p?.videoPath||'';selected=new Set();selectedPauses=new Set();matchFingerprint='';selectionHydrated=false;}
-  if(p?.videoPath!==clipsVideo){clipsVideo=p?.videoPath||'';selectedClipIdx=-1;clipUndo=[];clips=null;loadClips();}
+  if(p?.videoPath!==clipsVideo){clipsVideo=p?.videoPath||'';selectedClipIdx=-1;clipUndo=[];stopEditView();lastSavedClips=null;loadHist();clips=null;loadClips();lastSavedClips=clips&&clips.length?encClips(clips):null;}
   if(!selectionHydrated){selectedPauses=new Set(state.selection?.selectedPauseIds||[]);selectionHydrated=true;}
   if(videoKey!==lastVideo){lastVideo=videoKey;playerSourceOffset=0;playerIsCutPreview=false;reviewClip=false;const unsupported=p&&!p.previewPath&&/\.(mpg|mpeg|mkv|avi)$/i.test(p.videoPath||'');if(unsupported){$('video').removeAttribute('src');$('playerEmpty').textContent='Preparando la vista previa de este formato… aparecerá en unos momentos.';}else{$('video').src=p?'/api/video?d='+Date.now():'';$('playerEmpty').textContent='Aquí podrás revisar el video y saltar a cada coincidencia.';}$('video').parentElement.classList.toggle('ready',!!p&&!unsupported);$('videoPath').value=p?.videoPath||'';}
   $('termCount').textContent=`${state.dictionary.filter(d=>d.enabled).length} activas`;
@@ -558,22 +591,44 @@ $('transcribe').onclick=safe(async()=>{await api('/api/transcribe',{});notice('T
 $('analyzePauses').onclick=safe(async()=>{selectedPauses=new Set();await api('/api/pauses/analyze',{});notice('Analizando silencios del audio.');});
 $('makePreview').onclick=safe(async()=>{await api('/api/preview',{});notice('Creando vista previa. Puedes esperar a que termine mientras la app sigue abierta.');});
 $('grabFrame').onclick=safe(async()=>{let at;try{at=sourcePlayerTime();}catch(e){throw Error('Mueve el reproductor al momento que quieras (video original o un fragmento sin cortar).');}const r=await api('/api/frame',{at});notice('📸 Frame guardado: '+r.name+'. En el paso 4 → Archivos creados puedes abrirlo o Guardar como.');});
-$('tlZoomIn').onclick=()=>{tlZoom=Math.min(40,tlZoom*1.6);buildTimeline();};
-$('tlZoomOut').onclick=()=>{tlZoom=Math.max(1,tlZoom/1.6);buildTimeline();};
+// Zoom de la línea del tiempo: botones +/−, Ctrl+rueda (sobre el punto del ratón), teclas +/− y "Ajustar".
+// Máximo ~240 px por segundo (para recortar fino) sin pasar de 4 millones de px de ancho (directos de 6 h).
+function tlMaxZoom(){const bar=$('timeline');return TL?TL.maxTlZoom(totalOut(),(bar&&bar.clientWidth)||700):40;}
+function tlHeadPx(){const bar=$('timeline'),head=$('tlHead');if(!bar||!head)return null;const x=parseFloat(head.style.left)||0;const rel=x-bar.scrollLeft;return rel>=0&&rel<=bar.clientWidth?rel:null;}
+function setTlZoom(z,anchorPx){const bar=$('timeline');if(!bar)return;z=Math.max(1,Math.min(tlMaxZoom(),z));if(Math.abs(z-tlZoom)<1e-6)return;
+  const inner=tlInner();const oldW=inner?inner.offsetWidth:0,oldScroll=bar.scrollLeft;
+  if(anchorPx==null){const h=tlHeadPx();anchorPx=h!=null?h:bar.clientWidth/2;}
+  tlZoom=z;buildTimeline();const ni=tlInner();
+  if(ni&&oldW)bar.scrollLeft=TL?TL.anchoredScroll(oldScroll,anchorPx,oldW,ni.offsetWidth):(oldScroll+anchorPx)/oldW*ni.offsetWidth-anchorPx;
+  drawRuler();const zl=$('tlZoomLevel');if(zl)zl.textContent=tlZoom<1.05?'':Math.round(tlZoom*10)/10+'×';}
+$('tlZoomIn').onclick=()=>setTlZoom(tlZoom*1.6);
+$('tlZoomOut').onclick=()=>setTlZoom(tlZoom/1.6);
+if($('tlZoomFit'))$('tlZoomFit').onclick=()=>setTlZoom(1,0);
+(function(){const bar=$('timeline');if(!bar)return;
+  bar.addEventListener('wheel',e=>{
+    if(e.ctrlKey||e.metaKey){e.preventDefault();const r=bar.getBoundingClientRect();setTlZoom(tlZoom*Math.exp(-Math.max(-300,Math.min(300,e.deltaY))*0.0022),e.clientX-r.left);return;}
+    if(tlZoom>1&&Math.abs(e.deltaY)>Math.abs(e.deltaX)){e.preventDefault();bar.scrollLeft+=e.deltaY;}
+  },{passive:false});
+  let pend=false;bar.addEventListener('scroll',()=>{if(pend)return;pend=true;requestAnimationFrame(()=>{pend=false;drawRuler();});});
+})();
 $('tlBackF').onclick=()=>frameStep(-1/30);
 $('tlFwdF').onclick=()=>frameStep(1/30);
 $('tlBack1s').onclick=()=>frameStep(-1);
 $('tlFwd1s').onclick=()=>frameStep(1);
-$('tlPlay').onclick=()=>{const v=$('video');if(!v)return;v.paused?v.play().catch(()=>{}):v.pause();};
+$('tlPlay').onclick=()=>{const v=$('video');if(!v)return;if(shuttleTimer){setShuttle(0);return;}if(v.paused){v.playbackRate=1;showRate('');v.play().catch(()=>{});}else v.pause();};
 $('tlLoadStrip').onclick=safe(async()=>{if(!state.project)throw Error('Abre un video primero.');await api('/api/filmstrip',{});notice('🎞️ Generando miniaturas en segundo plano… aparecen solas, puedes seguir trabajando.');});
 // Interacciones de clips: arrastrar el cuerpo = MOVER/reordenar · arrastrar el borde = RECORTAR (trim) · clic = seleccionar+ir · regla = scrub.
 let dragMode=null, trimState=null, moveState=null;
 function edgeHit(block,clientX){const r=block.getBoundingClientRect();if(clientX-r.left<=9)return 'L';if(r.right-clientX<=9)return 'R';return null;}
-function doTrim(clientX){const t=trimState;if(!t)return;const c=clips[t.idx];if(!c)return;const dSrc=(clientX-t.startX)/(t.pxStart||1)*(t.totStart||0);
-  if(t.side==='R')c.end=Math.max(c.start+0.3,Math.min(tlDuration(),t.startVal+dSrc));
-  else c.start=Math.max(0,Math.min(c.end-0.3,t.startVal+dSrc));
+function doTrim(clientX){const t=trimState;if(!t)return;const c=clips[t.idx];if(!c)return;const secPerPx=(t.totStart||0)/(t.pxStart||1);const want=t.startVal+(clientX-t.startX)*secPerPx;
+  if(TL){ // no se encima con el clip vecino de la fuente (no duplica video), mínimo 0.2 s, imán al cabezal (8 px)
+    const r=TL.trimClip(clips,t.idx,t.side,want,{dur:tlDuration(),minLen:0.2,limits:t.limits,snapPoints:t.snap,snapTol:8*secPerPx});
+    if(r){c.start=r.clips[t.idx].start;c.end=r.clips[t.idx].end;t.snapped=r.snapped!=null;}
+  } else if(t.side==='R')c.end=Math.max(c.start+0.3,Math.min(tlDuration(),want));
+  else c.start=Math.max(0,Math.min(c.end-0.3,want));
+  const info=$('tlCutInfo');if(info)info.textContent='✂️ '+(TL?TL.fmtTC(c.end-c.start,true):fmt(c.end-c.start))+(t.snapped?' · 🧲 al cabezal':'');
   const now=performance.now();if(now-(t.last||0)>70){t.last=now;buildTimeline();}}
-function commitTrim(){const c=clips[trimState.idx];saveClips();syncRemoved();buildTimeline();if(c)notice('✂️ Clip recortado a '+fmt(c.end-c.start)+'.');}
+function commitTrim(){const c=clips[trimState.idx];pushUndo('recortar clip');saveClips();syncRemoved();buildTimeline();if(c)notice('✂️ Clip recortado a '+fmt(c.end-c.start)+'. (Ctrl+Z para deshacer)');}
 function moveClipTo(fromIdx,targetOut){const b=clipOutBounds();let ins=b.findIndex(x=>targetOut<(x.outStart+x.outEnd)/2);if(ins<0)ins=clips.length;
   pushUndo();const[clip]=clips.splice(fromIdx,1);if(ins>fromIdx)ins--;ins=Math.max(0,Math.min(clips.length,ins));clips.splice(ins,0,clip);
   saveClips();selectedClipIdx=ins;syncRemoved();buildTimeline();notice('↔ Clip movido al lugar '+(ins+1)+'.');}
@@ -590,7 +645,7 @@ function moveClipTo(fromIdx,targetOut){const b=clipOutBounds();let ins=b.findInd
       if(e.ctrlKey||e.metaKey||e.shiftKey){ if(multiSel.has(idx))multiSel.delete(idx); else multiSel.add(idx); if(multiSel.size)selectedClipIdx=-1; drawSelection(); updateCutButtons&&updateCutButtons(); e.preventDefault(); return; }
       if(!multiSel.has(idx)){ multiSel.clear(); selectedClipIdx=idx; } drawSelection();
       const edge=edgeHit(block,e.clientX);
-      if(edge){ dragMode='trim'; trimState={idx,side:edge,startX:e.clientX,startVal:edge==='L'?clips[idx].start:clips[idx].end,pxStart:tlInner().offsetWidth,totStart:totalOut(),last:0}; e.preventDefault(); return; }
+      if(edge){ dragMode='trim'; const hv=$('video'); trimState={idx,side:edge,startX:e.clientX,startVal:edge==='L'?clips[idx].start:clips[idx].end,pxStart:tlInner().offsetWidth,totStart:totalOut(),last:0,limits:TL?TL.trimLimits(clips,idx,tlDuration()):null,snap:hv?[(hv.currentTime||0)+(playerSourceOffset||0)]:[]}; e.preventDefault(); return; }
       // cuerpo del clip → clic = seleccionar (sin mover la barra) · arrastrar = MOVER/reordenar el clip
       dragMode='pending'; moveState={idx,startX:e.clientX,moved:false}; e.preventDefault(); return;
     }
@@ -635,9 +690,16 @@ window.addEventListener('keydown',e=>{
   if(!step1)return;
   const t=e.target,tag=(t&&t.tagName||'').toLowerCase();
   if(tag==='input'||tag==='textarea'||tag==='select'||(t&&t.isContentEditable))return;
-  const k=e.key.toLowerCase();
-  if(k==='d'){e.preventDefault();splitAtPlayhead();return;}
-  if((e.ctrlKey||e.metaKey)&&k==='z'){e.preventDefault();undoClip();return;}
+  const k=e.key.toLowerCase(), ctrl=e.ctrlKey||e.metaKey;
+  if(e.altKey)return;
+  if((k==='d'||k==='s')&&!ctrl){e.preventDefault();splitAtPlayhead();return;}
+  if(ctrl&&k==='z'){e.preventDefault();if(e.shiftKey)redoClip();else undoClip();return;}
+  if(ctrl&&k==='y'){e.preventDefault();redoClip();return;}
+  if(ctrl)return; // no robar Ctrl+C, Ctrl+R, etc.
+  if(k==='j'||k==='k'||k==='l'){e.preventDefault();shuttleKey(k);return;}
+  if(e.key==='+'||e.key==='='||e.code==='NumpadAdd'){e.preventDefault();setTlZoom(tlZoom*1.6);return;}
+  if(e.key==='-'||e.key==='_'||e.code==='NumpadSubtract'){e.preventDefault();setTlZoom(tlZoom/1.6);return;}
+  if(e.key==='Escape'&&editView){e.preventDefault();stopEditView('Saliste de la vista de la edición.');return;}
   if(k==='z'&&!e.ctrlKey&&!e.metaKey){e.preventDefault();toggleZoom();return;}
   if((e.key==='['||e.key===']')&&clips&&selectedClipIdx>=0){e.preventDefault();const to=selectedClipIdx+(e.key==='['?-1:1);if(to>=0&&to<clips.length){pushUndo();const[c]=clips.splice(selectedClipIdx,1);clips.splice(to,0,c);saveClips();selectedClipIdx=to;syncRemoved();buildTimeline();notice('↔ Clip movido al lugar '+(to+1)+'.');}return;}
   if(e.key==='Delete'||e.key==='Backspace'){
@@ -649,6 +711,59 @@ window.addEventListener('keydown',e=>{
   if(e.key==='ArrowRight'){e.preventDefault();frameStep(e.shiftKey?1:1/30);return;}
   if(e.key===' '){e.preventDefault();$('tlPlay').click();return;}
 });
+// ===== J / K / L (reproducción tipo editor profesional) =====
+// L = adelante (cada toque: 1×, 2×, 4×, 8×) · K = pausa · J = atrás (el navegador no reproduce hacia atrás: se
+// simula saltando hacia atrás a esa velocidad, sin audio).
+let shuttleRate=0, shuttleTimer=null;
+function showRate(txt){const el=$('tlRate');if(el){el.textContent=txt;el.hidden=!txt;}}
+function currentShuttle(){const v=$('video');if(shuttleTimer)return shuttleRate;if(v&&!v.paused)return v.playbackRate||1;return 0;}
+function setShuttle(rate){const v=$('video');if(!v||!v.getAttribute('src'))return;clearInterval(shuttleTimer);shuttleTimer=null;shuttleRate=rate;
+  if(!rate){v.pause();v.playbackRate=1;showRate('');return;}
+  if(rate>0){v.playbackRate=rate;v.play().catch(()=>{});showRate(rate===1?'':'▶▶ '+rate+'×');return;}
+  v.pause();v.playbackRate=1;showRate('◀◀ '+(-rate)+'×');let last=performance.now();
+  shuttleTimer=setInterval(()=>{const now=performance.now(),dt=(now-last)/1000;last=now;const t=Math.max(0,(v.currentTime||0)+rate*dt);try{v.currentTime=t;}catch{}positionHead();updateTlTime();if(t<=0)setShuttle(0);},120);}
+function shuttleKey(k){const action=k==='j'?'shuttleBack':k==='k'?'shuttleStop':'shuttleFwd';const cur=currentShuttle();setShuttle(TL?TL.shuttle(cur,action):(action==='shuttleStop'?0:action==='shuttleFwd'?Math.min(8,cur>0?cur*2:1):-1));}
+$('video').addEventListener('pause',()=>{if(!shuttleTimer){shuttleRate=0;showRate('');}});
+// ===== Vista de la edición: reproduce como quedará, sin exportar =====
+// Salta lo que se quita (clips borrados, silencios quitados, cortes) siguiendo el ORDEN de los clips, y deja en
+// silencio las groserías que se van a silenciar. Mismas reglas que el export (TimelineCore.editPlan).
+let editView=null;
+function currentEditPlan(){const mode=(document.querySelector('input[name="censorMode"]:checked')||{}).value==='cut'?'cut':'mute';
+  return TL.editPlan({edited:clipsEdited(),clips:ensureClips(),dur:tlDuration(),mode,matches:state.matches||[],selectedIds:[...selected],adjustments:state.adjustments||{},pauses:state.pauses||[],selectedPauseIds:[...selectedPauses],manualCuts:state.manualCuts||[],censorAll:!!$('exCensor')?.checked});}
+function editViewTick(){const ev=editView,v=$('video');if(!ev||!v)return;
+  const t=v.currentTime||0;const st=TL.previewStep(ev.plan.clips,ev.idx,t,0.035);
+  if(st.end){v.pause();stopEditView('🏁 Terminó la vista de la edición.');return;}
+  if(st.seek!=null){const now=performance.now();if(now-ev.lastSeek>150){ev.lastSeek=now;try{v.currentTime=st.seek+0.001;}catch{}}}
+  ev.idx=st.idx;const m=ev.wasMuted||TL.inRanges(ev.plan.mute,t);if(v.muted!==m)v.muted=m;
+  ev.schedule();}
+function startEditView(){
+  if(!TL)return notice('Actualiza la app: falta un archivo de la línea del tiempo.',true);
+  const v=$('video');if(!v||!v.getAttribute('src')||!tlDuration())return notice('Abre un video primero.',true);
+  if(playerSourceOffset){const unsupported=!state.project?.previewPath&&/\.(mpg|mpeg|mkv|avi)$/i.test(state.project?.videoPath||'');if(unsupported)return notice('Para la vista de la edición crea primero la “vista previa MP4” (este formato no se reproduce completo en el navegador).',true);
+    playerSourceOffset=0;v.src='/api/video?d='+Date.now();v.addEventListener('loadedmetadata',()=>startEditView(),{once:true});return;}
+  stopEditView();
+  const plan=currentEditPlan();if(!plan.clips.length)return notice('No hay nada que reproducir.',true);
+  reviewClip=false;v.ontimeupdate=null;clearInterval(shuttleTimer);shuttleTimer=null;v.playbackRate=1;showRate('');
+  const ev={plan,idx:-1,lastSeek:0,wasMuted:v.muted,stopped:false};
+  ev.schedule=()=>{if(ev.stopped)return;if(v.requestVideoFrameCallback&&!v.paused)ev.h=v.requestVideoFrameCallback(()=>editViewTick());else ev.h=setTimeout(editViewTick,30);};
+  editView=ev;
+  const first=TL.previewStep(plan.clips,-1,v.currentTime||0,0.035);
+  if(first.end){ev.idx=0;try{v.currentTime=plan.clips[0].start;}catch{}}else{ev.idx=first.idx;if(first.seek!=null)try{v.currentTime=first.seek;}catch{}}
+  v.play().catch(()=>{});ev.schedule();
+  const nm=plan.mute.length,dur=fmt(TL.totalOut(plan.clips));
+  const txt=plan.mode==='mute'?('Vista de la edición · modo Silenciar: video completo'+(nm?' con '+nm+' grosería'+(nm>1?'s':'')+' en silencio':' (no hay groserías marcadas)'))
+    :('Vista de la edición · dura '+dur+(plan.skipped?' · se saltan '+plan.skipped+' parte'+(plan.skipped>1?'s':'')+' quitada'+(plan.skipped>1?'s':''):'')+(nm?' · '+nm+' grosería'+(nm>1?'s':'')+' en silencio':''));
+  const b=$('editViewBadge');if(b){b.textContent='👁️ '+txt+' · Esc para salir';b.hidden=false;}
+  const btn=$('tlEditView');if(btn){btn.textContent='⏹ Salir de la vista';btn.classList.add('active');}
+  notice('👁️ '+txt+'. Así quedará al exportar.');}
+function stopEditView(msg){const ev=editView;if(!ev)return;ev.stopped=true;editView=null;const v=$('video');
+  try{if(ev.h!=null){if(v&&v.cancelVideoFrameCallback)v.cancelVideoFrameCallback(ev.h);clearTimeout(ev.h);}}catch{}
+  if(v)v.muted=ev.wasMuted;const b=$('editViewBadge');if(b)b.hidden=true;
+  const btn=$('tlEditView');if(btn){btn.textContent='👁️ Vista de la edición';btn.classList.remove('active');}
+  if(msg)notice(msg);}
+if($('tlEditView'))$('tlEditView').onclick=()=>{if(editView)stopEditView('Saliste de la vista de la edición.');else startEditView();};
+$('video').addEventListener('play',()=>{if(editView)editView.schedule();});
+if($('tlRedo'))$('tlRedo').onclick=()=>redoClip();
 $('getDf').onclick=async()=>{const b=$('getDf');try{b.disabled=true;b.textContent='Descargando… (25 MB)';await api('/api/download-df',{});notice('✅ Voz Estudio activada. Marca “Realzar voz · Estudio” en el panel de audio.');await refresh();const av=$('auVoice');if(av)av.checked=true;}catch(e){notice('No se pudo activar: '+e.message,true);}finally{b.disabled=false;b.textContent='⬇️ Activar voz Estudio (25 MB)';}};
 $('auOff').onclick=()=>{['auDenoise','auCompress','auNormalize','auVoice'].forEach(id=>{const el=$(id);if(el)el.checked=false;});notice('Audio sin procesar: saldrá igual que el original (con las groserías silenciadas).');};
 $('animPreviewIn').onclick=()=>previewAnim('in');

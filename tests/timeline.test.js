@@ -191,3 +191,74 @@ test('atajos de teclado', () => {
   assert.equal(T.shuttle(-1, 'shuttleBack'), -2);
   assert.equal(T.shuttle(4, 'shuttleStop'), 0);
 });
+
+// ---------- Vista de la edición: mismo plan que el export ----------
+test('plan de la vista: con clips editados reproduce los clips en orden y silencia las groserías marcadas', () => {
+  const matches = [{ id: 'a', start: 10, end: 10.5 }, { id: 'b', start: 30, end: 30.4 }];
+  const p = T.editPlan({ edited: true, clips: [{ start: 20, end: 40 }, { start: 0, end: 15 }], dur: 60, matches, selectedIds: ['b'] });
+  assert.deepEqual(p.clips.map(c => [c.start, c.end]), [[20, 40], [0, 15]]);
+  assert.equal(p.mode, 'edit');
+  assert.equal(p.mute.length, 1);
+  assert.ok(Math.abs(p.mute[0].start - 29.79) < 1e-9 && Math.abs(p.mute[0].end - 30.61) < 1e-9);
+  // "censurar todas" silencia también las no marcadas
+  const all = T.editPlan({ edited: true, clips: [{ start: 0, end: 60 }], dur: 60, matches, selectedIds: [], censorAll: true });
+  assert.equal(all.mute.length, 2);
+});
+
+test('plan de la vista: modo Silenciar = video completo + silencio en marcadas, cortes manuales y ajustes', () => {
+  const p = T.editPlan({ mode: 'mute', dur: 100, matches: [{ id: 'a', start: 10, end: 11 }], selectedIds: ['a'], adjustments: { a: { start: 9.5, end: 11.2 } }, manualCuts: [{ start: 50, end: 52 }] });
+  assert.deepEqual(p.clips, [{ start: 0, end: 100 }]);
+  assert.equal(p.mute.length, 2);
+  assert.ok(Math.abs(p.mute[0].start - 9.35) < 1e-9 && Math.abs(p.mute[0].end - 11.35) < 1e-9, 'usa el ajuste manual + margen');
+  assert.ok(T.inRanges(p.mute, 51) && !T.inRanges(p.mute, 30));
+});
+
+test('plan de la vista: modo Cortar quita marcadas, pausas marcadas y cortes manuales', () => {
+  const p = T.editPlan({ mode: 'cut', dur: 100, matches: [{ id: 'a', start: 10, end: 11 }], selectedIds: ['a'], pauses: [{ id: 'p1', start: 40, end: 45 }, { id: 'p2', start: 70, end: 72 }], selectedPauseIds: ['p1'], manualCuts: [{ start: 80, end: 90 }] });
+  assert.deepEqual(p.clips.map(c => [+c.start.toFixed(2), +c.end.toFixed(2)]), [[0, 9.94], [11.06, 40], [45, 80], [90, 100]]);
+  assert.equal(p.skipped, 3);
+  assert.deepEqual(p.mute, []);
+  // la vista recorre el plan saltando los cortes
+  assert.deepEqual(T.previewStep(p.clips, 0, 9.95, 0.03), { idx: 1, seek: p.clips[1].start });
+});
+
+test('describe el cambio para el mensaje de deshacer', () => {
+  const a = [{ start: 0, end: 10 }, { start: 20, end: 30 }];
+  assert.equal(T.describeChange(a, [{ start: 0, end: 5 }, { start: 5, end: 10 }, { start: 20, end: 30 }]), 'dividir clip');
+  assert.equal(T.describeChange(a, [{ start: 20, end: 30 }]), 'borrar clip');
+  assert.equal(T.describeChange(a, [{ start: 20, end: 30 }, { start: 0, end: 10 }]), 'mover clip');
+  assert.equal(T.describeChange(a, [{ start: 0, end: 8 }, { start: 20, end: 30 }]), 'recortar clip');
+  assert.equal(T.describeChange(a, [{ start: 0, end: 10, zoom: true }, { start: 20, end: 30 }]), 'poner zoom');
+  assert.equal(T.describeChange(a, [{ start: 0, end: 100 }]), 'volver al video completo');
+  assert.equal(T.describeChange([{ start: 0, end: 5 }, { start: 5, end: 10 }], [{ start: 0, end: 10 }]), 'unir clips');
+  assert.equal(T.describeChange([{ start: 0, end: 100 }], Array.from({ length: 40 }, (_, i) => ({ start: i * 2, end: i * 2 + 1 }))), 'quitar 39 partes');
+});
+
+test('historial guardado: cabe en el límite, se recupera tras "recargar" y no pierde el último paso', () => {
+  const h = T.createHistory({ limit: 50 });
+  const big = n => Array.from({ length: n }, (_, i) => ({ start: i, end: i + 0.5 }));
+  for (let i = 0; i < 50; i++) h.record({ clips: big(200 + i), label: 'paso ' + i });
+  const raw = JSON.stringify(h.toJSON());
+  const fit = T.fitHistory(h.toJSON(), Math.floor(raw.length / 4));
+  assert.ok(JSON.stringify(fit).length <= raw.length / 4);
+  assert.equal(fit.past[fit.past.length - 1].l, 'paso 49', 'conserva lo más reciente');
+  const h2 = T.createHistory({ limit: 50 });
+  assert.ok(h2.load(JSON.parse(JSON.stringify(fit))));
+  assert.equal(h2.peekUndoLabel(), 'paso 49');
+  const back = h2.undo({ clips: big(3), label: h2.peekUndoLabel() });
+  assert.equal(back.clips.length, 249);
+  assert.equal(h2.peekRedoLabel(), 'paso 49');
+  // un límite imposible deja al menos el último paso
+  const tiny = T.fitHistory(h.toJSON(), 10);
+  assert.equal(tiny.past.length, 1); assert.equal(tiny.future.length, 0);
+});
+
+test('zoom de la línea del tiempo: máximo según duración y ancla del cursor', () => {
+  assert.equal(T.maxTlZoom(0, 1000), 1);
+  assert.equal(T.maxTlZoom(60, 1000), 60 * 240 / 1000);
+  assert.equal(T.maxTlZoom(6 * 3600, 1000), 4e6 / 1000, 'un directo de 6 h no pasa de 4 millones de px');
+  assert.equal(T.maxTlZoom(2, 1000), 1);
+  // el punto bajo el cursor (x=300 de la vista) se queda en su lugar
+  assert.equal(T.anchoredScroll(500, 300, 2000, 8000), 0.4 * 8000 - 300);
+  assert.equal(T.anchoredScroll(0, 0, 0, 100), 0);
+});
