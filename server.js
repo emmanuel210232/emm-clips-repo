@@ -13,6 +13,10 @@ const { assessCandidate, summarizeAssessment, writePackage } = require('./lib/ed
 const { detectSubjectX, smoothTrack, cropExpression, zoomExpression, planZooms, zoomCurve, zoomFilter } = require('./lib/framing');
 const { direct } = require('./lib/director');
 const { createUpdater } = require('./lib/updater');
+const seek = require('./lib/seek'); // corte exacto en MPEG-TS (-copyts + trim absoluto)
+// Opcional a propósito: si una actualización llegara sin lib/teaser.js (falta en version.json), la app SÍ arranca;
+// solo la opción del avance avisa que falta.
+let teaserLib = null; try { teaserLib = require('./lib/teaser'); } catch {}
 const channelStyle = require('./channel_style.json');
 
 const ROOT = __dirname;
@@ -162,13 +166,18 @@ async function fetchText(url){const r=await fetch(url,{signal:AbortSignal.timeou
 const updater = createUpdater({ root:ROOT, dataDir:DATA, currentVersion:APP_VERSION, baseUrl:UPDATE_RAW, fetchText });
 const checkUpdate = () => updater.checkUpdate();
 const applyUpdate = (opts) => updater.applyUpdate(opts);
+// Corte exacto para leer un pedazo [start,end) del video abierto (ver lib/seek.js): args de entrada (con -copyts) y
+// los trims absolutos que deben ir AL INICIO de las cadenas [0:v]/[0:a]. Sin esto, en MPEG-TS el pedazo podía empezar
+// hasta ~1.4 s antes de lo pedido (encuadre, subtítulos y zooms de los Shorts quedaban corridos).
+function exactPiece(start,end){ const ex=seek.exactInput(project.videoPath,start,end,{fmtStart:seek.startTimeOf(readiness().ffprobe,project.videoPath)}); return {args:[...seek.COPYTS,...ex.input], vtrim:ex.vtrim, atrim:ex.atrim}; }
 function videoDimensions(videoPath) { const bin=readiness().ffprobe;if(!bin) throw Error('Configura ffprobe antes de crear el Short.'); const out=spawnSync(bin,['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','json',videoPath],{encoding:'utf8',windowsHide:true}); const stream=JSON.parse(out.stdout||'{}').streams?.[0]; if(out.status!==0||!stream?.width||!stream?.height) throw Error('No pude leer el tamaño del video.'); return stream; }
 async function framingForClip(clip,bin,width,height) {
   if(width<=height*9/16) return {portrait:true};
   if(clip.framingMode==='blur') return null;
   if(clip.framingMode==='manual') {const cropWidth=Math.floor((height*9/16)/2)*2,maxLeft=width-cropWidth;return {track:[{t:0,x:+Math.max(0,Math.min(maxLeft,(Number(clip.cropCenter)||.5)*width-cropWidth/2)).toFixed(1)}],cropWidth,confidence:1};}
   const interval=3,frameBytes=320*180*3;
-  const raw=await capture(bin,['-hide_banner','-loglevel','error','-ss',String(clip.start),'-t',String(clip.end-clip.start),'-i',project.videoPath,'-vf',`fps=1/${interval},scale=320:180,format=rgb24`,'-f','rawvideo','pipe:1']);
+  const xp=exactPiece(clip.start,clip.end);
+  const raw=await capture(bin,['-hide_banner','-loglevel','error',...xp.args,'-vf',`${xp.vtrim},fps=1/${interval},scale=320:180,format=rgb24`,'-f','rawvideo','pipe:1']);
   const observations=[];
   for(let i=0;i+frameBytes<=raw.length;i+=frameBytes) observations.push({t:observations.length*interval,subject:detectSubjectX(raw.subarray(i,i+frameBytes),320,180)});
   return smoothTrack(observations,width,height);
@@ -385,7 +394,44 @@ async function finalizeExport(bin,temporary,output,intro,outro,studio,clipIn='no
   await run(bin,['-y',...inputs,'-filter_complex',parts.join(';'),'-map','[v]','-map','[a]',...HQ_VIDEO,'-c:a','aac','-b:a','192k','-movflags','+faststart',output]);
   for(const c of clips) await fsp.unlink(c).catch(()=>{});
 }
-async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false) {
+// ===== INTRO DE AVANCE ("PRÓXIMAMENTE...") =====
+// Energía del audio por segundo (RMS en dB). Se guarda en data/energy.json por video (ruta + tamaño + fecha) para no
+// volver a leer un directo de 6 h cada vez. La usan el avance (y la guarda también el Resumen del directo).
+const ENERGY_FILE = path.join(DATA,'energy.json');
+function energyKey(videoPath){ try{ const st=fs.statSync(videoPath); return `${videoPath}|${st.size}|${Math.round(st.mtimeMs)}`; }catch{ return String(videoPath); } }
+function cachedEnergy(videoPath){ const c=readJson(ENERGY_FILE,null); return c&&c.key===energyKey(videoPath)&&Array.isArray(c.energy)?c.energy:null; }
+function saveEnergy(videoPath,energy){ try{ if(Array.isArray(energy)&&energy.length) writeJson(ENERGY_FILE,{key:energyKey(videoPath),energy}); }catch{} }
+async function audioEnergy(videoPath,{onPct}={}){
+  const hit=cachedEnergy(videoPath); if(hit) return hit;
+  const bin=readiness().ffmpeg; const dur=await durationOf(videoPath).catch(()=>0);
+  let out='';
+  await run(bin,['-hide_banner','-i',videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=16000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],s=>{
+    out=(out+s).slice(-6000000);
+    if(onPct&&dur>0){ const mm=String(s).match(/pts_time:([\d.]+)/g); if(mm&&mm.length) onPct(Math.min(100,Math.round(+mm[mm.length-1].split(':')[1]/dur*100))); }
+  });
+  const energy=teaserLib.parseEnergyLog(out); saveEnergy(videoPath,energy); return energy;
+}
+// Letra del letrero: gruesa y legible. En Windows Arial Black (como la intro de marca); si no, la de los Shorts; si no,
+// la que tenga ffmpeg por defecto.
+function teaserFont(){
+  const c=[process.env.WINDIR&&path.join(process.env.WINDIR,'Fonts','ariblk.ttf'),'C:\\Windows\\Fonts\\ariblk.ttf','C:\\Windows\\Fonts\\arialbd.ttf',path.join(DATA,'fonts','LuckiestGuy-Regular.ttf'),'/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'].filter(Boolean);
+  for(const f of c){ try{ if(fs.existsSync(f)) return f; }catch{} } return '';
+}
+function audioInfo(videoPath){ try{ const out=spawnSync(readiness().ffprobe,['-v','error','-select_streams','a:0','-show_entries','stream=sample_rate,channels','-of','json',videoPath],{encoding:'utf8',windowsHide:true}); const s=JSON.parse(out.stdout||'{}').streams?.[0]||{}; const sr=Number(s.sample_rate); return {sampleRate:sr>=8000&&sr<=192000?sr:48000, layout:Number(s.channels)===1?'mono':'stereo'}; }catch{ return {sampleRate:48000,layout:'stereo'}; } }
+const countInputs = args => args.filter(a=>a==='-i').length;
+// Plan del avance: fragmentos que mandó la interfaz (si el usuario ya los revisó) o los mejores momentos
+// (Resumen del directo por score → energía del audio → transcripción). keep = lo que se conserva del video (null = todo).
+async function teaserPlanFor({keep=null,duration,frags=null,onPct}={}){
+  if(!teaserLib) throw Error('Falta el archivo lib/teaser.js para el avance. Busca actualizaciones.');
+  if(Array.isArray(frags)&&frags.length){ const f=teaserLib.sanitizeFragments(frags,duration); return {fragments:f,duration:teaserLib.teaserDuration(f)}; }
+  const bo=currentBestof();
+  const energy=await audioEnergy(project.videoPath,{onPct}).catch(()=>[]);
+  return teaserLib.buildPlan({candidates:bo?bo.candidates:[],energy,transcript,duration,keep});
+}
+async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false,teaser=null) {
+  const wantTeaser = !!(teaser && teaser.on);
+  if (wantTeaser && !teaserLib) throw Error('Falta el archivo lib/teaser.js para el avance. Busca actualizaciones o exporta sin avance.');
+  const teaserFrags = wantTeaser && Array.isArray(teaser.frags) ? teaser.frags.slice(0,10) : null;
   const q = QUALITY[quality] || QUALITY.original;
   const {chain:audioChain, studio:studioOn} = buildAudioFilter(enhance);
   const stdEnhance = !!audioChain;
@@ -419,7 +465,35 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         const af = muteAf+(audioChain?`,${audioChain}`:'');
         const fx=(clipIn&&clipIn!=='none')||(clipOut&&clipOut!=='none');
         let fxInFinalizeIn=clipIn, fxInFinalizeOut=clipOut;
-        if(fx && !q.scale && !q.fps){
+        // Con AVANCE: el video ya no se puede copiar tal cual (hay que poner el avance antes) → UNA sola pasada que
+        // silencia, arma el avance, lo pega antes del video y codifica todo junto con la calidad alta de siempre
+        // (Original = x264 crf 18 / NVENC cq 23, igual que cuando la copia no es posible). Mismos rangos y margen.
+        let tPlan=null;
+        if(wantTeaser){
+          job.message='Buscando los mejores momentos para el avance…';
+          tPlan=await teaserPlanFor({duration,frags:teaserFrags,onPct:p=>{job.message=`Buscando los mejores momentos para el avance… ${p}%`;}});
+          if(tPlan.fragments.length<2) tPlan=null;
+        }
+        if(tPlan){
+          const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath); const ai=audioInfo(project.videoPath);
+          // -copyts (lo pide el avance) deja el video completo en su tiempo ABSOLUTO: se le resta el start_time del archivo
+          // (lo mismo que hace ffmpeg sin -copyts) para que los rangos de groserías (en tiempo de la app) caigan igual.
+          const T0=seek.startTimeOf(bins.ffprobe,project.videoPath);
+          const parts=[`[0:v]setpts=PTS-${T0.toFixed(6)}/TB,settb=AVTB,fps=${efps},format=yuv420p,setsar=1[m]`]; let vl='[m]', extra=[], idx=1;
+          if(fx){ const fxg=clipFxParts('[m]', duration, clipIn, clipOut, clipDur, EW, EH, efps, 1); if(fxg.applied){ parts.push(...fxg.parts); vl=fxg.label; extra=fxg.inputs; idx=fxg.nextIdx; } fxInFinalizeIn='none'; fxInFinalizeOut='none'; }
+          parts.push(`[0:a]asetpts=PTS-${T0.toFixed(6)}/TB,${af}[ao]`);
+          const tg=teaserLib.buildTeaserGraph({fmtStart:seek.startTimeOf(bins.ffprobe,project.videoPath),frags:tPlan.fragments,firstInput:idx,videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:(s,e)=>teaserLib.muteFilter(ranges,s,e,pad),audioPost:audioChain,sampleRate:ai.sampleRate,layout:ai.layout});
+          parts.push(...tg.filters, ...teaserLib.prependFilter(tg,vl,'[ao]',{sampleRate:ai.sampleRate,layout:ai.layout}));
+          let vOut='[tzov]'; const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(','); if(!q.copy&&vf){ parts.push(`[tzov]${vf}[vout]`); vOut='[vout]'; }
+          const fscript=path.join(DATA,'filter_mute.txt'); await fsp.writeFile(fscript,parts.join(';\n'),'utf8');
+          const total=duration+tg.duration;
+          const cpuEnc=q.copy?HQ_VIDEO:['-c:v','libx264','-preset','veryfast','-crf',String(q.crf||20),'-pix_fmt','yuv420p'];
+          const gpuEnc=nvencArgs(q.copy?23:(q.crf||20)+3);
+          const targs=enc=>['-y',...seek.COPYTS,'-i',project.videoPath,...extra,...tg.inputs,'-/filter_complex',fscript,'-map',vOut,'-map','[tzoa]',...enc,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
+          job.message=`Silenciando y exportando con avance (${tPlan.fragments.length} momentos, ${Math.round(tg.duration)} s)…`;
+          try{ await run(bins.ffmpeg, targs(gpu?gpuEnc:cpuEnc), progress(total,gpu?'Exportando con avance (GPU)':'Exportando con avance')); }
+          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await run(bins.ffmpeg, targs(cpuEnc), progress(total,'Exportando con avance')); }
+        } else if(fx && !q.scale && !q.fps){
           // UN SOLO PASO: silenciar + efecto de entrada/salida juntos (no hay dos barras).
           const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=videoFps(project.videoPath);
           const fxg=clipFxParts('[m]', duration, clipIn, clipOut, clipDur, EW, EH, efps, 1);
@@ -443,7 +517,8 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
           }
         }
         await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,fxInFinalizeIn,fxInFinalizeOut,clipDur);
-        const dl1=toDownloads(output); job = { status:'done', message:dl1?`✅ Listo y guardado en Descargas: ${path.basename(dl1)}`:`Video con groserías silenciadas: ${output}`, progress:'', percent:100, output, downloaded:dl1 };
+        const tNote=wantTeaser?(tPlan?` · con avance de ${tPlan.fragments.length} momentos (${Math.round(tPlan.duration)} s)`:' · sin avance (no encontré suficientes momentos; el video es muy corto)'):'';
+        const dl1=toDownloads(output); job = { status:'done', message:(dl1?`✅ Listo y guardado en Descargas: ${path.basename(dl1)}`:`Video con groserías silenciadas: ${output}`)+tNote, progress:'', percent:100, output, downloaded:dl1, teaser:tPlan?tPlan.fragments:null };
       } catch (e) { await fsp.unlink(temporary).catch(()=>{}); job = { status: job.cancelRequested?'cancelled':'error', message: job.cancelRequested?e.message:`No se pudo silenciar: ${e.message}`, progress:'', percent:0 }; }
     })();
     return { output, cuts: ranges.length, mode };
@@ -494,12 +569,17 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
   // si luego se "resetean" los tiempos, la imagen queda adelantada al audio. Por eso se salta PRE segundos ANTES y el
   // corte exacto lo hace trim/atrim sobre los tiempos (que ffmpeg cuenta desde el punto PEDIDO, no desde donde cayó):
   // así audio e imagen salen del mismo instante aunque el salto sea impreciso. Con muchísimos pedazos: método anterior.
+  // ⚠️ CORTE EXACTO (medido con tools-dev/check_cut.js): el trim RELATIVO tras -ss contaba desde donde CAYÓ el salto,
+  // no desde el punto pedido → en MPEG-TS cada pedazo empezaba hasta ~1.4 s antes. Ahora: -copyts (cada stream conserva
+  // su marca de tiempo real) y trim/atrim sobre el tiempo ABSOLUTO (start_time del archivo + tiempo) → cuadro exacto y
+  // audio/imagen cortados en el mismo instante real. Ver lib/seek.js.
   const SEG = keep.length <= 120;
-  const PRE = 15;
-  const pre = k => Math.min(PRE, k.start);
-  const segInputs = SEG ? keep.flatMap(k=>['-ss',(k.start-pre(k)).toFixed(3),'-t',(k.end-k.start+pre(k)).toFixed(3),'-i',project.videoPath]) : ['-i',project.videoPath];
-  const vIn = (k,i) => SEG ? `[${i}:v]trim=start=${pre(k).toFixed(3)}:end=${(pre(k)+k.end-k.start).toFixed(3)},setpts=PTS-STARTPTS` : `[0:v]trim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},setpts=PTS-STARTPTS`;
-  const aIn = (k,i) => SEG ? `[${i}:a]atrim=start=${pre(k).toFixed(3)}:end=${(pre(k)+k.end-k.start).toFixed(3)},asetpts=PTS-STARTPTS` : `[0:a]atrim=start=${k.start.toFixed(3)}:end=${k.end.toFixed(3)},asetpts=PTS-STARTPTS`;
+  const PRE = seek.PRE;
+  const T0 = seek.startTimeOf(bins.ffprobe, project.videoPath);
+  const exIn = keep.map(k => seek.exactInput(project.videoPath, k.start, k.end, { pre: PRE, fmtStart: T0 }));
+  const segInputs = SEG ? exIn.flatMap(e=>e.input) : ['-i',project.videoPath];
+  const vIn = (k,i) => SEG ? `[${i}:v]${exIn[i].vtrim}` : `[0:v]${seek.absTrims(k.start,k.end,T0).vtrim}`;
+  const aIn = (k,i) => SEG ? `[${i}:a]${exIn[i].atrim}` : `[0:a]${seek.absTrims(k.start,k.end,T0).atrim}`;
   if (canSmooth) {
     // Crossfade entre cada pedazo → une los cortes SIN que se note el brinco (estilo CapCut).
     // d por límite: 0.5s donde cambia el tema (.trans), 0.14s si se pidió suavizar, 0.05s en cortes normales (imperceptible).
@@ -544,7 +624,12 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     else { filter.pop(); } // no se aplicó efecto: quita la normalización que ya no se usa
   }
   // Reescalado/fps AL FINAL (después del fade): el fade usa la resolución original y todo sale en 1 sola pasada.
-  if(!q.copy && (q.scale||q.fps)){ const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(','); filter.push(`${vLabel}${vf}[vout]`); vLabel='[vout]'; }
+  // (con AVANCE se pega ANTES de este paso, para que el avance y el video salgan con el mismo tamaño y fps)
+  const applyRescale=()=>{ if(!q.copy && (q.scale||q.fps)){ const vf=[q.scale,q.fps?`fps=${q.fps}`:null].filter(Boolean).join(','); filter.push(`${vLabel}${vf}[vout]`); vLabel='[vout]'; } };
+  // Lo que se silencia DENTRO del avance en modo Cortar: las groserías (mismo margen 0.15 s que el video) y cualquier
+  // pedacito que el video final quitó (una grosería cortada; un silencio quitado no se nota al silenciarlo).
+  const teaserMute=(s,e)=>teaserLib.muteFilter(censorRanges,s,e,CPAD)+teaserLib.muteFilter(teaserLib.removedRanges(keep,duration),s,e,0);
+  let tPlan=null, tDur=0;
   const cutCrf=String(q.crf||18);
   // Render rápido cuando gpu=true: intenta GPU (NVENC) y, si el driver no lo soporta, cae solo a CPU veryfast.
   const cutVx264 = ['-c:v','libx264','-pix_fmt','yuv420p','-preset',gpu?'veryfast':'medium','-crf',cutCrf];
@@ -562,7 +647,23 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
     const ln=stdEnhance?audioChain.lastIndexOf(',loudnorm='):-1;
     const preAf=ln>0?audioChain.slice(0,ln):'', postAf=stdEnhance?(ln>0?audioChain.slice(ln+1):audioChain):'';
     const parts=[], list=path.join(DATA,`batches_${crypto.randomUUID()}.txt`); let doneSec=0, useGpu=gpu; const t0=Date.now();
+    const progTotal=keptTotal+tDur;
     try{
+      if(tPlan){
+        // AVANCE como "parte 0": mismos parámetros que las tandas (fps, formato, tamaño, codificador, audio PCM) →
+        // se une con las demás SIN reencodear el video. Audio: la mejora de voz por-muestra aquí; loudnorm al unir (todo junto).
+        const ai=audioInfo(project.videoPath);
+        const tg=teaserLib.buildTeaserGraph({fmtStart:seek.startTimeOf(bins.ffprobe,project.videoPath),frags:tPlan.fragments,firstInput:0,videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:teaserMute,audioPost:preAf,sampleRate:ai.sampleRate,layout:ai.layout});
+        const f=[...tg.filters, `${tg.v}settb=AVTB,fps=${efps},format=yuv420p,setsar=1[n]`]; let vl='[n]';
+        if(!q.copy && q.scale){ f.push(`${vl}${q.scale}[sc]`); vl='[sc]'; }
+        const fscript=path.join(DATA,'filter.txt'); await fsp.writeFile(fscript,f.join(';\n'),'utf8');
+        const out=path.join(DATA,`batch_${crypto.randomUUID()}.mov`); parts.push(out);
+        const args=enc=>['-y',...seek.COPYTS,...tg.inputs,'-/filter_complex',fscript,'-map',vl,'-map',tg.a,...enc,'-c:a','pcm_s16le',out];
+        job.message=`Exportando el avance (${tPlan.fragments.length} momentos)…`;
+        try{ await run(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando avance',{t0})); }
+        catch(e){ if(!useGpu||job.cancelRequested) throw e; useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; await run(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando avance',{t0})); }
+        doneSec+=tDur;
+      }
       for(let g=0; g<groups.length; g++){
         if(job.cancelRequested) throw Error('Proceso cancelado por el usuario.');
         const grp=groups[g], gLen=grp.reduce((a,k)=>a+(k.end-k.start),0);
@@ -574,16 +675,16 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         for(const k of grp){ const sp=spans[spans.length-1], last=sp&&sp.clips[sp.clips.length-1];
           if(last && k.start>=last.end-0.001 && k.start-last.end<20 && sp.clips.length<12) sp.clips.push(k); else spans.push({clips:[k]}); }
         const ins=spans.flatMap(sp=>{ const s0=sp.clips[0].start, e=sp.clips[sp.clips.length-1].end; sp.s0=s0; sp.pre=Math.min(PRE,s0);
-          return ['-ss',(s0-sp.pre).toFixed(3),'-t',(e-s0+sp.pre).toFixed(3),'-i',project.videoPath]; });
+          return seek.exactInput(project.videoPath, s0, e, { pre: PRE, fmtStart: T0 }).input; });
         const f=[]; let i=0;
         spans.forEach((sp,j)=>{
           const n=sp.clips.length;
           if(n>1){ f.push(`[${j}:v]split=${n}${sp.clips.map((_,m)=>`[sv${j}_${m}]`).join('')}`); f.push(`[${j}:a]asplit=${n}${sp.clips.map((_,m)=>`[sa${j}_${m}]`).join('')}`); }
           sp.clips.forEach((k,m)=>{
             const vSrc=n>1?`[sv${j}_${m}]`:`[${j}:v]`, aSrc=n>1?`[sa${j}_${m}]`:`[${j}:a]`;
-            const length=k.end-k.start, fade=Math.min(.03,length/3), a0=sp.pre+(k.start-sp.s0);
-            f.push(`${vSrc}trim=start=${a0.toFixed(3)}:end=${(a0+length).toFixed(3)},setpts=PTS-STARTPTS${normOf(k)}[v${i}]`);
-            f.push(`${aSrc}atrim=start=${a0.toFixed(3)}:end=${(a0+length).toFixed(3)},asetpts=PTS-STARTPTS${censorAf(k.start,k.end)},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
+            const length=k.end-k.start, fade=Math.min(.03,length/3), tr=seek.absTrims(k.start,k.end,T0); // corte exacto
+            f.push(`${vSrc}${tr.vtrim}${normOf(k)}[v${i}]`);
+            f.push(`${aSrc}${tr.atrim}${censorAf(k.start,k.end)},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(length-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);
             i++;
           });
         });
@@ -596,13 +697,13 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
         if(!q.copy && q.scale){ f.push(`${vl}${q.scale}[sc]`); vl='[sc]'; }
         const fscript=path.join(DATA,'filter.txt'); await fsp.writeFile(fscript,f.join(';\n'),'utf8');
         const out=path.join(DATA,`batch_${crypto.randomUUID()}.mov`); parts.push(out);
-        const args=enc=>['-y',...ins,...extra,'-/filter_complex',fscript,'-map',vl,'-map','[ca]',...enc,'-c:a','pcm_s16le',out];
+        const args=enc=>['-y',...seek.COPYTS,...ins,...extra,'-/filter_complex',fscript,'-map',vl,'-map','[ca]',...enc,'-c:a','pcm_s16le',out];
         job.message=`Exportando video limpio… (parte ${g+1} de ${groups.length})`;
-        try{ await run(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(keptTotal,'Exportando',{offset:doneSec,t0})); }
+        try{ await run(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0})); }
         catch(e){
-          if(!useGpu||g>0||job.cancelRequested) throw e;
+          if(!useGpu||g>0||tPlan||job.cancelRequested) throw e;
           useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…';
-          await run(bins.ffmpeg,args(cutVx264),progress(keptTotal,'Exportando',{offset:doneSec,t0}));
+          await run(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0}));
         }
         doneSec+=gLen;
       }
@@ -610,32 +711,48 @@ async function exportVideo(selectedIds,selectedPauseIds=[],mode='mute',quality='
       job.message='Uniendo las partes (sin reencodear el video)…';
       // aresample async: rellena con silencio los micro-huecos entre tandas según los tiempos → el audio no se adelanta.
       const af=['aresample=async=1:first_pts=0', postAf||null].filter(Boolean).join(',');
-      await run(bins.ffmpeg,['-y','-f','concat','-safe','0','-i',list,'-map','0:v:0','-map','0:a:0','-c:v','copy','-af',af,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary],progress(keptTotal,'Uniendo'));
+      await run(bins.ffmpeg,['-y','-f','concat','-safe','0','-i',list,'-map','0:v:0','-map','0:a:0','-c:v','copy','-af',af,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary],progress(progTotal,'Uniendo'));
     } finally {
       for(const p of parts) await fsp.unlink(p).catch(()=>{});
       await fsp.unlink(list).catch(()=>{});
     }
   }
   const script = path.join(DATA,'filter.txt');
-  await fsp.writeFile(script, filter.join(';\n'), 'utf8');
   const name = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
   const output = path.join(EXPORTS, `${name}_limpio_${Date.now()}.mp4`);
   const temporary = path.join(DATA, `export_${crypto.randomUUID()}.mp4`);
   job = { status:'running', message:'Exportando video limpio…', progress:'', percent:0, cancelRequested:false };
   (async () => {
     try {
-      const cutBase=['-y',...segInputs,...cutExtraInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
+      let teaserInputs=[];
+      if(wantTeaser){
+        job.message='Buscando los mejores momentos para el avance…';
+        tPlan=await teaserPlanFor({keep,duration,frags:teaserFrags,onPct:p=>{job.message=`Buscando los mejores momentos para el avance… ${p}%`;}});
+        if(tPlan.fragments.length<2) tPlan=null; else tDur=tPlan.duration;
+        job.message='Exportando video limpio…';
+      }
+      if(tPlan && !BATCH){
+        // Avance + video en la MISMA pasada: se pega antes del video ya cortado (y con sus efectos) y después se reescala.
+        const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath); const ai=audioInfo(project.videoPath);
+        const tg=teaserLib.buildTeaserGraph({fmtStart:seek.startTimeOf(bins.ffprobe,project.videoPath),frags:tPlan.fragments,firstInput:(SEG?keep.length:1)+countInputs(cutExtraInputs),videoPath:project.videoPath,fps:efps,width:EW,height:EH,fontFile:teaserFont(),muteOf:teaserMute,audioPost:audioChain,sampleRate:ai.sampleRate,layout:ai.layout});
+        filter.push(...tg.filters, ...teaserLib.prependFilter(tg,vLabel,aLabel,{fps:efps,sampleRate:ai.sampleRate,layout:ai.layout}));
+        vLabel='[tzov]'; aLabel='[tzoa]'; teaserInputs=tg.inputs;
+      }
+      applyRescale();
+      await fsp.writeFile(script, filter.join(';\n'), 'utf8');
+      const cutBase=['-y',...seek.COPYTS,...segInputs,...cutExtraInputs,...teaserInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
       const cutTail=['-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
       if(BATCH) await exportBatched();
       else try{
-        await run(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal,'Exportando'));
+        await run(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal+tDur,'Exportando'));
       }catch(gpuErr){
         if(!gpu || job.cancelRequested) throw gpuErr;
         job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; job.percent=0;
-        await run(bins.ffmpeg, [...cutBase,...cutVx264,...cutTail], progress(keptTotal,'Exportando'));
+        await run(bins.ffmpeg, [...cutBase,...cutVx264,...cutTail], progress(keptTotal+tDur,'Exportando'));
       }
       await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,cutFxIn,cutFxOut,clipDur);
-      const dl2=toDownloads(output); job = { status:'done', message:dl2?`✅ Listo y guardado en Descargas: ${path.basename(dl2)}`:`Video exportado: ${output}`, progress:'', percent:100, output, downloaded:dl2 };
+      const tNote=wantTeaser?(tPlan?` · con avance de ${tPlan.fragments.length} momentos (${Math.round(tPlan.duration)} s)`:' · sin avance (no encontré suficientes momentos; el video es muy corto)'):'';
+      const dl2=toDownloads(output); job = { status:'done', message:(dl2?`✅ Listo y guardado en Descargas: ${path.basename(dl2)}`:`Video exportado: ${output}`)+tNote, progress:'', percent:100, output, downloaded:dl2, teaser:tPlan?tPlan.fragments:null };
     } catch (e) { await fsp.unlink(temporary).catch(()=>{});job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
   })();
   return { output, cuts:keep.length };
@@ -804,6 +921,7 @@ async function detectBestMoments(opts){
     });
     const energy=[]; let curT=null;
     for(const line of out.split(/\r?\n/)){ const mt=line.match(/pts_time:([\d.]+)/); if(mt){curT=Number(mt[1]);continue;} const mr=line.match(/RMS_level=(-?[\d.]+|-?inf|nan)/i); if(mr&&curT!=null){ let db=Number(mr[1]); if(!Number.isFinite(db))db=-120; energy.push({t:curT,db}); curT=null; } }
+    saveEnergy(project.videoPath,energy); // el avance ("PRÓXIMAMENTE...") la reutiliza sin volver a leer el directo
     // 2) bloques ~20s con texto + su pico de energía
     job.message='Preparando la transcripción…'; job.percent=18;
     const build=(sec)=>{const o=[];let cur=null;for(const s of transcript){const t=Number(s.start);const tx=String(s.text||'').trim();if(!Number.isFinite(t)||!tx)continue;if(!cur||t-cur.t>=sec){cur={t,text:tx};o.push(cur);}else cur.text+=' '+tx;}return o;};
@@ -820,13 +938,16 @@ async function detectBestMoments(opts){
     job.message='La IA está eligiendo los mejores momentos… (modelo pesado, tarda)'; job.percent=30;
     const tgtMin=Math.round(targetSec/60);
     // La instrucción va DESPUÉS del texto (el modelo sigue mejor lo último) + objeto JSON (sin esto, en directos largos el 14B "resume" en prosa).
-    const prompt=`DIRECTO (bloques [SEGUNDOS|m:ss|energia X/10] texto; energia alta = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, extrae los ${want} MEJORES momentos para un video de clips de un streamer mexicano (lo mas gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos; reparte a lo largo del directo. Cada momento dura de 45 a 120 segundos.\nResponde SOLO este JSON, sin texto ni resumen en prosa: {"momentos":[{"ini":<segundos del bloque>,"dur":<45-120>,"gancho":"<TITULO MAYUSCULAS>","por":"<1 frase>","score":<1-10>}]}`;
+    // AVANCE (fragmento para el adelanto) SOLO con la nube: con IA local (num_predict 3000) los campos extra no caben en directos largos y se pierden momentos.
+    const avBlock=useCloud?`\nAVANCE: para cada momento elige tambien su mejor pedazo de 6 a 10 segundos para un ADELANTO al inicio del video: lo mas fuerte (reaccion, grito, risa, frase picante) pero SIN revelar el desenlace ni el remate del chiste (corta JUSTO ANTES de que se resuelva, que deje con ganas de ver que paso). Debe empezar y terminar en frase completa y estar DENTRO del momento. av_ini y av_fin son segundos ABSOLUTOS del directo (como los de los bloques); av_hasta son las ultimas 2 a 5 palabras EXACTAS (copiadas del texto) con las que termina el avance; av_por dice en pocas palabras por que engancha.`:'';
+    const avFields=useCloud?',"av_ini":<segundos>,"av_fin":<segundos>,"av_hasta":"<ultimas palabras>","av_por":"<por que engancha>"':'';
+    const prompt=`DIRECTO (bloques [SEGUNDOS|m:ss|energia X/10] texto; energia alta = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, extrae los ${want} MEJORES momentos para un video de clips de un streamer mexicano (lo mas gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos; reparte a lo largo del directo. Cada momento dura de 45 a 120 segundos.${avBlock}\nResponde SOLO este JSON, sin texto ni resumen en prosa: {"momentos":[{"ini":<segundos del bloque>,"dur":<45-120>,"gancho":"<TITULO MAYUSCULAS>","por":"<1 frase>","score":<1-10>${avFields}}]}`;
     const NP=useCloud?8000:3000;
     let txt='';
     if(useCloud){
       // NUBE (Claude): lee el directo completo y elige con mejor criterio. Streaming para progreso.
       job.message=`La nube (${cloudModel.replace('claude-','').replace('-',' ')}) está leyendo el directo completo…`; job.percent=32;
-      const expect=Math.max(1500, want*110); // estimación de chars de respuesta para la barra
+      const expect=Math.max(1500, want*(110+170)); // chars estimados de respuesta para la barra (+~170 por momento de los campos av_*)
       // Más momentos = respuesta más larga (más el razonamiento del modelo): el tope crece con lo pedido.
       txt=await cloudPick(prompt, cloudModel, (len)=>{ job.percent=32+Math.min(55,Math.round(len/expect*55)); job.message='La nube está eligiendo los mejores momentos…'; }, Math.min(64000, 12000+want*300), 'Resumen del directo');
     } else {
@@ -855,7 +976,10 @@ async function detectBestMoments(opts){
       if(!Number.isFinite(ini)||ini>=dur-2) continue;
       const end=Math.min(dur,ini+d); if(end-ini<12) continue;
       const win=energy.filter(e=>e.t>=ini&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
-      cands.push({start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,70),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)});
+      const c={start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,70),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)};
+      // Fragmento para la intro de avance propuesto por la IA (sin el remate). Si viene mal, se ignora y el avance usa la energía.
+      if(teaserLib){ try{ const m={start:c.start,end:c.end}; let av=teaserLib.readAvance(o.avance&&typeof o.avance==='object'?o.avance:{inicio:o.av_ini,fin:o.av_fin,por_que:o.av_por},m); av=av&&teaserLib.refineAvance(av,transcript,m,o.av_hasta||(o.avance&&o.avance.hasta)); if(av) c.avance={inicio:av.start,fin:av.end,por_que:av.why}; }catch{} }
+      cands.push(c);
     }
     // Selección QUALITY-FIRST: los momentos del modelo son SUS mejores; se toman por score, sin solaparse.
     // La duración es un TOPE máximo, NO un mínimo: si solo hay pocos momentos buenos, se dejan pocos — NO se fuerza relleno.
@@ -1056,7 +1180,7 @@ async function extractVisionFrames(clip){
   const dir=visionDir(clip.id);
   await fsp.rm(dir,{recursive:true,force:true}).catch(()=>{}); await fsp.mkdir(dir,{recursive:true});
   const dur=clip.end-clip.start;
-  await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-loglevel','error','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-vf',`fps=${VISION_FPS},scale='min(960,iw)':-2`,'-q:v','3',path.join(dir,'f%04d.jpg')],{windowsHide:true}); let err=''; c.stderr.on('data',b=>{err=(err+b).slice(-500);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('No pude sacar los cuadros: '+err))); });
+  await new Promise((resolve,reject)=>{ const xp=exactPiece(clip.start,clip.end); const c=spawn(bin,['-hide_banner','-loglevel','error',...xp.args,'-vf',`${xp.vtrim},fps=${VISION_FPS},scale='min(960,iw)':-2`,'-q:v','3',path.join(dir,'f%04d.jpg')],{windowsHide:true}); let err=''; c.stderr.on('data',b=>{err=(err+b).slice(-500);}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('No pude sacar los cuadros: '+err))); });
   const count=fs.readdirSync(dir).filter(f=>/^f\d+\.jpg$/.test(f)).length;
   return {count,fps:VISION_FPS};
 }
@@ -1105,7 +1229,7 @@ async function ensureCaptionFonts(){
 }
 // Energía del audio del clip cada 0.1 s (para decidir dónde van los zooms).
 async function clipEnergy(bin,start,dur){
-  let out=''; await new Promise((resolve,reject)=>{ const c=spawn(bin,['-hide_banner','-ss',String(start),'-t',String(dur),'-i',project.videoPath,'-map','0:a:0','-af','aresample=16000,asetnsamples=n=1600,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-','-f','null','-'],{windowsHide:true}); c.stdout.on('data',b=>{out+=b.toString();}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('energía '+code))); });
+  let out=''; await new Promise((resolve,reject)=>{ const xp=exactPiece(start,start+dur); const c=spawn(bin,['-hide_banner',...xp.args,'-map','0:a:0','-af',`${xp.atrim},aresample=16000,asetnsamples=n=1600,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-`,'-f','null','-'],{windowsHide:true}); c.stdout.on('data',b=>{out+=b.toString();}); c.on('error',reject); c.on('close',code=>code===0?resolve():reject(Error('energía '+code))); });
   const energy=[]; let cur=null;
   for(const l of out.split(/\r?\n/)){ const mt=l.match(/pts_time:([\d.]+)/); if(mt){cur=+mt[1];continue;} const mr=l.match(/RMS_level=(-?[\d.]+|-?inf|nan)/i); if(mr&&cur!=null){ const v=parseFloat(mr[1]); energy.push({t:cur,db:Number.isFinite(v)?v:-90}); } }
   return energy;
@@ -1179,14 +1303,16 @@ async function renderOneShort(clip,bin) {
   }
   job.message=`Creando Short ${clip.rank}…`; job.percent=0;
   // Silenciar groserías que caigan dentro de este Short (audio por filter_complex, sin tocar imagen)
-  let fullFilter=filter, audioMap=['-map','0:a:0'];
+  // Corte exacto: el pedazo empieza en el cuadro pedido (subtítulos, zooms y encuadre van en tiempo del clip).
+  const xp=exactPiece(clip.start,clip.start+dur);
+  filter=filter.replace(/\[0:v\]fps=/g,`[0:v]${xp.vtrim},fps=`);
+  let fullFilter=`${filter};[0:a]${xp.atrim}[a]`, audioMap=['-map','[a]'];
   if(groserias.length) {
     const enable=groserias.map(m=>`between(t,${Math.max(0,m.start-clip.start-pad).toFixed(3)},${Math.min(dur,m.end-clip.start+pad).toFixed(3)})`).join('+');
-    fullFilter=`${filter};[0:a]volume=enable='${enable}':volume=0[a]`;
-    audioMap=['-map','[a]'];
+    fullFilter=`${filter};[0:a]${xp.atrim},volume=enable='${enable}':volume=0[a]`;
   }
   try {
-    await run(bin,['-y','-ss',String(clip.start),'-t',String(dur),'-i',project.videoPath,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r',String(SFPS),'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',hookFirst?'12':'18','-c:a','aac','-b:a',hookFirst?'256k':'160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
+    await run(bin,['-y',...xp.args,'-filter_complex',fullFilter,'-map','[v]',...audioMap,'-r',String(SFPS),'-c:v','libx264','-pix_fmt','yuv420p','-preset','medium','-crf',hookFirst?'12':'18','-c:a','aac','-b:a',hookFirst?'256k':'160k','-movflags','+faststart',temporary],progress(dur,`Short ${clip.rank}`));
     if(hookFirst){
       // Segunda pasada: [frase gancho] + [Short completo], y el recuadro del título encima del gancho.
       // (La primera pasada fue casi sin pérdida —crf 12— para que la calidad final sea la misma.)
@@ -1266,9 +1392,10 @@ async function reviewClip(at, requestedLength) {
   if (requestedLength!==undefined && (!Number.isFinite(full)||full<3||full>90)) throw Error('El clip de revisión debe durar entre 3 y 90 segundos.');
   const start=requestedLength===undefined?Math.max(0,seconds-2):seconds;
   const length=Math.min(requestedLength===undefined?8:full,duration-start);
-  const key=`review_${Math.round(seconds*100)}_${Math.round(length*100)}.mp4`;
+  const key=`review2_${Math.round(seconds*100)}_${Math.round(length*100)}.mp4`; // review2: con corte exacto (las viejas podían estar corridas)
   const output=path.join(DATA,key);
-  if (!fs.existsSync(output)) await run(bin,['-y','-ss',String(start),'-t',String(length),'-i',project.videoPath,'-map','0:v:0','-map','0:a:0','-vf','scale=960:-2','-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
+  const xp=exactPiece(start,start+length);
+  if (!fs.existsSync(output)) await run(bin,['-y',...xp.args,'-map','0:v:0','-map','0:a:0','-vf',`${xp.vtrim},scale=960:-2`,'-af',xp.atrim,'-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
   return { url:'/api/review-video?key='+encodeURIComponent(key), seek:seconds-start };
 }
 async function reviewCut(id) {
@@ -1282,15 +1409,16 @@ async function reviewCut(id) {
   if(!cut) throw Error('Tiempo de corte inválido.');
   const from=Math.max(0,cut.start-3),to=Math.min(duration,cut.end+3);
   const hash=crypto.createHash('sha1').update(`${project.videoPath}|${id}|${cut.start}|${cut.end}`).digest('hex').slice(0,16);
-  const key=`review_cut_${hash}.mp4`,output=path.join(DATA,key);
+  const key=`review_cut2_${hash}.mp4`,output=path.join(DATA,key);
+  const xp=exactPiece(from,to), T0=seek.startTimeOf(readiness().ffprobe,project.videoPath);
   if(!fs.existsSync(output)) {
     const keep=[{start:0,end:cut.start-from},{start:cut.end-from,end:to-from}].filter(s=>s.end-s.start>.1);
     const filters=[];
-    keep.forEach((s,i)=>{const len=s.end-s.start,fade=Math.min(.012,len/3);filters.push(`[0:v]trim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);filters.push(`[0:a]atrim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(len-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);});
+    keep.forEach((s,i)=>{const len=s.end-s.start,fade=Math.min(.012,len/3),tr=seek.absTrims(from+s.start,from+s.end,T0);filters.push(`[0:v]${tr.vtrim}[v${i}]`);filters.push(`[0:a]${tr.atrim},afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(len-fade).toFixed(3)}:d=${fade.toFixed(3)}[a${i}]`);});
     filters.push(keep.map((_,i)=>`[v${i}][a${i}]`).join('')+`concat=n=${keep.length}:v=1:a=1[joined][a]`);
     filters.push('[joined]scale=960:-2[v]');
     const script=path.join(DATA,`filter_${hash}.txt`);await fsp.writeFile(script,filters.join(';\n'),'utf8');
-    await run(bin,['-y','-ss',String(from),'-t',String(to-from),'-i',project.videoPath,'-/filter_complex',script,'-map','[v]','-map','[a]','-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
+    await run(bin,['-y',...xp.args,'-/filter_complex',script,'-map','[v]','-map','[a]','-c:v','libx264','-preset','ultrafast','-crf','30','-c:a','aac','-b:a','96k','-movflags','+faststart',output]);
   }
   return {url:'/api/review-video?key='+encodeURIComponent(key),cut};
 }
@@ -1774,7 +1902,7 @@ const server=http.createServer(async (req,res) => {
     }
     if (req.method==='GET' && url.pathname==='/api/review-video') {
       const key=String(url.searchParams.get('key')||'');
-      if (!/^review_(?:\d+(?:_\d+)?|cut_[a-f0-9]{16})\.mp4$/.test(key)) return error(res,'Fragmento inválido.',400);
+      if (!/^review(?:2_\d+(?:_\d+)?|_cut2_[a-f0-9]{16}|_\d+(?:_\d+)?|_cut_[a-f0-9]{16})\.mp4$/.test(key)) return error(res,'Fragmento inválido.',400);
       const file=path.join(DATA,key);
       if (!fs.existsSync(file)) return error(res,'Fragmento no encontrado.',404);
       return serveMedia(req,res,file);
@@ -1849,9 +1977,9 @@ const server=http.createServer(async (req,res) => {
       if(!Number.isFinite(at)||at<0||at>d) throw Error('Tiempo fuera del video.');
       const name=`miniatura_${Math.round(at*1000)}_${Date.now()}.png`;
       const out=path.join(EXPORTS,name);
-      // seek rápido cerca + seek fino = exacto y rápido, a resolución completa
-      const fast=Math.max(0,at-2), fine=Math.min(2,at-fast);
-      await run(bin,['-y','-ss',String(fast),'-i',project.videoPath,'-ss',String(fine),'-frames:v','1',out]);
+      // Cuadro EXACTO a resolución completa (lib/seek.js: -copyts + trim absoluto; antes el doble -ss podía caer ~1 s antes en MPEG-TS)
+      const xp=exactPiece(at,at+0.5);
+      await run(bin,['-y',...xp.args,'-vf',xp.vtrim,'-frames:v','1',out]);
       return respond(res,200,{name, at});
     }
     if (req.method==='POST' && url.pathname==='/api/project/prepare') {
@@ -2104,7 +2232,14 @@ const server=http.createServer(async (req,res) => {
       cloud.model=CLOUD_MODEL; // única opción
       writeJson(path.join(DATA,'cloud.json'),cloud);
       return respond(res,200,{ok:true,engine:cloud.engine,model:cloud.model,keySet:!!cloud.key}); }
-    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu); return respond(res,202,result); }
+    if (req.method==='POST' && url.pathname==='/api/teaser/plan') { const body=await jsonBody(req)||{};
+      if(!project?.videoPath) throw Error('Abre un video primero.');
+      if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
+      const duration=await durationOf(project.videoPath);
+      const segs=Array.isArray(body.segments)?body.segments.slice(0,2000).map(s=>({start:Math.max(0,+s.start),end:Math.min(duration,+s.end)})).filter(s=>Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end-s.start>=0.04):null;
+      const plan=await teaserPlanFor({keep:segs&&segs.length?segs:null,duration});
+      return respond(res,200,{fragments:plan.fragments.map(f=>({start:f.start,end:f.end,label:f.label||'',source:f.source||''})),duration:plan.duration,fromBestof:!!currentBestof()}); }
+    if (req.method==='POST' && url.pathname==='/api/export') { const body=await jsonBody(req); const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); const result=await exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu,(body.teaser&&typeof body.teaser==='object')?{on:!!body.teaser.on,frags:Array.isArray(body.teaser.frags)?body.teaser.frags:null}:null); return respond(res,202,result); }
     if (req.method==='GET' && staticFiles[url.pathname]) { const p=path.join(ROOT,staticFiles[url.pathname]); const b=await fsp.readFile(p); res.writeHead(200,{'content-type':contentTypes[path.extname(p)],'content-length':b.length,'cache-control':'no-store'}); return res.end(b); }
     return error(res,'No encontrado.',404);
   } catch(e) { return error(res,e); }
