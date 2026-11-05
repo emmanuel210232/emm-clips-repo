@@ -41,7 +41,7 @@ for (const t of times) {
   // Cuadro que se ve en el reproductor en el tiempo t (tiempo relativo al inicio del archivo, como en la app).
   const n = Math.ceil((t - (vStart - fmtStart)) * fps - 1e-6);
   const a = Math.max(0, n - WIN);
-  const win = run(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-i', src, '-vf', `select=between(n\\,${a}\\,${n + WIN}),${vf}`, '-vsync', '0', '-f', 'rawvideo', '-']);
+  const win = run(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-i', src, '-vf', `select=between(n\\,${a}\\,${n + WIN}),${vf}`, '-fps_mode', 'passthrough', '-f', 'rawvideo', '-']);
   const find = buf => { for (let i = 0; i * FB < win.length; i++) if (win.subarray(i * FB, (i + 1) * FB).equals(buf.subarray(0, FB))) return a + i - n; return null; };
   const p = Math.min(PRE, t), s = t - p;
   const actual = frameAt(['-ss', s.toFixed(3), '-t', (p + 2).toFixed(3), '-i', src, '-vf', `trim=start=${p.toFixed(3)},setpts=PTS-STARTPTS,${vf}`]);
