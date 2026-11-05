@@ -1,6 +1,6 @@
 {
-  "version": "1.27.13",
-  "notes": "En computadoras sin tarjeta NVIDIA, la transcripción ya no falla: si la versión con GPU no arranca, la app transcribe sola con el procesador.",
+  "version": "1.28.0",
+  "notes": "Nuevo: antes de cada actualización la app guarda un respaldo, y en ⚙️ Configuración aparece \"Volver a la versión anterior\" por si una versión nueva no te gusta (tus videos y proyectos no se tocan). Si la app ya no abriera, usa el archivo \"Volver a la version anterior.cmd\" en la carpeta de Emm Clips. Funciona a partir de la siguiente actualización.",
   "files": [
     "server.js",
     "app.js",
@@ -17,6 +17,8 @@
     "lib/research.js",
     "lib/youtube.js",
     "vision.js",
-    "lib/director.js"
+    "lib/director.js",
+    "lib/updater.js",
+    "Volver a la version anterior.cmd"
   ]
 }
