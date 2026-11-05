@@ -730,3 +730,8 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
 .fillerChip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:rgba(127,127,127,.18);font-size:12px}
 
 .tl-zsel{font-size:12px;padding:2px 4px;border-radius:6px}
+
+/* Miniaturas: en el rediseño el escenario tiene alto fijo; abierta, la galería sale como ventana grande encima del editor */
+#thumbsPanel[open]{position:fixed;inset:28px;z-index:80;margin:0;overflow:auto;padding:14px 18px 22px;border-radius:14px;background:var(--sh-panel,#1f242a);color:var(--sh-tx,inherit);box-shadow:0 24px 80px rgba(0,0,0,.6)}
+#thumbsPanel[open]>summary{position:sticky;top:-14px;z-index:1;padding:10px 0;background:inherit;font-weight:700}
+#thumbsPanel[open]>summary::after{content:'   ✕ Cerrar';float:right;font-weight:600;opacity:.8}
