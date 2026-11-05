@@ -65,3 +65,32 @@ test('filtro de ffmpeg: recorte par, dentro del cuadro, lanczos; compatible con 
   assert.deepEqual(Z.sanitizeSegmentZoom({ zoom: 0 }), { zoom: 0 });
   assert.deepEqual(Z.previewTransform({ zoom: 1.1 }), { transform: 'scale(1.1)', origin: '50.0% 50.0%' });
 });
+
+test('zoomValue: número ≤ 1.001 = sin zoom; zoom:true = 1.12 viejo; tope 1.25', () => {
+  assert.equal(Z.zoomValue({ zoom: 1 }), 1);
+  assert.equal(Z.zoomValue({ zoom: 1.0005 }), 1);
+  assert.equal(Z.zoomValue({ zoom: true }), 1.12);
+  assert.equal(Z.zoomValue({ zoom: 1.1 }), 1.1);
+  assert.equal(Z.zoomValue({ zoom: 5 }), 1.25);
+  assert.equal(Z.zoomValue({ zoom: 'si' }), 1.12);
+  assert.equal(Z.cropZoomFilter({ zoom: 1 }, 1920, 1080), '');
+});
+
+test('removeAutoZoom no une pedazos autoSplit si alguno tiene zoomManual', () => {
+  const back = Z.removeAutoZoom([
+    { start: 0, end: 25, zoom: 1.1, zoomAuto: true },
+    { start: 25, end: 50, zoom: 1.2, zoomManual: true, autoSplit: true },
+  ]);
+  assert.equal(back.length, 2);
+  assert.equal(back[1].zoom, 1.2); assert.equal(back[1].start, 25);
+  const back2 = Z.removeAutoZoom([
+    { start: 0, end: 25, zoom: 1.2, zoomManual: true },
+    { start: 25, end: 50, zoom: 1.1, zoomAuto: true, autoSplit: true },
+  ]);
+  assert.equal(back2.length, 2); assert.equal(back2[0].end, 25); assert.equal(back2[0].zoom, 1.2);
+  const back3 = Z.removeAutoZoom([
+    { start: 0, end: 25, zoom: 1.1, zoomAuto: true },
+    { start: 25, end: 50, zoom: 1, zoomAuto: true, autoSplit: true },
+  ]);
+  assert.equal(back3.length, 1); assert.equal(back3[0].end, 50);
+});
