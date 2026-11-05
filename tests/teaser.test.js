@@ -161,3 +161,33 @@ test('audio del avance: misma frecuencia/canales que el video y largo EXACTO al 
   assert.doesNotMatch(f,/stereo/);
   assert.match(T.prependFilter(g,'[v]','[a]',{fps:60}).join(';'),/\[v\]settb=AVTB,fps=60,format=yuv420p,setsar=1\[tzomv\]/);
 });
+
+test('IA: lee el avance propuesto (absoluto, relativo, texto m:ss) y rechaza lo que no sirve', () => {
+  const m = { start: 3600, end: 3690 };
+  assert.deepEqual(T.readAvance({ inicio: 3620, fin: 3628.5, por_que: 'el grito' }, m), { start: 3620, end: 3628.5, why: 'el grito' });
+  assert.deepEqual(T.readAvance({ inicio: 20, fin: 28 }, m), { start: 3620, end: 3628, why: '' }); // relativo al momento
+  assert.deepEqual(T.readAvance({ inicio: '1:00:20', fin: '1:00:27' }, m), { start: 3620, end: 3627, why: '' });
+  assert.equal(T.readAvance({ inicio: 3620, fin: 3622 }, m), null); // muy corto
+  assert.equal(T.readAvance({ inicio: 3620, fin: 3640 }, m), null); // muy largo
+  assert.equal(T.readAvance({ inicio: 100, fin: 108 }, m), null); // fuera del momento
+  assert.equal(T.readAvance({ inicio: 'x', fin: null }, m), null);
+  assert.equal(T.readAvance(null, m), null);
+  assert.equal(T.readAvance('3620-3628', m), null);
+});
+
+test('IA: afina el final con las últimas palabras y el inicio al empezar una frase', () => {
+  const m = { start: 1000, end: 1090 };
+  const tr = [{ start: 1018.4, end: 1022, text: 'oye wey mira eso' }, { start: 1022, end: 1027.3, text: '¿Qué es eso? ¡No manches!' }, { start: 1027.3, end: 1031, text: 'era un perro jajaja' }];
+  const av = T.refineAvance({ start: 1020, end: 1030, why: 'sorpresa' }, tr, m, 'que es eso no manches');
+  assert.deepEqual(av, { start: 1018.4, end: 1027.3, why: 'sorpresa' }); // corta antes del remate ("era un perro")
+  assert.deepEqual(T.refineAvance({ start: 1020, end: 1030, why: '' }, [], m, 'x'), { start: 1020, end: 1030, why: '' });
+});
+
+test('IA: el plan usa el avance de la IA y, si falta o cae en algo quitado, la energía', () => {
+  const cands = [{ start: 100, end: 170, score: 9, gancho: 'A', avance: { inicio: 120, fin: 128, por_que: 'grito' } }, { start: 400, end: 470, score: 8, gancho: 'B', avance: { inicio: 'roto' } }];
+  const p = T.buildPlan({ candidates: cands, energy: [], transcript: [], duration: 600 });
+  assert.equal(p.fragments[0].source, 'ia'); assert.equal(p.fragments[0].start, 120); assert.equal(p.fragments[0].end, 128); assert.equal(p.fragments[0].why, 'grito');
+  assert.notEqual(p.fragments[1].source, 'ia');
+  const p2 = T.buildPlan({ candidates: cands, energy: [], transcript: [], duration: 600, keep: [{ start: 0, end: 121 }, { start: 140, end: 600 }] });
+  assert.ok(p2.fragments.every(f => f.source !== 'ia'), 'si el video quitó parte del avance de la IA, no se usa');
+});

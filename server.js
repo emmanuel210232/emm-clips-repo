@@ -956,7 +956,7 @@ async function detectBestMoments(opts){
     job.message='La IA está eligiendo los mejores momentos… (modelo pesado, tarda)'; job.percent=30;
     const tgtMin=Math.round(targetSec/60);
     // La instrucción va DESPUÉS del texto (el modelo sigue mejor lo último) + objeto JSON (sin esto, en directos largos el 14B "resume" en prosa).
-    const prompt=`DIRECTO (bloques [SEGUNDOS|m:ss|energia X/10] texto; energia alta = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, extrae los ${want} MEJORES momentos para un video de clips de un streamer mexicano (lo mas gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos; reparte a lo largo del directo. Cada momento dura de 45 a 120 segundos.\nResponde SOLO este JSON, sin texto ni resumen en prosa: {"momentos":[{"ini":<segundos del bloque>,"dur":<45-120>,"gancho":"<TITULO MAYUSCULAS>","por":"<1 frase>","score":<1-10>}]}`;
+    const prompt=`DIRECTO (bloques [SEGUNDOS|m:ss|energia X/10] texto; energia alta = risas/gritos/reaccion):\n${list}\n\n=====\nTAREA: de los bloques de ARRIBA, extrae los ${want} MEJORES momentos para un video de clips de un streamer mexicano (lo mas gracioso, polemico, sorprendente, emotivo o con reaccion fuerte). Evita relleno y saludos; reparte a lo largo del directo. Cada momento dura de 45 a 120 segundos.\nAVANCE: para cada momento elige tambien su mejor pedazo de 6 a 10 segundos para un ADELANTO al inicio del video: lo mas fuerte (reaccion, grito, risa, frase picante) pero SIN revelar el desenlace ni el remate del chiste (corta JUSTO ANTES de que se resuelva, que deje con ganas de ver que paso). Debe empezar y terminar en frase completa y estar DENTRO del momento. av_ini y av_fin son segundos ABSOLUTOS del directo (como los de los bloques); av_hasta son las ultimas 2 a 5 palabras EXACTAS (copiadas del texto) con las que termina el avance; av_por dice en pocas palabras por que engancha.\nResponde SOLO este JSON, sin texto ni resumen en prosa: {"momentos":[{"ini":<segundos del bloque>,"dur":<45-120>,"gancho":"<TITULO MAYUSCULAS>","por":"<1 frase>","score":<1-10>,"av_ini":<segundos>,"av_fin":<segundos>,"av_hasta":"<ultimas palabras>","av_por":"<por que engancha>"}]}`;
     const NP=useCloud?8000:3000;
     let txt='';
     if(useCloud){
@@ -991,7 +991,10 @@ async function detectBestMoments(opts){
       if(!Number.isFinite(ini)||ini>=dur-2) continue;
       const end=Math.min(dur,ini+d); if(end-ini<12) continue;
       const win=energy.filter(e=>e.t>=ini&&e.t<end); const peak=win.length?Math.max(...win.map(e=>e.db)):emin;
-      cands.push({start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,70),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)});
+      const c={start:+ini.toFixed(2),end:+end.toFixed(2),gancho:String(o.gancho||'').slice(0,70),por:String(o.por||'').slice(0,120),score:Math.max(1,Math.min(10,Number(o.score)||5)),energia:Math.round((peak-emin)/span*10)};
+      // Fragmento para la intro de avance propuesto por la IA (sin el remate). Si viene mal, se ignora y el avance usa la energía.
+      if(teaserLib){ try{ const m={start:c.start,end:c.end}; let av=teaserLib.readAvance(o.avance&&typeof o.avance==='object'?o.avance:{inicio:o.av_ini,fin:o.av_fin,por_que:o.av_por},m); av=av&&teaserLib.refineAvance(av,transcript,m,o.av_hasta||(o.avance&&o.avance.hasta)); if(av) c.avance={inicio:av.start,fin:av.end,por_que:av.why}; }catch{} }
+      cands.push(c);
     }
     // Selección QUALITY-FIRST: los momentos del modelo son SUS mejores; se toman por score, sin solaparse.
     // La duración es un TOPE máximo, NO un mínimo: si solo hay pocos momentos buenos, se dejan pocos — NO se fuerza relleno.

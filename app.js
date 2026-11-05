@@ -850,6 +850,7 @@ function renderTeaserList(){
   (teaserFrags||[]).forEach((f,i)=>{
     const row=document.createElement('div'); row.className='teaserItem';
     const t=document.createElement('span'); t.textContent=`${i+1}. ${fmt(f.start)} → ${fmt(f.end)}`+(f.label?` · ${f.label}`:'');
+    if(f.source==='ia'){ const b=document.createElement('span'); b.className='teaserWhy'; b.textContent='✨ Elegido por la IA'+(f.why?': '+f.why:''); b.title='La IA eligió este pedazo sin revelar cómo termina'; t.append(document.createElement('br'),b); }
     const go=document.createElement('button'); go.type='button'; go.className='tl-btn'; go.textContent='▶'; go.title='Ver este pedazo';
     go.onclick=()=>{ goStep(1); playAt(f.start,f.end-f.start).catch(()=>{}); };
     const del=document.createElement('button'); del.type='button'; del.className='tl-btn danger'; del.textContent='🗑️'; del.title='Quitar del avance';
