@@ -75,3 +75,19 @@ Hay que agregar **`"lib/timeline-core.js"`** a `version.json` → `files`. Si fa
 - Mini-mapa del directo completo arriba de la línea del tiempo (§3.4 de la investigación).
 - Marcas de entrada/salida (I/O) y marcadores (M): `keyAction` ya reconoce esas teclas, falta conectarlas.
 - Visto de paso (ya pasa en `main`, no es de esta rama): al abrir la app sin estado sale en consola `Cannot read properties of null (reading 'filmstrip')`.
+
+## Revisión de código (después de entregar)
+Arreglados (commit `562b5a9`):
+- El primer cambio de un video recién abierto no se podía deshacer (`ensureClips` no fijaba la base del historial).
+- La Vista de la edición duplicaba revisiones al pausar y reanudar, y podía quedarse trabada con el letrero (y en silencio) al terminar el video.
+- Después de L L (2×), pausar con los controles del video y volver a reproducir seguía a 2×/4× sin indicador: ahora regresa a 1×.
+- `fitHistory` era cuadrático (con miles de clips hacía cientos de MB de `JSON.stringify` por edición); ahora es lineal, con prueba.
+Las pruebas pasan; estos arreglos **no se probaron en el navegador**.
+
+Pendientes encontrados (sin arreglar):
+- **Cuota de localStorage:** el historial guarda hasta 1.5 MB por video y nunca borra el de otros videos; con 3–4 videos puede llenarse y entonces **los clips dejan de guardarse sin aviso**. Arreglo sugerido: si falla por cuota, borrar los `eirl_hist_*` de otros videos y reintentar.
+- `buildTimeline` no limita `tlZoom` al máximo al agrandar la ventana (el ancho puede pasar de 4 millones de px).
+- J durante la Vista de la edición: se pelean (la vista vuelve a saltar hacia adelante).
+- Dos saltos en menos de 150 ms (clips muy cortos seguidos) pueden hacer que la vista termine antes de tiempo.
+- Si la vista se pidió desde un fragmento y cambias de video antes de que cargue, arranca sola en el video nuevo.
+- El retroceso de J sigue corriendo al cambiar de video.

@@ -262,3 +262,14 @@ test('zoom de la línea del tiempo: máximo según duración y ancla del cursor'
   assert.equal(T.anchoredScroll(500, 300, 2000, 8000), 0.4 * 8000 - 300);
   assert.equal(T.anchoredScroll(0, 0, 0, 100), 0);
 });
+
+test('fitHistory: con miles de clips es lineal y el resultado cabe en el límite', () => {
+  const big = Array.from({ length: 5000 }, (_, i) => ({ start: i * 2, end: i * 2 + 1.5 }));
+  const h = T.createHistory({ limit: 50 });
+  for (let i = 0; i < 50; i++) h.record({ clips: big.slice(i), label: 'paso ' + i });
+  const t0 = Date.now();
+  const fit = T.fitHistory(h.toJSON(), 1500000);
+  assert.ok(Date.now() - t0 < 1500, 'no debe tardar segundos');
+  assert.ok(JSON.stringify(fit).length <= 1500000, 'cabe en el límite');
+  assert.equal(fit.past[fit.past.length - 1].l, 'paso 49', 'conserva el paso más reciente');
+});
