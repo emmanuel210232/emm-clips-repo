@@ -26,7 +26,12 @@ runtime\node.exe tools-dev\check_cut.js --src "D:\ruta\directo.mpg" --times 600,
 ```
 Sale con código 1 si el método actual no cae en el cuadro pedido.
 
-## Arreglo propuesto (NO aplicado todavía)
+## Pieza común lista: `lib/seek.js`
+- `COPYTS`, `startTimeOf(ffprobe, archivo)`, `exactInput(archivo, inicio, fin, {fmtStart})` y `absTrims(...)`, con 4 pruebas en `tests/seek.test.js`.
+- Verificado con ffmpeg: 3 pedazos (2–8 s, 31.5–37.5 s, 52.25–58.25 s) de una fuente MPEG-TS 1080p60 caen en el **cuadro exacto** y la sincronía A/V de la salida queda en **4.7 ms** en todos los pares (dentro de 1 cuadro).
+- Se aplica en el export, la intro de avance y la GPU (rama `nube/export-intro`) y en miniaturas y Shorts (rama `nube/miniaturas-cola`). Ver sus reportes.
+
+## Arreglo propuesto
 Abrir cada entrada con `-copyts -ss <s>` y cortar con `trim`/`atrim` sobre el **tiempo absoluto** (`start_time` del formato + tiempo del pedazo), y luego `setpts=PTS-STARTPTS`/`asetpts=PTS-STARTPTS`. Cada stream conserva su marca de tiempo real, así que el corte cae exacto sin importar dónde quedó el salto, y audio y video se cortan en el mismo instante real.
 
 No lo cambié en el export porque toca el corazón de la calidad y la sincronía. Antes de aplicarlo:
