@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><div class="topbarRight"><button id="reqOpen" class="modeToggle" type="button" title="Comprobar que esta PC tiene todo lo necesario">🧰 Requisitos</button><button id="researchToggle" class="modeToggle researchToggle" type="button" title="Investigar a los canales que resuben a Shifu: qué pega, a qué hora, títulos y miniaturas">🔍 Investigar</button><button id="modeToggle" class="modeToggle" type="button" title="Cambiar entre el editor de cortos y el Resumen del directo">🎬 Resumen del directo</button><button id="themeToggle" class="themeToggle" type="button" title="Cambiar entre tema claro y oscuro" aria-label="Cambiar tema">🌙</button><span class="badge">Asistente</span></div></header>
+  <header class="topbar"><div class="brand"><span class="mark">EC</span><div><strong>Emm Clips</strong><small>Corta groserías · haz Shorts con IA</small></div></div><div class="topbarRight"><button id="themeToggle" class="themeToggle" type="button" title="Cambiar entre tema claro y oscuro" aria-label="Cambiar tema">🌙</button><span class="badge">Editor</span></div></header>
 
   <!-- COMPROBACIÓN DE REQUISITOS (para saber si esta PC tiene todo lo necesario) -->
   <div id="reqModal" class="reqModal" hidden>
@@ -27,13 +27,27 @@
       </div>
     </div>
   </div>
-  <main>
-    <nav class="wizard" id="wizard" aria-label="Pasos">
-      <button type="button" class="wstep" data-step="1"><span class="wnum">1</span><span class="wlbl">Abrir</span></button>
-      <button type="button" class="wstep" data-step="2"><span class="wnum">2</span><span class="wlbl">Transcribir</span></button>
-      <button type="button" class="wstep" data-step="3"><span class="wnum">3</span><span class="wlbl">Momentos</span></button>
-      <button type="button" class="wstep" data-step="4"><span class="wnum">4</span><span class="wlbl">Exportar</span></button>
-    </nav>
+
+  <main class="appShell" id="appShell">
+    <!-- PANEL IZQUIERDO: pasos y herramientas -->
+    <aside class="rail" aria-label="Pasos y herramientas">
+      <div class="railLabel">Editor</div>
+      <nav class="wizard" id="wizard" aria-label="Pasos">
+        <button type="button" class="wstep" data-step="1"><span class="wnum">1</span><span class="wlbl">Abrir<small>Video y edición</small></span></button>
+        <button type="button" class="wstep" data-step="2"><span class="wnum">2</span><span class="wlbl">Transcribir<small>Groserías y pausas</small></span></button>
+        <button type="button" class="wstep" data-step="3"><span class="wnum">3</span><span class="wlbl">Momentos<small>Shorts 9:16</small></span></button>
+        <button type="button" class="wstep" data-step="4"><span class="wnum">4</span><span class="wlbl">Exportar<small>Video limpio</small></span></button>
+      </nav>
+      <div class="railLabel">Herramientas</div>
+      <button id="modeToggle" class="railItem" type="button" title="Cambiar entre el editor de cortos y el Resumen del directo">🎬 Resumen del directo</button>
+      <button id="researchToggle" class="railItem researchToggle" type="button" title="Investigar a los canales que resuben a Shifu: qué pega, a qué hora, títulos y miniaturas">🔍 Investigar</button>
+      <div class="railSpacer"></div>
+      <button id="reqOpen" class="railItem" type="button" title="Comprobar que esta PC tiene todo lo necesario">🧰 Requisitos</button>
+      <button id="railConfig" class="railItem" type="button" title="Rutas de FFmpeg/Whisper, marca y actualizaciones">⚙️ Configuración</button>
+    </aside>
+
+    <!-- AVISOS (arriba del reproductor; también se ven en Resumen e Investigar) -->
+    <div class="msgs">
     <div id="updateBanner" class="updateBanner" hidden>
       <span id="updateBannerText" class="updateBannerText"></span>
       <button id="updateBannerBtn" class="primary compact" type="button">Actualizar ahora</button>
@@ -49,64 +63,74 @@
       </div>
       <div class="jobTrack"><div id="jobFill" class="jobFill"></div></div>
     </div>
+    </div>
 
-    <!-- PASO 1 -->
-    <section class="step" data-step="1">
-      <h2 class="stepTitle">Paso 1 · Abre el video del directo</h2>
-      <p class="stepLead">Elige el archivo del directo que ya recortaste. No se copia, así que da igual que pese varios GB.</p>
-      <div class="row" style="margin-bottom:12px"><button id="newProject" class="secondary">🆕 Nuevo proyecto</button><span id="projStatus" class="muted"></span></div>
-      <div class="card"><div class="cardhead"><div><span class="number">1</span><h2>Video original</h2></div><span id="videoStatus" class="status">Sin video</span></div>
-        <div class="row"><button id="pickVideo" class="primary big">📂 Elegir video del directo…</button><span class="muted">Se abre el explorador de Windows.</span></div>
-        <details class="advOpen"><summary>Otras formas de abrir</summary>
-          <div class="row" style="margin-top:9px"><input id="videoPath" type="text" placeholder="C:\Videos\mi_video.mp4" aria-label="Ruta del video"><button id="openVideo" class="secondary">Abrir por ruta</button></div>
-          <div class="or">o sube una copia a la app</div>
-          <input id="videoFile" type="file" accept="video/*,.mkv,.avi,.mpg,.mpeg">
-        </details>
-        <div class="previewAction"><button id="makePreview" class="secondary">Crear vista previa MP4</button><span class="muted">Útil para MPG y formatos que el navegador no reproduce.</span></div>
-        <div class="editorGrid">
-        <div class="editorMain">
-        <div class="player"><video id="video" controls preload="metadata"></video><img id="scrubThumb" class="scrubThumb" alt=""><div id="animOverlay" class="animOverlay"></div><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
-        <div class="row" style="margin-top:10px"><button id="grabFrame" class="secondary">📸 Exportar frame (para miniatura)</button><span class="muted">Pausa en el momento que quieras y pícalo. Sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
-        <div class="timelineWrap">
-          <div class="tl-controls">
-            <span id="tlTime" class="tl-time">0:00:00 / 0:00:00</span>
-            <span style="flex:1"></span>
-            <button id="tlBack1s" class="tl-btn" type="button" title="−1 segundo">⏮</button>
-            <button id="tlBackF" class="tl-btn" type="button" title="−1 frame">◀</button>
-            <button id="tlPlay" class="tl-btn" type="button" title="Reproducir / Pausa">⏯</button>
-            <button id="tlFwdF" class="tl-btn" type="button" title="+1 frame">▶</button>
-            <button id="tlFwd1s" class="tl-btn" type="button" title="+1 segundo">⏭</button>
-            <button id="tlLoadStrip" class="tl-btn" type="button" title="Generar miniaturas y onda de audio">🎞️ Miniaturas</button>
-            <span style="width:12px"></span>
-            <button id="tlZoomOut" class="tl-btn" type="button" title="Alejar">−</button>
-            <button id="tlZoomIn" class="tl-btn" type="button" title="Acercar">+</button>
-          </div>
-          <div class="tl-legend2"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías <i class="lg-cut"></i>se quita · arrastra la regla para buscar</div>
-          <div class="tl-cutbar">
-            <button id="tlSplit" class="tl-btn primaryMini" type="button" title="Divide el clip donde está la línea del tiempo (tecla D)">✂️ Dividir (D)</button>
-            <button id="tlDelSel" class="tl-btn danger" type="button" title="Borra el/los clip(s) seleccionado(s) y cierra el hueco (tecla Supr)" disabled>🗑️ Borrar clip (Supr)</button>
-            <button id="tlMerge" class="tl-btn" type="button" title="Une los clips seguidos (quita divisiones). Arrastra en el espacio de arriba/abajo para seleccionar varios." disabled>🔗 Unir</button>
-            <button id="tlZoomClip" class="tl-btn" type="button" title="Pone/quita un acercamiento (punch-in) en el clip seleccionado (tecla Z)" disabled>🔍 Zoom</button>
-            <button id="tlZoomAuto" class="tl-btn" type="button" title="La IA escucha el audio y pone acercamientos en los momentos más enfáticos (puedes quitarlos uno por uno)">✨ Sugerir zooms</button>
-            <button id="tlTopics" class="tl-btn" type="button" title="La IA lee la transcripción, detecta dónde cambia el tema y pone una transición (fundido suave) ahí">🎬 Transición por tema</button>
-            <button id="tlUndo" class="tl-btn" type="button" title="Deshacer (Ctrl+Z)" disabled>↶ Deshacer</button>
-            <button id="tlResetFull" class="tl-btn" type="button" title="Quita TODOS los cortes y deja el video completo (empezar de cero)">🔄 Video completo</button>
-            <button id="tlClearSel" class="tl-btn" type="button" title="Quita la selección del clip">✖ Deseleccionar</button>
-            <span style="flex:1"></span>
-            <span id="tlCutInfo" class="tl-cutinfo"></span>
-            <button id="tlGoCut" class="tl-btn primaryMini" type="button" title="Ir a Exportar con los clips borrados quitados" hidden>Exportar recortado →</button>
-          </div>
-          <div id="timeline" class="timelineBar"></div>
-          <p class="hint" style="margin:8px 2px 0">🎬 <b>Editar como CapCut:</b> <b>arrastra en la regla de arriba</b> para moverte por el video (scrub) · <b>pica un clip</b> para seleccionarlo y <b>arrástralo</b> para moverlo/reordenar · <b>D</b> divide · <b>Supr</b> borra el seleccionado · <b>arrastra sus bordes</b> para recortarlo (trim) · <b>Ctrl+clic</b> (o arrastra en el <b>espacio de arriba/abajo</b>) selecciona varios para <b>Unir</b> o borrar · <b>Z</b> zoom · <b>Ctrl+Z</b> deshace. Al <b>Exportar recortado</b> queda justo lo que ves.</p>
-          <div class="row wrap silenceRow">
-            <button id="rmSilence" class="tl-btn primaryMini" type="button" title="Detecta los silencios y los quita, uniendo el video">🤫 Quitar silencios</button>
-            <label>Sensibilidad <select id="silSens"><option value="suave">Suave · solo pausas largas (1 s)</option><option value="normal" selected>Normal (0.6 s)</option><option value="fuerte">Fuerte · silencios cortos (0.35 s)</option><option value="max">Máxima · muy apretado (0.25 s)</option></select></label>
-            <label class="inlineCheck mini"><input type="checkbox" id="silSmooth" checked> Suavizar cortes (crossfade)</label>
-            <span id="silInfo" class="muted"></span>
-          </div>
+    <!-- CENTRO: reproductor grande -->
+    <section class="stage" id="stage" aria-label="Reproductor">
+      <div class="player"><video id="video" controls preload="metadata"></video><img id="scrubThumb" class="scrubThumb" alt=""><div id="animOverlay" class="animOverlay"></div><div id="playerEmpty">Aquí podrás revisar el video y saltar a cada coincidencia.</div></div>
+      <div class="stageBar"><button id="grabFrame" class="secondary">📸 Exportar frame</button><span class="muted">Pausa donde quieras y pícalo: sale en calidad completa (aparece en “Archivos creados”, paso 4).</span></div>
+    </section>
+
+    <!-- ABAJO: línea del tiempo -->
+    <div class="dock" id="timelineHost">
+    <div class="timelineWrap">
+      <div class="tl-controls">
+        <span id="tlTime" class="tl-time">0:00:00 / 0:00:00</span>
+        <span style="flex:1"></span>
+        <button id="tlBack1s" class="tl-btn" type="button" title="−1 segundo">⏮</button>
+        <button id="tlBackF" class="tl-btn" type="button" title="−1 frame">◀</button>
+        <button id="tlPlay" class="tl-btn" type="button" title="Reproducir / Pausa">⏯</button>
+        <button id="tlFwdF" class="tl-btn" type="button" title="+1 frame">▶</button>
+        <button id="tlFwd1s" class="tl-btn" type="button" title="+1 segundo">⏭</button>
+        <button id="tlLoadStrip" class="tl-btn" type="button" title="Generar miniaturas y onda de audio">🎞️ Miniaturas</button>
+        <span style="width:12px"></span>
+        <button id="tlZoomOut" class="tl-btn" type="button" title="Alejar">−</button>
+        <button id="tlZoomIn" class="tl-btn" type="button" title="Acercar">+</button>
+      </div>
+      <div class="tl-legend2"><i class="lg-pause"></i>pausas <i class="lg-gros"></i>groserías <i class="lg-cut"></i>se quita · arrastra la regla para buscar</div>
+      <div class="tl-cutbar">
+        <button id="tlSplit" class="tl-btn primaryMini" type="button" title="Divide el clip donde está la línea del tiempo (tecla D)">✂️ Dividir (D)</button>
+        <button id="tlDelSel" class="tl-btn danger" type="button" title="Borra el/los clip(s) seleccionado(s) y cierra el hueco (tecla Supr)" disabled>🗑️ Borrar clip (Supr)</button>
+        <button id="tlMerge" class="tl-btn" type="button" title="Une los clips seguidos (quita divisiones). Arrastra en el espacio de arriba/abajo para seleccionar varios." disabled>🔗 Unir</button>
+        <button id="tlZoomClip" class="tl-btn" type="button" title="Pone/quita un acercamiento (punch-in) en el clip seleccionado (tecla Z)" disabled>🔍 Zoom</button>
+        <button id="tlZoomAuto" class="tl-btn" type="button" title="La IA escucha el audio y pone acercamientos en los momentos más enfáticos (puedes quitarlos uno por uno)">✨ Sugerir zooms</button>
+        <button id="tlTopics" class="tl-btn" type="button" title="La IA lee la transcripción, detecta dónde cambia el tema y pone una transición (fundido suave) ahí">🎬 Transición por tema</button>
+        <button id="tlUndo" class="tl-btn" type="button" title="Deshacer (Ctrl+Z)" disabled>↶ Deshacer</button>
+        <button id="tlResetFull" class="tl-btn" type="button" title="Quita TODOS los cortes y deja el video completo (empezar de cero)">🔄 Video completo</button>
+        <button id="tlClearSel" class="tl-btn" type="button" title="Quita la selección del clip">✖ Deseleccionar</button>
+        <span style="flex:1"></span>
+        <span id="tlCutInfo" class="tl-cutinfo"></span>
+        <button id="tlGoCut" class="tl-btn primaryMini" type="button" title="Ir a Exportar con los clips borrados quitados" hidden>Exportar recortado →</button>
+      </div>
+      <div id="timeline" class="timelineBar"></div>
+      <details class="tlHelp"><summary>❔ Cómo editar en la línea de tiempo</summary><p class="hint"> <b>arrastra en la regla de arriba</b> para moverte por el video (scrub) · <b>pica un clip</b> para seleccionarlo y <b>arrástralo</b> para moverlo/reordenar · <b>D</b> divide · <b>Supr</b> borra el seleccionado · <b>arrastra sus bordes</b> para recortarlo (trim) · <b>Ctrl+clic</b> (o arrastra en el <b>espacio de arriba/abajo</b>) selecciona varios para <b>Unir</b> o borrar · <b>Z</b> zoom · <b>Ctrl+Z</b> deshace. Al <b>Exportar recortado</b> queda justo lo que ves.</p></details>
+      <div class="row wrap silenceRow">
+        <button id="rmSilence" class="tl-btn primaryMini" type="button" title="Detecta los silencios y los quita, uniendo el video">🤫 Quitar silencios</button>
+        <label>Sensibilidad <select id="silSens"><option value="suave">Suave · solo pausas largas (1 s)</option><option value="normal" selected>Normal (0.6 s)</option><option value="fuerte">Fuerte · silencios cortos (0.35 s)</option><option value="max">Máxima · muy apretado (0.25 s)</option></select></label>
+        <label class="inlineCheck mini"><input type="checkbox" id="silSmooth" checked> Suavizar cortes (crossfade)</label>
+        <span id="silInfo" class="muted"></span>
+      </div>
+    </div>
+    </div>
+
+    <!-- DERECHA: ajustes del paso activo -->
+    <aside class="inspector" id="inspector" aria-label="Ajustes del paso">
+      <div id="inspectorHost" class="inspectorHost"></div>
+      <!-- PASO 1 -->
+      <section class="step" data-step="1">
+        <h2 class="stepTitle">Paso 1 · Abre el video del directo</h2>
+        <p class="stepLead">Elige el archivo del directo que ya recortaste. No se copia, así que da igual que pese varios GB.</p>
+        <div class="row" style="margin-bottom:12px"><button id="newProject" class="secondary">🆕 Nuevo proyecto</button><span id="projStatus" class="muted"></span></div>
+        <div class="card"><div class="cardhead"><div><span class="number">1</span><h2>Video original</h2></div><span id="videoStatus" class="status">Sin video</span></div>
+          <div class="row"><button id="pickVideo" class="primary big">📂 Elegir video del directo…</button><span class="muted">Se abre el explorador de Windows.</span></div>
+          <details class="advOpen"><summary>Otras formas de abrir</summary>
+            <div class="row" style="margin-top:9px"><input id="videoPath" type="text" placeholder="C:\Videos\mi_video.mp4" aria-label="Ruta del video"><button id="openVideo" class="secondary">Abrir por ruta</button></div>
+            <div class="or">o sube una copia a la app</div>
+            <input id="videoFile" type="file" accept="video/*,.mkv,.avi,.mpg,.mpeg">
+          </details>
+          <div class="previewAction"><button id="makePreview" class="secondary">Crear vista previa MP4</button><span class="muted">Útil para MPG y formatos que el navegador no reproduce.</span></div>
         </div>
-        </div><!-- /editorMain -->
-        <aside class="editorSide">
+        <div class="card animCard">
           <div class="animPanel">
             <div class="animHead">🎬 Efecto de entrada / salida <small>— 15 efectos (fundido, deslizar, círculo, pixeles, zoom…). La vista previa es aproximada; el efecto real se aplica al exportar.</small></div>
             <div class="row wrap animRow">
@@ -121,121 +145,134 @@
               <p class="hint">Agrega una tarjeta corta (2.5s) con tu @usuario al inicio/final. Si eliges alguna, el video se reencoda.</p>
             </details>
           </div>
-          <p class="hint" style="margin-top:12px">💡 Lo que ajustes aquí (animación, intro/outro) se aplica al <b>Exportar</b> en el Paso 4.</p>
-        </aside>
-        </div><!-- /editorGrid -->
-      </div>
-      <details class="card scanCard" id="scanCard"><summary class="cardSummary">🛡️ Revisar contenido sensible (IA) <small style="font-weight:400;color:#8a968b">— marca lo que YouTube podría penalizar para que tú lo revises</small></summary>
-        <p class="hint">La IA de tu PC (gemma3) mira el video y <b>marca</b> posibles besos/intimidad, desnudez, peleas o drogas. <b>No corta solo</b>: tú revisas cada marca y decides. En videos de antro/fiesta puede marcar de más — ahí revísalo con calma. (Necesita <b>Ollama</b> abierto.)</p>
-        <div class="row wrap scanCats">
-          <label class="inlineCheck mini"><input type="checkbox" id="scBeso" checked> Besos / intimidad</label>
-          <label class="inlineCheck mini"><input type="checkbox" id="scDesnudez" checked> Desnudez</label>
-          <label class="inlineCheck mini"><input type="checkbox" id="scPelea" checked> Peleas / golpes</label>
-          <label class="inlineCheck mini"><input type="checkbox" id="scDrogas"> Alcohol / drogas</label>
+          <p class="hint" style="margin-top:10px">💡 Lo que ajustes aquí (animación, intro/outro) se aplica al <b>Exportar</b> en el Paso 4.</p>
         </div>
-        <div class="row wrap" style="margin-top:8px;align-items:center">
-          <label>Sensibilidad <select id="scSens"><option value="relajado">Relajada (solo lo evidente)</option><option value="normal" selected>Normal</option><option value="estricto">Estricta (marca más)</option></select></label>
-          <label>Revisar 1 cada <select id="scStep"><option value="3">3 s</option><option value="4" selected>4 s</option><option value="6">6 s</option><option value="10">10 s</option></select></label>
-          <label>Velocidad <select id="scMode"><option value="rapido" selected>Rápida (2 modelos)</option><option value="preciso">Precisa (solo gemma3)</option></select></label>
-          <label>🧠 Motor <select id="scEngine"><option value="local">Local · gratis</option><option value="cloud">Nube · Sonnet 5.5 (mucho mejor)</option></select></label>
-          <button id="scanRun" class="primary">🛡️ Analizar video</button>
-          <span class="muted" id="scanInfo"></span>
-        </div>
-        <div id="scanResults" class="scanResults"></div>
-      </details>
-      <div class="stepNav"><span></span><button type="button" class="primary next" data-go="2">Siguiente: Transcribir →</button></div>
-    </section>
-
-    <!-- PASO 2 -->
-    <section class="step" data-step="2" hidden>
-      <h2 class="stepTitle">Paso 2 · Transcribe y revisa groserías</h2>
-      <p class="stepLead">Transcribe el audio (usa tu GPU si está disponible) y marca las groserías que quieras silenciar. El diccionario ya trae las comunes.</p>
-      <div class="card"><div class="cardhead"><div><span class="number">A</span><h2>Transcribir y palabras detectadas</h2></div><span id="matchCount" class="status">0 coincidencias</span></div>
-        <div class="row wrap"><button id="transcribe" class="primary">Transcribir video</button><label class="fileButton">Importar SRT / JSON<input id="transcriptFile" type="file" accept=".srt,.vtt,.json"></label><button id="selectAll" class="secondary">Seleccionar todas</button><button id="selectNone" class="secondary">Ninguna</button></div>
-        <p class="hint">Al importar SRT los tiempos por palabra son estimados; revisa esos cortes antes de exportar. Volver a transcribir reemplaza las propuestas y sus correcciones; los MP4 ya creados permanecen en <code>exports</code>.</p>
-        <div id="matches" class="matches empty">Las coincidencias aparecerán aquí después de transcribir o importar subtítulos.</div>
-        <details class="manualEditor"><summary>Agregar corte que la transcripción no detectó</summary>
-          <p class="hint">Escribe los segundos exactos del fragmento a quitar. Puedes pausar el reproductor y copiar su tiempo con los botones. Escucha el salto antes de exportar.</p>
-          <div class="row wrap"><label>Inicio (s) <input id="manualStart" type="number" min="0" step="0.01" value="0"></label><button id="takeManualStart" class="secondary">Tomar inicio del video</button><label>Final (s) <input id="manualEnd" type="number" min="0" step="0.01" value="0"></label><button id="takeManualEnd" class="secondary">Tomar final del video</button></div>
-          <div class="row wrap"><input id="manualLabel" type="text" maxlength="80" placeholder="Motivo (opcional)"><button id="addManualCut" class="primary">Agregar corte manual</button></div>
-          <div id="manualCuts" class="matches"></div>
+        <details class="card scanCard" id="scanCard"><summary class="cardSummary">🛡️ Revisar contenido sensible (IA) <small style="font-weight:400;color:#8a968b">— marca lo que YouTube podría penalizar para que tú lo revises</small></summary>
+          <p class="hint">La IA de tu PC (gemma3) mira el video y <b>marca</b> posibles besos/intimidad, desnudez, peleas o drogas. <b>No corta solo</b>: tú revisas cada marca y decides. En videos de antro/fiesta puede marcar de más — ahí revísalo con calma. (Necesita <b>Ollama</b> abierto.)</p>
+          <div class="row wrap scanCats">
+            <label class="inlineCheck mini"><input type="checkbox" id="scBeso" checked> Besos / intimidad</label>
+            <label class="inlineCheck mini"><input type="checkbox" id="scDesnudez" checked> Desnudez</label>
+            <label class="inlineCheck mini"><input type="checkbox" id="scPelea" checked> Peleas / golpes</label>
+            <label class="inlineCheck mini"><input type="checkbox" id="scDrogas"> Alcohol / drogas</label>
+          </div>
+          <div class="row wrap" style="margin-top:8px;align-items:center">
+            <label>Sensibilidad <select id="scSens"><option value="relajado">Relajada (solo lo evidente)</option><option value="normal" selected>Normal</option><option value="estricto">Estricta (marca más)</option></select></label>
+            <label>Revisar 1 cada <select id="scStep"><option value="3">3 s</option><option value="4" selected>4 s</option><option value="6">6 s</option><option value="10">10 s</option></select></label>
+            <label>Velocidad <select id="scMode"><option value="rapido" selected>Rápida (2 modelos)</option><option value="preciso">Precisa (solo gemma3)</option></select></label>
+            <label>🧠 Motor <select id="scEngine"><option value="local">Local · gratis</option><option value="cloud">Nube · Sonnet 5.5 (mucho mejor)</option></select></label>
+            <button id="scanRun" class="primary">🛡️ Analizar video</button>
+            <span class="muted" id="scanInfo"></span>
+          </div>
+          <div id="scanResults" class="scanResults"></div>
         </details>
-      </div>
-      <details class="card" open><summary class="cardSummary">📝 Transcripción completa <small style="font-weight:400;color:#8a968b">— las groserías van subrayadas; clic en una palabra salta el video</small></summary>
-        <div id="transcriptView" class="transcriptView">Transcribe el video para ver aquí todo el texto.</div>
-      </details>
-      <div class="card"><div class="cardhead"><div><span class="number">B</span><h2>Diccionario de groserías</h2></div><span id="termCount" class="status"></span></div>
-        <p class="hint">Puedes agregar palabras y frases mexicanas. Solo se detectan palabras completas. Desactiva las que quieras revisar sin cortarlas.</p>
-        <div class="row"><input id="newTerm" type="text" placeholder="Palabra o frase; separa varias con comas"><button id="addTerm" class="primary compact">Agregar</button></div>
-        <div id="terms" class="terms"></div>
-        <button id="saveTerms" class="secondary wide">Guardar diccionario</button>
-      </div>
-      <details class="card"><summary class="cardSummary">Pausas largas (opcional) <span id="pauseCount" class="status">0 pausas</span></summary>
-        <p class="hint">Busca silencios de 1.5 segundos o más. Se conserva un pequeño margen antes y después. Marca solo las que quieras quitar del video largo (solo aplican al modo Cortar).</p>
-        <div class="row"><button id="analyzePauses" class="secondary">Buscar pausas</button></div>
-        <div id="pauses" class="matches empty">Todavía no se ha analizado el audio.</div>
-      </details>
-      <div class="stepNav"><button type="button" class="secondary prev" data-go="1">← Atrás</button><button type="button" class="primary next" data-go="3">Siguiente: Momentos →</button></div>
-    </section>
+        <div class="stepNav"><span></span><button type="button" class="primary next" data-go="2">Siguiente: Transcribir →</button></div>
+      </section>
 
-    <!-- PASO 3 -->
-    <section class="step" data-step="3" hidden>
-      <h2 class="stepTitle">Paso 3 · Encuentra y crea tus Shorts</h2>
-      <p class="stepLead">La IA busca los momentos más virales (30–60 s) y te propone un gancho. O crea uno exacto con los minutos. Los Shorts silencian groserías solos.</p>
-      <div class="card"><div class="cardhead"><div><span class="number">3</span><h2>Propuestas de Shorts</h2></div><span id="shortCount" class="status">0 propuestas</span></div>
-        <p class="hint">La IA busca los <b>momentos más virales de 30–60 s</b> (humor, pleitos, remates) y te propone un <b>gancho</b>. Con el motor <b>Nube</b> lee <b>TODO el directo</b> y elige como OpusClip (mucho mejor que el local). Los Shorts <b>ya silencian las groserías</b> y resaltan las palabras clave en los subtítulos. Revisa encuadre antes de publicar.</p>
-        <div class="row wrap" style="align-items:center;gap:10px;margin-bottom:10px">
-          <label>🧠 Motor
-            <select id="shortsEngine">
-              <option value="local">Local · gratis (básico)</option>
-              <option value="cloud:claude-sonnet-5-5">Nube · Sonnet 5.5</option>
-            </select>
-          </label>
-          <span id="shortsEngineStatus" class="muted"></span>
+      <!-- PASO 2 -->
+      <section class="step" data-step="2" hidden>
+        <h2 class="stepTitle">Paso 2 · Transcribe y revisa groserías</h2>
+        <p class="stepLead">Transcribe el audio (usa tu GPU si está disponible) y marca las groserías que quieras silenciar. El diccionario ya trae las comunes.</p>
+        <div class="card"><div class="cardhead"><div><span class="number">A</span><h2>Transcribir y palabras detectadas</h2></div><span id="matchCount" class="status">0 coincidencias</span></div>
+          <div class="row wrap"><button id="transcribe" class="primary">Transcribir video</button><label class="fileButton">Importar SRT / JSON<input id="transcriptFile" type="file" accept=".srt,.vtt,.json"></label><button id="selectAll" class="secondary">Seleccionar todas</button><button id="selectNone" class="secondary">Ninguna</button></div>
+          <p class="hint">Al importar SRT los tiempos por palabra son estimados; revisa esos cortes antes de exportar. Volver a transcribir reemplaza las propuestas y sus correcciones; los MP4 ya creados permanecen en <code>exports</code>.</p>
+          <div id="matches" class="matches empty">Las coincidencias aparecerán aquí después de transcribir o importar subtítulos.</div>
+          <details class="manualEditor"><summary>Agregar corte que la transcripción no detectó</summary>
+            <p class="hint">Escribe los segundos exactos del fragmento a quitar. Puedes pausar el reproductor y copiar su tiempo con los botones. Escucha el salto antes de exportar.</p>
+            <div class="row wrap"><label>Inicio (s) <input id="manualStart" type="number" min="0" step="0.01" value="0"></label><button id="takeManualStart" class="secondary">Tomar inicio del video</button><label>Final (s) <input id="manualEnd" type="number" min="0" step="0.01" value="0"></label><button id="takeManualEnd" class="secondary">Tomar final del video</button></div>
+            <div class="row wrap"><input id="manualLabel" type="text" maxlength="80" placeholder="Motivo (opcional)"><button id="addManualCut" class="primary">Agregar corte manual</button></div>
+            <div id="manualCuts" class="matches"></div>
+          </details>
         </div>
-        <div class="row wrap"><button id="suggestShorts" class="primary">🤖 Buscar momentos virales</button><button id="renderAllShorts" class="secondary">Crear todos los Shorts</button><span class="muted">30–60 s con gancho · o crea uno exacto abajo</span></div>
-        <details class="manualEditor" id="manualShortBox"><summary>➕ Crear Short de un momento exacto</summary>
-          <p class="hint">Escribe el <b>inicio</b> y el <b>final</b> del momento (en <b>mm:ss</b> como <code>12:00</code>, o en segundos). La app lo hace vertical con subtítulos y zoom. Debe durar entre 10 y 100 s. Aparece arriba en la lista; luego pulsa <b>Crear Short vertical</b>.</p>
-          <div class="row wrap"><label>Inicio <input id="msStart" type="text" placeholder="12:00"></label><label>Final <input id="msEnd" type="text" placeholder="12:52"></label></div>
-          <div class="row wrap"><input id="msHook" type="text" maxlength="40" placeholder="Gancho arriba del video (opcional)"><button id="addManualShort" class="primary">Crear Short de este momento</button></div>
+        <details class="card" open><summary class="cardSummary">📝 Transcripción completa <small style="font-weight:400;color:#8a968b">— las groserías van subrayadas; clic en una palabra salta el video</small></summary>
+          <div id="transcriptView" class="transcriptView">Transcribe el video para ver aquí todo el texto.</div>
         </details>
-        <div id="shorts" class="shorts empty">Transcribe el video para generar propuestas.</div>
-      </div>
-      <div class="stepNav"><button type="button" class="secondary prev" data-go="2">← Atrás</button><button type="button" class="primary next" data-go="4">Siguiente: Exportar →</button></div>
-    </section>
+        <div class="card"><div class="cardhead"><div><span class="number">B</span><h2>Diccionario de groserías</h2></div><span id="termCount" class="status"></span></div>
+          <p class="hint">Puedes agregar palabras y frases mexicanas. Solo se detectan palabras completas. Desactiva las que quieras revisar sin cortarlas.</p>
+          <div class="row"><input id="newTerm" type="text" placeholder="Palabra o frase; separa varias con comas"><button id="addTerm" class="primary compact">Agregar</button></div>
+          <div id="terms" class="terms"></div>
+          <button id="saveTerms" class="secondary wide">Guardar diccionario</button>
+        </div>
+        <details class="card"><summary class="cardSummary">Pausas largas (opcional) <span id="pauseCount" class="status">0 pausas</span></summary>
+          <p class="hint">Busca silencios de 1.5 segundos o más. Se conserva un pequeño margen antes y después. Marca solo las que quieras quitar del video largo (solo aplican al modo Cortar).</p>
+          <div class="row"><button id="analyzePauses" class="secondary">Buscar pausas</button></div>
+          <div id="pauses" class="matches empty">Todavía no se ha analizado el audio.</div>
+        </details>
+        <div class="stepNav"><button type="button" class="secondary prev" data-go="1">← Atrás</button><button type="button" class="primary next" data-go="3">Siguiente: Momentos →</button></div>
+      </section>
 
-    <!-- PASO 4 -->
-    <section class="step" data-step="4" hidden>
-      <h2 class="stepTitle">Paso 4 · Exporta el video limpio</h2>
-      <p class="stepLead">Exporta el video largo sin groserías. Luego guárdalo donde quieras con “Guardar como…”.</p>
-      <div class="card"><div class="cardhead"><div><span class="number">4</span><h2>Exportar video limpio</h2></div></div>
-        <p class="hint">Elige qué hacer con las groserías seleccionadas. El archivo terminado se guarda en <code>exports</code>.</p>
-        <div class="row wrap censorMode">
-          <label class="inlineCheck"><input type="radio" name="censorMode" value="mute" checked> <span><strong>Silenciar</strong> — calla la palabra pero deja el video continuo, sin saltos (recomendado para IRL). Rápido: no reprocesa el video.</span></label>
-          <label class="inlineCheck"><input type="radio" name="censorMode" value="cut"> <span><strong>Cortar</strong> — quita ese tiempo del video (también elimina pausas seleccionadas). Puede notarse un brinco.</span></label>
+      <!-- PASO 3 -->
+      <section class="step" data-step="3" hidden>
+        <h2 class="stepTitle">Paso 3 · Encuentra y crea tus Shorts</h2>
+        <p class="stepLead">La IA busca los momentos más virales (30–60 s) y te propone un gancho. O crea uno exacto con los minutos. Los Shorts silencian groserías solos.</p>
+        <div class="card"><div class="cardhead"><div><span class="number">3</span><h2>Propuestas de Shorts</h2></div><span id="shortCount" class="status">0 propuestas</span></div>
+          <p class="hint">La IA busca los <b>momentos más virales de 30–60 s</b> (humor, pleitos, remates) y te propone un <b>gancho</b>. Con el motor <b>Nube</b> lee <b>TODO el directo</b> y elige como OpusClip (mucho mejor que el local). Los Shorts <b>ya silencian las groserías</b> y resaltan las palabras clave en los subtítulos. Revisa encuadre antes de publicar.</p>
+          <div class="row wrap" style="align-items:center;gap:10px;margin-bottom:10px">
+            <label>🧠 Motor
+              <select id="shortsEngine">
+                <option value="local">Local · gratis (básico)</option>
+                <option value="cloud:claude-sonnet-5-5">Nube · Sonnet 5.5</option>
+              </select>
+            </label>
+            <span id="shortsEngineStatus" class="muted"></span>
+          </div>
+          <div class="row wrap"><button id="suggestShorts" class="primary">🤖 Buscar momentos virales</button><button id="renderAllShorts" class="secondary">Crear todos los Shorts</button><span class="muted">30–60 s con gancho · o crea uno exacto abajo</span></div>
+          <details class="manualEditor" id="manualShortBox"><summary>➕ Crear Short de un momento exacto</summary>
+            <p class="hint">Escribe el <b>inicio</b> y el <b>final</b> del momento (en <b>mm:ss</b> como <code>12:00</code>, o en segundos). La app lo hace vertical con subtítulos y zoom. Debe durar entre 10 y 100 s. Aparece arriba en la lista; luego pulsa <b>Crear Short vertical</b>.</p>
+            <div class="row wrap"><label>Inicio <input id="msStart" type="text" placeholder="12:00"></label><label>Final <input id="msEnd" type="text" placeholder="12:52"></label></div>
+            <div class="row wrap"><input id="msHook" type="text" maxlength="40" placeholder="Gancho arriba del video (opcional)"><button id="addManualShort" class="primary">Crear Short de este momento</button></div>
+          </details>
+          <div id="shorts" class="shorts empty">Transcribe el video para generar propuestas.</div>
         </div>
-        <label class="field">🎙️ Audio <small style="font-weight:400;color:#8a968b">— marca lo que quieras aplicar</small></label>
-        <div class="audioPanel">
-          <label class="audioToggle"><input type="checkbox" id="auDenoise" checked><span><b>Reducir ruido</b><small>Quita zumbido y ruido de fondo</small></span></label>
-          <label class="audioToggle"><input type="checkbox" id="auCompress" checked><span><b>Nivelar picos</b><small>Compresor: la voz suena más pareja</small></span></label>
-          <label class="audioToggle"><input type="checkbox" id="auNormalize" checked><span><b>Normalizar volumen</b><small>Volumen parejo para YouTube (−16 LUFS)</small></span></label>
-          <label class="audioToggle" id="auVoiceWrap"><input type="checkbox" id="auVoice"><span><b>Realzar voz · Estudio (IA)</b><small>DeepFilterNet · calidad superior</small></span></label>
+        <div class="stepNav"><button type="button" class="secondary prev" data-go="2">← Atrás</button><button type="button" class="primary next" data-go="4">Siguiente: Exportar →</button></div>
+      </section>
+
+      <!-- PASO 4 -->
+      <section class="step" data-step="4" hidden>
+        <h2 class="stepTitle">Paso 4 · Exporta el video limpio</h2>
+        <p class="stepLead">Exporta el video largo sin groserías. Luego guárdalo donde quieras con “Guardar como…”.</p>
+        <div class="card"><div class="cardhead"><div><span class="number">4</span><h2>Exportar video limpio</h2></div></div>
+          <p class="hint">Elige qué hacer con las groserías seleccionadas. El archivo terminado se guarda en <code>exports</code>.</p>
+          <div class="row wrap censorMode">
+            <label class="inlineCheck"><input type="radio" name="censorMode" value="mute" checked> <span><strong>Silenciar</strong> — calla la palabra pero deja el video continuo, sin saltos (recomendado para IRL). Rápido: no reprocesa el video.</span></label>
+            <label class="inlineCheck"><input type="radio" name="censorMode" value="cut"> <span><strong>Cortar</strong> — quita ese tiempo del video (también elimina pausas seleccionadas). Puede notarse un brinco.</span></label>
+          </div>
+          <label class="field">🎙️ Audio <small style="font-weight:400;color:#8a968b">— marca lo que quieras aplicar</small></label>
+          <div class="audioPanel">
+            <label class="audioToggle"><input type="checkbox" id="auDenoise" checked><span><b>Reducir ruido</b><small>Quita zumbido y ruido de fondo</small></span></label>
+            <label class="audioToggle"><input type="checkbox" id="auCompress" checked><span><b>Nivelar picos</b><small>Compresor: la voz suena más pareja</small></span></label>
+            <label class="audioToggle"><input type="checkbox" id="auNormalize" checked><span><b>Normalizar volumen</b><small>Volumen parejo para YouTube (−16 LUFS)</small></span></label>
+            <label class="audioToggle" id="auVoiceWrap"><input type="checkbox" id="auVoice"><span><b>Realzar voz · Estudio (IA)</b><small>DeepFilterNet · calidad superior</small></span></label>
+          </div>
+          <div class="row wrap" style="margin-top:8px"><button id="getDf" type="button" class="secondary" hidden>⬇️ Activar voz Estudio (25 MB)</button><button id="auOff" type="button" class="secondary compact">Dejar audio sin tocar</button></div>
+          <p class="hint">“Realzar voz · Estudio” usa IA local (DeepFilterNet) para calidad de estudio; si no está instalada aparece el botón para activarla (25 MB). Si no marcas nada, el audio sale igual que el original (solo con las groserías silenciadas).</p>
+          <label class="field" for="exportQuality">Calidad de exportación</label>
+          <select id="exportQuality"></select>
+          <p class="hint">“Original” conserva el video tal cual (rápido, máxima fidelidad). 1080p/60fps reencoda (el 60fps real solo ayuda si el directo ya es 60fps).</p>
+          <p class="hint">🎬 Las <b>animaciones</b> (fade in/out) e <b>intro/outro</b> se eligen y previsualizan en el <b>Paso 1</b>, debajo del video. Lo que dejes ahí se aplica al exportar.</p>
+          <div class="row wrap" style="margin-top:4px;gap:16px">
+            <label class="inlineCheck mini"><input type="checkbox" id="exCensor"> 🤫 Silenciar TODAS las groserías del diccionario <small style="color:#8a968b">(aunque no las hayas marcado en el Paso 2; las marcadas se silencian siempre)</small></label>
+            <label class="inlineCheck mini"><input type="checkbox" id="exGpu"> ⚡ Render rápido <small style="color:#8a968b">(ideal para videos largos; calidad casi igual)</small></label>
+          </div>
+          <div class="row"><button id="export" class="primary">Exportar MP4</button><span id="exportInfo" class="muted"></span></div>
+          <div id="exportedFiles" class="exportedFiles"></div>
         </div>
-        <div class="row wrap" style="margin-top:8px"><button id="getDf" type="button" class="secondary" hidden>⬇️ Activar voz Estudio (25 MB)</button><button id="auOff" type="button" class="secondary compact">Dejar audio sin tocar</button></div>
-        <p class="hint">“Realzar voz · Estudio” usa IA local (DeepFilterNet) para calidad de estudio; si no está instalada aparece el botón para activarla (25 MB). Si no marcas nada, el audio sale igual que el original (solo con las groserías silenciadas).</p>
-        <label class="field" for="exportQuality">Calidad de exportación</label>
-        <select id="exportQuality"></select>
-        <p class="hint">“Original” conserva el video tal cual (rápido, máxima fidelidad). 1080p/60fps reencoda (el 60fps real solo ayuda si el directo ya es 60fps).</p>
-        <p class="hint">🎬 Las <b>animaciones</b> (fade in/out) e <b>intro/outro</b> se eligen y previsualizan en el <b>Paso 1</b>, debajo del video. Lo que dejes ahí se aplica al exportar.</p>
-        <div class="row wrap" style="margin-top:4px;gap:16px">
-          <label class="inlineCheck mini"><input type="checkbox" id="exCensor"> 🤫 Silenciar TODAS las groserías del diccionario <small style="color:#8a968b">(aunque no las hayas marcado en el Paso 2; las marcadas se silencian siempre)</small></label>
-          <label class="inlineCheck mini"><input type="checkbox" id="exGpu"> ⚡ Render rápido <small style="color:#8a968b">(ideal para videos largos; calidad casi igual)</small></label>
+        <div class="stepNav"><button type="button" class="secondary prev" data-go="3">← Atrás</button><span></span></div>
+      </section>
+
+      <details class="card settings" id="configFooter"><summary>⚙️ Configuración de motores</summary><p class="hint">La transcripción local usa whisper.cpp y un modelo multilingüe. El corte usa FFmpeg. Puedes indicar sus rutas aquí o poner los ejecutables en PATH.</p>
+        <label>FFmpeg <input id="ffmpegPath" type="text" placeholder="Ruta de ffmpeg.exe"></label>
+        <label>FFprobe <input id="ffprobePath" type="text" placeholder="Ruta de ffprobe.exe"></label>
+        <label>Whisper CLI <input id="whisperPath" type="text" placeholder="Ruta de whisper-cli.exe"></label>
+        <label>Modelo en español <input id="modelPath" type="text" placeholder="Ruta de ggml-large-v3-turbo-q5_0.bin"></label>
+        <label>Usuario o marca en Shorts <input id="brandHandle" type="text" placeholder="@TuCanal"></label>
+        <label>Inicial de marca <input id="brandMark" type="text" maxlength="8" placeholder="Opcional"></label>
+        <button id="saveConfig" class="secondary wide">Guardar rutas</button><div id="engineStatus" class="engineStatus"></div>
+        <div class="updateBox">
+          <div class="row wrap"><button id="checkUpdate" type="button" class="secondary">🔄 Buscar actualizaciones</button><span id="updateInfo" class="muted"></span></div>
+          <div class="row wrap" id="rollbackRow" hidden><button id="rollbackUpdate" type="button" class="secondary">↩️ Volver a la versión anterior</button><span id="rollbackInfo" class="muted"></span></div>
         </div>
-        <div class="row"><button id="export" class="primary">Exportar MP4</button><span id="exportInfo" class="muted"></span></div>
-        <div id="exportedFiles" class="exportedFiles"></div>
-      </div>
-      <div class="stepNav"><button type="button" class="secondary prev" data-go="3">← Atrás</button><span></span></div>
-    </section>
+      </details>
+    </aside>
 
     <!-- SECCIÓN APARTE: RESUMEN DEL DIRECTO (best-of con modelo pesado, bajo demanda) -->
     <section id="bestofSection" class="bestofSection" hidden>
@@ -283,20 +320,6 @@
       </div>
       <div id="rsRoot"></div>
     </section>
-
-    <details class="card settings" id="configFooter"><summary>⚙️ Configuración de motores</summary><p class="hint">La transcripción local usa whisper.cpp y un modelo multilingüe. El corte usa FFmpeg. Puedes indicar sus rutas aquí o poner los ejecutables en PATH.</p>
-      <label>FFmpeg <input id="ffmpegPath" type="text" placeholder="Ruta de ffmpeg.exe"></label>
-      <label>FFprobe <input id="ffprobePath" type="text" placeholder="Ruta de ffprobe.exe"></label>
-      <label>Whisper CLI <input id="whisperPath" type="text" placeholder="Ruta de whisper-cli.exe"></label>
-      <label>Modelo en español <input id="modelPath" type="text" placeholder="Ruta de ggml-large-v3-turbo-q5_0.bin"></label>
-      <label>Usuario o marca en Shorts <input id="brandHandle" type="text" placeholder="@TuCanal"></label>
-      <label>Inicial de marca <input id="brandMark" type="text" maxlength="8" placeholder="Opcional"></label>
-      <button id="saveConfig" class="secondary wide">Guardar rutas</button><div id="engineStatus" class="engineStatus"></div>
-      <div class="updateBox">
-        <div class="row wrap"><button id="checkUpdate" type="button" class="secondary">🔄 Buscar actualizaciones</button><span id="updateInfo" class="muted"></span></div>
-        <div class="row wrap" id="rollbackRow" hidden><button id="rollbackUpdate" type="button" class="secondary">↩️ Volver a la versión anterior</button><span id="rollbackInfo" class="muted"></span></div>
-      </div>
-    </details>
   </main>
   <script src="/app.js"></script>
   <script src="/vision.js"></script>
