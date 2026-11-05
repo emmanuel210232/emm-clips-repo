@@ -154,7 +154,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.27.13';
+const APP_VERSION = '1.28.0';
 // EMM_UPDATE_URL solo sirve para PROBAR con un servidor de actualizaciones falso (nunca contra main).
 const UPDATE_RAW = process.env.EMM_UPDATE_URL || 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 async function fetchText(url){const r=await fetch(url,{signal:AbortSignal.timeout(20000),cache:'no-store'});if(!r.ok)throw Error('No se pudo descargar ('+r.status+')');return r.text();}
