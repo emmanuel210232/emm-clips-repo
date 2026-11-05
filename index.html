@@ -230,6 +230,12 @@
         <div class="row wrap" style="margin-top:4px;gap:16px">
           <label class="inlineCheck mini"><input type="checkbox" id="exCensor"> 🤫 Silenciar TODAS las groserías del diccionario <small style="color:#8a968b">(aunque no las hayas marcado en el Paso 2; las marcadas se silencian siempre)</small></label>
           <label class="inlineCheck mini"><input type="checkbox" id="exGpu"> ⚡ Render rápido <small style="color:#8a968b">(ideal para videos largos; calidad casi igual)</small></label>
+          <label class="inlineCheck mini"><input type="checkbox" id="exTeaser"> 🎞️ Empezar con un avance de los mejores momentos (≈1 min) <small style="color:#8a968b">(6 pedazos de ~10 s en blanco y negro con “PRÓXIMAMENTE...”; después sigue el video)</small></label>
+        </div>
+        <div id="teaserBox" class="teaserBox" hidden>
+          <p class="hint">El avance usa los mejores momentos del <b>Resumen del directo</b> (si ya lo hiciste); si no, los momentos con más energía en el audio. Las groserías se silencian igual que en el video. En modo <b>Silenciar</b> el avance obliga a volver a codificar todo el video: tarda más, con la misma calidad alta.</p>
+          <div class="row wrap"><button id="teaserPreview" type="button" class="secondary compact">👀 Ver qué momentos entran</button><span id="teaserInfo" class="muted"></span></div>
+          <div id="teaserList" class="teaserList"></div>
         </div>
         <div class="row"><button id="export" class="primary">Exportar MP4</button><span id="exportInfo" class="muted"></span></div>
         <div id="exportedFiles" class="exportedFiles"></div>
@@ -272,6 +278,7 @@
         <p class="hint">Desmarca los que no quieras, reordénalos con ↑↓, edita el gancho, o ▶ para verlo. Al final, mándalos al editor para ponerles groserías/intro/transiciones y exportar.</p>
         <div id="bestofList" class="bestofList"></div>
         <div class="row" style="margin-top:14px;gap:10px"><button id="bestofToEditor" class="primary big">✅ Mandar al editor con los aprobados →</button><span class="muted" id="bestofSel"></span></div>
+        <label class="inlineCheck mini" style="margin-top:8px"><input type="checkbox" id="bestofTeaser" checked> 🎞️ Empezar el resumen con un avance de los mejores momentos (≈1 min, blanco y negro, “PRÓXIMAMENTE...”)</label>
       </div>
     </section>
 

@@ -772,8 +772,9 @@ $('bestofToEditor').onclick=safe(()=>{
   const cutRadio=document.querySelector('input[name="censorMode"][value="cut"]'); if(cutRadio){cutRadio.checked=true;cutRadio.dispatchEvent(new Event('change',{bubbles:true}));}
   if($('exCensor'))$('exCensor').checked=true;
   if($('exGpu'))$('exGpu').checked=true;
+  if($('exTeaser')&&$('bestofTeaser')){ $('exTeaser').checked=$('bestofTeaser').checked; syncTeaserBox(); teaserFrags=null; }
   switchMode('cortos'); goStep(1); syncRemoved().then(()=>buildTimeline()); buildTimeline();
-  notice('✅ '+approved.length+' momentos mandados al editor, con transición entre cada uno. Ya dejé activado silenciar groserías y render por GPU: ve a “Exportar” y dale Exportar MP4.');
+  notice('✅ '+approved.length+' momentos mandados al editor, con transición entre cada uno. Ya dejé activado silenciar groserías y render por GPU'+($('bestofTeaser')?.checked?', y el avance “PRÓXIMAMENTE...” al inicio':'')+': ve a “Exportar” y dale Exportar MP4.');
 });
 $('rmSilence').onclick=safe(async()=>{
   if(!state.project)throw Error('Abre un video primero.');
@@ -830,8 +831,42 @@ $('export').onclick=safe(async()=>{await selectionSave;
   const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};
   const smooth=edited && !!$('silSmooth')?.checked;
   const censor=!!$('exCensor')?.checked, gpu=!!$('exGpu')?.checked;
-  const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,smooth,censor,gpu,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});
+  const teaser=teaserRequest(segments);
+  const r=await api('/api/export',{selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,smooth,censor,gpu,teaser,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8});
   notice(edited?`Exportando tu edición (${segments.length} clip${segments.length>1?'s':''}). El archivo aparecerá en exports.`:(mode==='mute'?`Silenciando ${r.cuts} ${r.cuts===1?'grosería':'groserías'}. El archivo aparecerá en exports.`:`Exportación iniciada con ${r.cuts} cortes. El archivo aparecerá en exports.`));});
+// ===== Intro de avance ("PRÓXIMAMENTE...") =====
+// Si el usuario revisó los momentos con "Ver qué momentos entran", se exportan ESOS (mientras no cambie la edición).
+let teaserFrags=null, teaserFp='';
+const segFp=segs=>JSON.stringify((segs||[]).map(s=>[s.start,s.end]));
+function currentSegments(){ return clipsEdited()?clips.map(c=>({start:+c.start.toFixed(3),end:+c.end.toFixed(3)})):null; }
+function teaserRequest(segments){
+  if(!$('exTeaser')?.checked) return null;
+  const fp=segFp(segments);
+  return {on:true, frags:(teaserFrags&&teaserFp===fp)?teaserFrags.map(f=>({start:f.start,end:f.end,label:f.label})):null};
+}
+function syncTeaserBox(){ const b=$('teaserBox'); if(b) b.hidden=!$('exTeaser')?.checked; try{ localStorage.setItem('eirl_teaser',$('exTeaser')?.checked?'1':'0'); }catch{} }
+function renderTeaserList(){
+  const box=$('teaserList'); if(!box) return; box.replaceChildren();
+  (teaserFrags||[]).forEach((f,i)=>{
+    const row=document.createElement('div'); row.className='teaserItem';
+    const t=document.createElement('span'); t.textContent=`${i+1}. ${fmt(f.start)} → ${fmt(f.end)}`+(f.label?` · ${f.label}`:'');
+    const go=document.createElement('button'); go.type='button'; go.className='tl-btn'; go.textContent='▶'; go.title='Ver este pedazo';
+    go.onclick=()=>{ goStep(1); playAt(f.start,f.end-f.start).catch(()=>{}); };
+    const del=document.createElement('button'); del.type='button'; del.className='tl-btn danger'; del.textContent='🗑️'; del.title='Quitar del avance';
+    del.onclick=()=>{ teaserFrags.splice(i,1); renderTeaserList(); };
+    row.append(go,t,del); box.append(row);
+  });
+  const info=$('teaserInfo'); if(info) info.textContent=teaserFrags?(teaserFrags.length<2?'Se necesitan al menos 2 momentos.':`${teaserFrags.length} momentos · ≈${Math.round(teaserFrags.reduce((a,f)=>a+(f.end-f.start),0)-0.5*(teaserFrags.length-1))} s`):'';
+}
+if($('exTeaser')){ try{ $('exTeaser').checked=localStorage.getItem('eirl_teaser')==='1'; }catch{} $('exTeaser').onchange=syncTeaserBox; syncTeaserBox(); }
+if($('teaserPreview')) $('teaserPreview').onclick=safe(async()=>{
+  const btn=$('teaserPreview'); const segments=currentSegments();
+  try{ btn.disabled=true; $('teaserInfo').textContent='Buscando los mejores momentos… (la primera vez en un directo largo tarda 1-2 min)';
+    const r=await api('/api/teaser/plan',{segments});
+    teaserFrags=r.fragments; teaserFp=segFp(segments); renderTeaserList();
+    if(!r.fromBestof) notice('Avance armado con la energía del audio. Si haces el “Resumen del directo”, usará esos momentos (suelen ser mejores).');
+  } finally { btn.disabled=false; }
+});
 $('cancelJob').onclick=safe(async()=>{await api('/api/job/cancel',{});notice('Cancelando el proceso…');});
 $('checkUpdate').onclick=async()=>{const info=$('updateInfo');try{$('checkUpdate').disabled=true;info.replaceChildren();info.textContent='Revisando…';const r=await api('/api/update/check',{});info.replaceChildren();if(!r.hasUpdate){info.textContent='✅ Estás en la última versión ('+r.current+').';return;}const txt=document.createElement('span');txt.textContent='Nueva versión '+r.latest+(r.notes?' · '+r.notes:'')+'  ';const go=document.createElement('button');go.className='primary compact';go.type='button';go.textContent='Actualizar ahora';go.onclick=async()=>{try{go.disabled=true;go.textContent='Actualizando…';const a=await api('/api/update/apply',{});info.replaceChildren();info.textContent='✅ '+a.message;}catch(e){info.textContent='Error al actualizar: '+e.message;}};info.append(txt,go);}catch(e){info.replaceChildren();info.textContent='No se pudo revisar: '+e.message;}finally{$('checkUpdate').disabled=false;}};
 // ====== COMPROBACIÓN DE REQUISITOS (para saber si esta PC tiene todo) ======
