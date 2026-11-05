@@ -752,7 +752,7 @@ function startEditView(){
   v.play().catch(()=>{});ev.schedule();
   const nm=plan.mute.length,dur=fmt(TL.totalOut(plan.clips));
   const txt=plan.mode==='mute'?('Vista de la edición · modo Silenciar: video completo'+(nm?' con '+nm+' grosería'+(nm>1?'s':'')+' en silencio':' (no hay groserías marcadas)'))
-    :('Vista de la edición · dura '+dur+(plan.skipped?' · se saltan '+plan.skipped+' parte'+(plan.skipped>1?'s':'')+' quitada'+(plan.skipped>1?'s':''):'')+(nm?' · '+nm+' grosería'+(nm>1?'s':'')+' en silencio':''));
+    :('Vista de la edición · dura '+dur+(plan.skipped?' · se salta'+(plan.skipped>1?'n ':' ')+plan.skipped+' parte'+(plan.skipped>1?'s':'')+' quitada'+(plan.skipped>1?'s':''):'')+(nm?' · '+nm+' grosería'+(nm>1?'s':'')+' en silencio':''));
   const b=$('editViewBadge');if(b){b.textContent='👁️ '+txt+' · Esc para salir';b.hidden=false;}
   const btn=$('tlEditView');if(btn){btn.textContent='⏹ Salir de la vista';btn.classList.add('active');}
   notice('👁️ '+txt+'. Así quedará al exportar.');}
