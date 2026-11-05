@@ -38,7 +38,7 @@ Con `-ss <antes> -i` + `trim` **relativo** (método de main), en MPEG-TS el cort
 
 ## 4. Lo que quedó pendiente
 ### Por verificar (hecho pero sin probar de punta a punta)
-- Export completo con corte exacto: la prueba A/B/C **no verificó nada** (el puerto 4188 estaba ocupado por un servidor viejo). Repetirla con el puerto libre.
+- Export completo con corte exacto: **caso A sí se corrió** con el código nuevo (fuente MPEG-TS 1080p60 de 120 s, Cortar + avance): duración exacta (119.5 s), **cuadro exacto** (error máximo 17 ms = 1 cuadro en 99 destellos del video y 20 del avance), 0 errores de decodificación, grosería callada. Sale `ok:false` solo porque la sincronía máxima fue 21.4 ms (límite 17.2 ms): coincide con el desfase entre el inicio del audio y el del video de la fuente; el arreglo (restar el mismo inicio absoluto a audio y video, ver `REVISION_FINAL.md` → `lib/seek.js` punto 3) falta aplicarlo y medirlo. Casos B (Silenciar) y C (tandas) **no** se corrieron con el código nuevo (la corrida del agente chocó en el puerto 4188 con esta).
 - "Exportar frame" con el servidor real.
 - Interfaz de miniaturas y cola en el navegador; subtítulos del Short contra la voz con una transcripción real. (La cola con 2 Shorts reales **sí pasó**: duración exacta, primer cuadro correcto y sincronía 4.7 ms.)
 - Avance de la IA con la API real (solo se probó con respuestas de ejemplo).
