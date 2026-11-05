@@ -410,7 +410,11 @@ function hideScrubThumb(){const img=$('scrubThumb');if(img)img.classList.remove(
 function scrubEndAt(clientX){const v=$('video');if(!v){hideScrubThumb();return;}let src;try{src=outToSource(tlOutFromX(clientX));}catch{src=v.currentTime;}
   const done=()=>{hideScrubThumb();v.removeEventListener('seeked',done);};v.addEventListener('seeked',done);setTimeout(done,500);
   try{v.currentTime=src;}catch{hideScrubThumb();}positionHead();updateTlTime();}
-function tlSeekFromX(clientX){reviewClip=false;const inner=tlInner();if(!inner)return;const o=tlOutFromX(clientX);const src=outToSource(o);const v=$('video');if(v){try{if(tlDrag){v.pause();showScrubThumb(src);if(v.fastSeek){v.fastSeek(src);}else{v.currentTime=src;}}else{v.currentTime=src;}}catch{}}positionHead();updateTlTime();}
+// Al ARRASTRAR: pedir un cuadro nuevo en cada movimiento cancelaba el anterior antes de que cargara y el video se
+// quedaba congelado hasta soltar. Ahora se pide el siguiente solo cuando el actual ya se mostró (siempre el más reciente).
+let _dsBusy=false,_dsNext=null;
+function dragSeek(v,src){_dsNext=src;if(_dsBusy)return;_dsBusy=true;const go=()=>{const t=_dsNext;_dsNext=null;const fin=()=>{v.removeEventListener('seeked',fin);clearTimeout(tm);if(_dsNext!=null&&tlDrag)go();else _dsBusy=false;};const tm=setTimeout(fin,1500);v.addEventListener('seeked',fin);try{v.currentTime=t;}catch{fin();}};go();}
+function tlSeekFromX(clientX){reviewClip=false;const inner=tlInner();if(!inner)return;const o=tlOutFromX(clientX);const src=outToSource(o);const v=$('video');if(v){try{if(tlDrag){v.pause();dragSeek(v,src);}else{v.currentTime=src;}}catch{}}positionHead();updateTlTime();}
 function updateTlTime(){const v=$('video'),el=$('tlTime');if(!el)return;const src=(v?.currentTime||0)+(playerSourceOffset||0);let o=sourceToOut(src);if(o==null)o=0;el.textContent=fmt(o)+' / '+fmt(totalOut());}
 // Reproducción EDITADA: al reproducir, salta automáticamente los huecos borrados.
 let editPlayGuard=0;
