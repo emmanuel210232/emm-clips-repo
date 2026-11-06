@@ -1518,7 +1518,12 @@ function needsPreview(p=project?.videoPath){
 }
 function videoCodec(p,sel='v:0'){ const bin=readiness().ffprobe; if(!bin) return ''; const o=spawnSync(bin,['-v','error','-select_streams',sel,'-show_entries','stream=codec_name','-of','default=nk=1:nw=1',p],{encoding:'utf8',windowsHide:true}); return String(o.stdout||'').trim().split(/\r?\n/)[0]||''; }
 // Genera la vista previa reproducible en el navegador (solo para VER; el export SIEMPRE usa el original).
+// Directos que se reconectaron: el demuxer de MPEG-TS avisa "timestamp discontinuity" al leerlos. Se aprovecha la
+// lectura completa de la vista previa (no cuesta nada extra) para detectarlo y avisar al usuario.
+let discSeen=0;
+const watchDisc = cb => s => { const m=String(s).match(/timestamp discontinuity|Non-monoton/gi); if(m) discSeen+=m.length; return cb(s); };
 async function buildPreviewFile(bin){
+  discSeen=0;
   const input=project.videoPath;
   const total=await durationOf(input).catch(()=>0);
   // Limpia vistas previas anteriores para no acumular archivos grandes.
@@ -1534,11 +1539,11 @@ async function buildPreviewFile(bin){
     if(videoCodec(input,'a:0')==='aac') tries.push(remux(['-c:a','copy','-bsf:a','aac_adtstoasc']));
     tries.push(remux(['-c:a','aac','-b:a','160k']), scaled);
     for(let i=0;i<tries.length;i++){
-      try{ await run(bin,tries[i],progress(total,'Vista previa')); break; }
+      try{ await run(bin,tries[i],watchDisc(progress(total,'Vista previa'))); break; }
       catch(e){ if(job.cancelRequested||i===tries.length-1) throw e; }
     }
-  } else { await run(bin,scaled,progress(total,'Vista previa')); }
-  if (project?.videoPath===input) { project.previewPath=output; writeJson(files.project,project); }
+  } else { await run(bin,scaled,watchDisc(progress(total,'Vista previa'))); }
+  if (project?.videoPath===input) { project.previewPath=output; project.tsJumps=discSeen||0; writeJson(files.project,project); }
 }
 // Genera miniaturas (filmstrip) + onda de audio para la línea de tiempo, leyendo el ORIGINAL.
 async function buildFilmstripFiles(bin){

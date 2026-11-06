@@ -600,6 +600,7 @@ function render() {
   if(av){av.disabled=!state.dfReady;if(!state.dfReady)av.checked=false;}
   if(avWrap)avWrap.classList.toggle('disabled',!state.dfReady);
   if(gd)gd.hidden=!!state.dfReady;
+  if(p&&p.tsJumps&&window._tsWarned!==p.videoPath){window._tsWarned=p.videoPath;notice('⚠️ Este directo tiene '+p.tsJumps+' salto(s) en sus marcas de tiempo (¿se reconectó la transmisión?). Revisa con “Vista de la edición” que los cortes caigan donde quieres antes de exportar.',true);}
   const rb=$('readyBar');const miss=[];if(!ready.ffmpeg)miss.push('FFmpeg');if(!ready.whisper)miss.push('Whisper');if(!ready.model)miss.push('modelo de voz');rb.hidden=false;if(miss.length){rb.className='readyBar warn';rb.textContent='⚠️ Falta configurar: '+miss.join(', ')+'. Ábrelo en “⚙️ Configuración” (panel izquierdo, abajo).';}else{rb.className='readyBar ok';rb.textContent=p?'✅ Todo listo. Transcribe el video y busca tus momentos.':'✅ Todo listo. Abre un video para empezar.';if(window._rbShown){rb.hidden=true;}else if(!window._rbTimer){window._rbTimer=setTimeout(()=>{window._rbShown=true;rb.hidden=true;},6000);}}
   const j=state.job;$('exportInfo').textContent=j.status==='running'?j.message:j.status==='done'?j.message:'';
   const running=j.status==='running';
