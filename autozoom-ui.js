@@ -32,9 +32,47 @@
       clips = AZ.planAutoZoom(clips, { level: level.value, words: words(), segments: (state.transcript || []) });
       resetSel(); saveClips(); syncRemoved(); buildTimeline();
       const n = clips.filter(c => c.zoomAuto && AZ.zoomValue(c) > 1).length;
-      say(`🎥 Puse ${n} acercamiento(s) alternados en los cortes (${level.options[level.selectedIndex].text}). Se ven al exportar; quita los que no quieras con 🔍 o Ctrl+Z.`);
+      say(`🎥 Puse ${n} acercamiento(s) alternados en los cortes (${level.options[level.selectedIndex].text}). Ahora los centro en las caras… (puedes seguir editando)`);
+      centerOnFaces();
     } catch (e) { say(e.message, true); }
   };
+  // CENTRAR EN LAS CARAS: un cuadro del ORIGINAL a la mitad de cada clip con zoom automático → MediaPipe (el mismo
+  // FaceLandmarker de los Shorts, vision.js) → centro del grupo de caras, con la cara un poco arriba del centro.
+  // En segundo plano; si no hay internet o no hay caras, el zoom se queda al centro. Solo toca clips que no cambiaron.
+  let centering = 0;
+  async function centerOnFaces() {
+    const run = ++centering;
+    if (typeof loadVision !== 'function') return;
+    let vision; try { vision = await loadVision(); } catch { return say('No pude cargar el detector de caras (¿sin internet?). Los zooms quedan al centro.', true); }
+    const todo = clips.filter(c => c.zoomAuto && AZ.zoomValue(c) > 1).map(c => ({ start: c.start, end: c.end }));
+    let done = 0, centered = 0;
+    const one = async k => {
+      const t = (k.start + k.end) / 2;
+      const img = new Image(); img.crossOrigin = 'anonymous';
+      img.src = `/api/thumbs/frame?t=${t.toFixed(3)}&w=640`;
+      // onload (no img.decode(): con la ventana minimizada el navegador lo deja esperando para siempre)
+      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(Error('frame')); setTimeout(() => rej(Error('timeout')), 20000); });
+      // Personas primero (pose: ubica la cabeza aunque esté lejos o de perfil, como en los Shorts); si no hay, caras.
+      let faces = [];
+      try { faces = ((vision.pose.detect(img).landmarks) || []).map(lm => { const p = personOf(lm); return { cx: p.hx, cy: p.hy, w: Math.max(0.02, p.sw) }; }); } catch {}
+      if (!faces.length) faces = ((vision.face.detect(img).faceLandmarks) || []).map(lm => { let x0 = 1, x1 = 0, y0 = 1, y1 = 0; for (const p of lm) { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; } return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0 }; });
+      if (!faces.length) return;
+      const W = faces.reduce((a, f) => a + f.w, 0) || 1; // caras más grandes (más cerca) pesan más
+      const cx = faces.reduce((a, f) => a + f.cx * f.w, 0) / W, cy = faces.reduce((a, f) => a + f.cy * f.w, 0) / W;
+      if (run !== centering) return;
+      const c = clips.find(x => Math.abs(x.start - k.start) < 1e-3 && Math.abs(x.end - k.end) < 1e-3 && x.zoomAuto);
+      if (!c) return;
+      const ctr = AZ.clampCenter(AZ.zoomValue(c), cx, cy + 0.06);
+      c.zoomCx = ctr.cx; c.zoomCy = ctr.cy; centered++;
+    };
+    for (let i = 0; i < todo.length; i += 2) { // 2 a la vez (el servidor saca 2 cuadros en paralelo)
+      if (run !== centering) return;
+      await Promise.all(todo.slice(i, i + 2).map(k => one(k).catch(() => {})));
+      done = Math.min(todo.length, i + 2);
+      if (done % 10 === 0 || done === todo.length) { saveClips(); buildTimeline(); }
+    }
+    if (run === centering) say(`🎯 Centré ${centered} de ${todo.length} zooms en las caras. Velos con ▶ o "Vista de la edición".`);
+  }
   // VISTA PREVIA del zoom en el reproductor: mientras el video pasa por un clip con zoom (automático o a mano), el
   // reproductor se acerca igual que el export (aproximado: mismo factor y centro), sin tener que exportar.
   const video = document.getElementById('video');
@@ -60,6 +98,7 @@
     try {
       ensureClips();
       if (!clips.some(c => c.zoomAuto || c.autoSplit)) throw Error('No hay zooms automáticos que quitar.');
+      centering++; // detiene un centrado en curso
       pushUndo('Quitar zooms automáticos');
       clips = AZ.removeAutoZoom(clips);
       resetSel(); saveClips(); syncRemoved(); buildTimeline();
