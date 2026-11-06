@@ -94,7 +94,7 @@ function rsChannelsCard(s, tracked) {
     return `<div class="rsCh ${st}">
       ${c.thumb ? `<img class="rsAvatar" src="${rsEsc(c.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="rsAvatar"></span>'}
       <div class="rsChMain">
-        <div class="rsChTitle"><a href="https://www.youtube.com/channel/${rsEsc(c.id)}" target="_blank" rel="noopener">${rsEsc(c.title)}</a>${c.mine ? ' <span class="rsTag mine">⭐ Mi canal</span>' : ''}${st === 'pending' ? ' <span class="rsTag warn">¿Es de Shifu?</span>' : ''}</div>
+        <div class="rsChTitle"><a href="https://www.youtube.com/channel/${rsEsc(c.id)}" target="_blank" rel="noopener">${rsEsc(c.title)}</a>${c.mine ? ' <span class="rsTag mine">⭐ Mi canal</span>' : ''}${st === 'pending' ? ' <span class="rsTag warn">¿Es de este streamer?</span>' : ''}</div>
         <div class="muted">${c.subs == null ? 'subs ocultos' : rsNum(c.subs) + ' subs'} · ${rsNum(c.videoCount)} videos${c.hits ? ` · salió ${c.hits}× en la búsqueda` : ''}${c.analyzed ? ` · ${c.analyzed} analizados` : ''}${c.analyzed && c.shifuShare != null && !c.dedicated ? ' · canal general (solo videos de Shifu)' : ''}</div>
         ${st === 'pending' && c.samples?.length ? `<div class="muted rsSamples">Ej.: ${c.samples.map(t => '“' + rsEsc(t) + '”').join(' · ')}</div>` : ''}
       </div>
@@ -107,16 +107,19 @@ function rsChannelsCard(s, tracked) {
   const when = s.refreshedAt ? new Date(s.refreshedAt).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : 'nunca';
   return `<div class="card"><div class="cardhead"><div><span class="number">2</span><h2>Canales</h2></div><span class="status">${tracked} en seguimiento</span></div>
     <div class="row wrap" style="gap:8px">
-      <button id="rsDiscover" class="primary" type="button" data-busy>🔎 Buscar canales de Shifu</button>
-      <span class="muted">Busca “Adriano Zendejas”, “Maestro Shifu”, “Shifu Kick”… (usa ~500 de las 10,000 unidades del día)</span>
+      <label style="flex:1 1 260px">Streamer <input id="rsTarget" type="text" value="${rsEsc((s.target || []).join(', '))}" placeholder="Nombre del streamer, otro nombre"></label><button id="rsTargetSave" class="secondary compact" type="button">Cambiar</button>
+    </div>
+    <div class="row wrap" style="gap:8px;margin-top:8px">
+      <button id="rsDiscover" class="primary" type="button" data-busy>🔎 Buscar canales que lo resuben</button>
+      <span class="muted">Busca ${rsEsc((s.target || []).map(x => '“' + x + '”').join(', '))}… (usa ~500 de las 10,000 unidades del día)</span>
     </div>
     <div class="row wrap" style="gap:8px;margin-top:10px">
       <input id="rsAddInput" type="text" placeholder="Agregar canal: link del canal o @usuario" style="flex:1;min-width:220px">
       <button id="rsAdd" class="secondary" type="button">➕ Agregar</button>
       <button id="rsAddMine" class="secondary" type="button" title="Tu canal se compara aparte, no se mezcla con la competencia">⭐ Es mi canal</button>
     </div>
-    ${pending ? `<p class="hint" style="margin:12px 0 0">Hay <b>${pending}</b> canal(es) por revisar (“¿Es de Shifu?”): dales <b>Seguir</b> si resuben a Shifu o <b>Ignorar</b> si no.</p>` : ''}
-    <div class="rsChList">${rows || '<p class="muted" style="padding:14px">Aún no hay canales. Dale a “Buscar canales de Shifu” o agrega uno.</p>'}</div>
+    ${pending ? `<p class="hint" style="margin:12px 0 0">Hay <b>${pending}</b> canal(es) por revisar (“¿Es de este streamer?”): dales <b>Seguir</b> si lo resuben o <b>Ignorar</b> si no.</p>` : ''}
+    <div class="rsChList">${rows || '<p class="muted" style="padding:14px">Aún no hay canales. Dale a “Buscar canales que lo resuben” o agrega uno.</p>'}</div>
     ${ignored ? `<button type="button" class="linkBtn" id="rsToggleIgnored">${rsShowIgnored ? 'Ocultar' : 'Mostrar'} ${ignored} ignorado(s)</button>` : ''}
     <div class="row wrap rsRefreshRow">
       <button id="rsRefresh" class="primary big" type="button" data-busy ${tracked ? '' : 'disabled'}>🔄 Actualizar datos de ${tracked} canal(es)</button>
@@ -153,7 +156,7 @@ function rsResultsCard(a) {
   const titleTable = `<table class="rsTable"><thead><tr><th></th><th>Los que pegan (top 25 %)</th><th>El resto</th>${t.mine ? '<th>Los tuyos</th>' : ''}</tr></thead><tbody>
     ${row('Largo (caracteres)', 'length')}${row('Palabras en MAYÚSCULAS', 'capsWords')}${row('% de letras en mayúscula', 'capsRatio', rsPct)}${row('Emojis', 'emojis')}
     ${row('Con números', 'hasNumber', rsPct)}${row('Mencionan dinero ($, mil…)', 'hasMoney', rsPct)}${row('Con ¿pregunta?', 'hasQuestion', rsPct)}${row('Con ¡exclamación!', 'hasExclaim', rsPct)}
-    ${row('Con separador ( | • – )', 'hasSeparator', rsPct)}${row('Dicen “Shifu/Zendejas”', 'mentionsShifu', rsPct)}${row('Hashtags', 'hashtags')}</tbody></table>`;
+    ${row('Con separador ( | • – )', 'hasSeparator', rsPct)}${row('Dicen el nombre del streamer', 'mentionsShifu', rsPct)}${row('Hashtags', 'hashtags')}</tbody></table>`;
   const words = f.words.length ? f.words.map(w => `<span class="rsChip" title="En ${w.top} de los que pegan vs ${w.rest} del resto">${rsEsc(w.word)} <b>×${w.lift}</b></span>`).join('') : '<span class="muted">Aún no hay suficientes videos para ver palabras con patrón.</span>';
   const tags = f.hashtags.length ? f.hashtags.map(h => `<span class="rsChip" title="${h.uses} usos, ${h.inTop} en los que pegan">${rsEsc(h.tag)} <b>${h.inTop}/${h.uses}</b></span>`).join('') : '<span class="muted">Casi nadie usa hashtags en este formato.</span>';
   const durs = f.durations.map(d => `<div class="rsBar"><span>${d.bucket}</span><div><i style="width:${Math.min(100, d.score / Math.max(...f.durations.map(x => x.score), 1) * 100)}%"></i></div><b>×${d.score}</b><small>${d.n}</small></div>`).join('');
@@ -247,6 +250,7 @@ function rsBind() {
   on('rsKeyChange', () => { const e = $('rsKeyEdit'); if (e) e.hidden = !e.hidden; });
   on('rsKeySave', async () => { const k = $('rsKey').value.trim(); if (!k) return notice('Pega la API key primero.', true); const b = $('rsKeySave'); b.disabled = true; b.textContent = 'Probando…'; await rsAction('/api/research/key', { key: k }, '✅ API key de YouTube guardada y funcionando.'); });
   on('rsDiscover', () => rsAction('/api/research/discover', {}).then(rsWatch));
+  on('rsTargetSave', () => rsAction('/api/research/target', { names: (document.getElementById('rsTarget') || {}).value || '' }));
   const add = mine => { const v = $('rsAddInput').value.trim(); if (!v) return notice('Pega el link del canal o su @usuario.', true); rsAction('/api/research/channel', { input: v, mine }, mine ? '⭐ Tu canal quedó marcado: se compara aparte.' : '✅ Canal agregado. Dale a “Actualizar datos”.'); };
   on('rsAdd', () => add(false)); on('rsAddMine', () => add(true));
   on('rsToggleIgnored', () => { rsShowIgnored = !rsShowIgnored; rsRender(); });

@@ -1752,7 +1752,7 @@ function scanSensitive(opts){
     }catch(e){ job={status:job.cancelRequested?'cancelled':'error',message:e.message,progress:'',percent:0}; }
   })();
 }
-// ===== INVESTIGAR COMPETENCIA (canales que resuben a Shifu) =====
+// ===== INVESTIGAR COMPETENCIA (canales que resuben al streamer elegido; por defecto Shifu) =====
 // Datos PÚBLICOS de YouTube (API key gratis del usuario, guardada SOLO en data/youtube.json) + análisis local
 // (lib/research.js) + la nube de Claude para la "fórmula del nicho" y para generar título/desc/miniatura.
 const research = require('./lib/research');
@@ -1772,7 +1772,7 @@ function researchState() {
   const d = quotaDay();
   return {
     keySet: !!ytConf.key, quota: { units: rs.quota.date === d ? rs.quota.units : 0, limit: 10000 },
-    channels: rs.channels, refreshedAt: rs.refreshedAt, analysis: rs.analysis, insights: rs.insights, generated: rs.generated,
+    channels: rs.channels, refreshedAt: rs.refreshedAt, analysis: rs.analysis, insights: rs.insights, generated: rs.generated, target: researchTarget(),
     job: researchJob, cloud: { keySet: !!cloud.key, model: cloud.model },
     video: project?.videoPath ? path.basename(project.videoPath) : '', hasTranscript: Array.isArray(transcript) && transcript.length > 0,
   };
@@ -1793,9 +1793,14 @@ function upsertChannel(c, extra = {}) {
   else rs.channels.push({ status: 'pending', hits: 0, ...c, ...extra });
   return rs.channels.find(x => x.id === c.id);
 }
-const DEFAULT_QUERIES = [['Adriano Zendejas', 'relevance'], ['Maestro Shifu', 'relevance'], ['Maestro Shifu', 'viewCount'], ['Shifu Kick', 'relevance'], ['Adriano Zendejas Kick', 'date']];
+// Streamer que se investiga (configurable en la pantalla de Investigar; antes era fijo Shifu).
+const researchTarget = () => { const t = rs.target && Array.isArray(rs.target.names) && rs.target.names.filter(Boolean).length ? rs.target.names.filter(Boolean) : ['Maestro Shifu', 'Adriano Zendejas']; return t; };
+const targetLabel = () => researchTarget().join(' / ');
+research.setTarget(researchTarget());
+function targetQueries() { const n = researchTarget(); return [...n.map(x => [x, 'relevance']), [n[0], 'viewCount'], [n[0] + ' Kick', 'relevance'], ...(n[1] ? [[n[1] + ' Kick', 'date']] : [])].slice(0, 6); }
 async function discoverChannels(progress) {
   const client = yt(); const hits = new Map();
+  const DEFAULT_QUERIES = targetQueries();
   for (let i = 0; i < DEFAULT_QUERIES.length; i++) {
     const [q, order] = DEFAULT_QUERIES[i];
     progress({ message: `Buscando "${q}" en YouTube…`, percent: Math.round(i / DEFAULT_QUERIES.length * 70) });
@@ -1808,7 +1813,7 @@ async function discoverChannels(progress) {
   let added = 0;
   for (const c of details) {
     const h = hits.get(c.id); const isNew = !rs.channels.some(x => x.id === c.id);
-    const auto = research.SHIFU_RE.test(c.title) || research.SHIFU_RE.test(c.description) || h.n >= 3;
+    const auto = research.targetRe().test(c.title) || research.targetRe().test(c.description) || h.n >= 3;
     upsertChannel(c, { hits: h.n, samples: h.samples, ...(isNew ? { status: auto ? 'track' : 'pending' } : {}) });
     if (isNew) added++;
   }
@@ -1863,7 +1868,7 @@ function statsDigest(f) {
 async function buildInsights(progress, model) {
   const a = rs.analysis; if (!a || !a.totals.videos) throw Error('Primero actualiza los datos de los canales.');
   const content = [];
-  const intro = `Eres analista de YouTube experto en el nicho de "resubidas" de streamers IRL mexicanos. Analizo canales que resuben clips de Adriano Zendejas "El Maestro Shifu" (streamer IRL de Kick, México). Mi canal resube con permiso del equipo de Shifu, censura groserías y le pone edición; YouTube me rechazó la monetización por "contenido reutilizado", así que también necesito VALOR ORIGINAL (títulos/miniaturas/narrativa propios).
+  const intro = `Eres analista de YouTube experto en el nicho de "resubidas" de streamers IRL mexicanos. Analizo canales que resuben clips de ${targetLabel()} (streamer IRL de Kick, México). Mi canal resube con permiso del equipo del streamer, censura groserías y le pone edición; YouTube me rechazó la monetización por "contenido reutilizado", así que también necesito VALOR ORIGINAL (títulos/miniaturas/narrativa propios).
 
 "score" = vistas ÷ mediana de vistas del propio canal en ese formato (score 5 = 5× lo normal de ese canal). Es la métrica principal de "qué pegó". Las horas están en hora de CDMX.
 
@@ -1919,7 +1924,7 @@ async function generateForVideo(progress, opts) {
   const totalMin = useT ? Math.round((transcript[transcript.length - 1].end || 0) / 60) : 0;
   const ref = a ? a[format] : null;
   const ins = rs.insights;
-  const prompt = `Eres el mejor estratega de YouTube del nicho de streamers IRL mexicanos. Mi canal resube (con permiso) clips de Adriano Zendejas "El Maestro Shifu" (Kick IRL). Necesito para ${format === 'short' ? 'un SHORT' : 'un VIDEO LARGO (16:9, 15-30 min)'}: títulos, descripción, hashtags, tags y prompt de miniatura para ChatGPT.
+  const prompt = `Eres el mejor estratega de YouTube del nicho de streamers IRL mexicanos. Mi canal resube (con permiso) clips de ${targetLabel()} (Kick IRL). Necesito para ${format === 'short' ? 'un SHORT' : 'un VIDEO LARGO (16:9, 15-30 min)'}: títulos, descripción, hashtags, tags y prompt de miniatura para ChatGPT.
 
 ${ins ? 'FÓRMULA DEL NICHO (sacada de analizar a la competencia; síguela):\n' + JSON.stringify({ titulos: ins.titulos, miniaturas: ins.miniaturas, horarios: ins.horarios, descripcion: ins.descripcion, hashtags: ins.hashtags, monetizacion: ins.monetizacion }) : ''}
 ${ref && ref.outliers.length ? 'TÍTULOS DE LA COMPETENCIA QUE MÁS PEGARON (score = veces lo normal de su canal):\n' + ref.outliers.slice(0, 15).map(v => `- ×${v.score} "${v.title}"`).join('\n') + '\nMEJORES HORAS (CDMX): ' + JSON.stringify(ref.time.bestWindows) : ''}
@@ -1938,6 +1943,15 @@ Da 5 títulos.`;
 }
 function pickModel() { return CLOUD_MODEL; } // única opción
 async function researchRoute(req, res, url) {
+  if (req.method === 'POST' && url.pathname === '/api/research/target') {
+    const b = await jsonBody(req) || {};
+    const names = String(b.names || '').split(/[,/]/).map(x => x.trim()).filter(Boolean).slice(0, 4).map(x => x.slice(0, 50));
+    if (!names.length) throw Error('Escribe el nombre del streamer (y su otro nombre si tiene, separado con coma).');
+    const changed = JSON.stringify(names) !== JSON.stringify(researchTarget());
+    rs.target = { names }; research.setTarget(names);
+    if (changed) { rs.analysis = null; rs.insights = null; } // otro streamer: el análisis viejo ya no aplica
+    saveResearch(); respond(res, 200, researchState()); return true;
+  }
   if (req.method === 'GET' && url.pathname === '/api/research') return respond(res, 200, researchState());
   if (req.method !== 'POST') return false;
   const p = url.pathname;
