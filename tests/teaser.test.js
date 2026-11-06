@@ -196,3 +196,10 @@ test('IA: el plan usa el avance de la IA y, si falta o cae en algo quitado, la e
   const p2 = T.buildPlan({ candidates: cands, energy: [], transcript: [], duration: 600, keep: [{ start: 0, end: 121 }, { start: 140, end: 600 }] });
   assert.ok(p2.fragments.every(f => f.source !== 'ia'), 'si el video quitó parte del avance de la IA, no se usa');
 });
+
+test('refineAvance: transcripción palabra por palabra (Whisper -ml 1) corta al final de la frase, sin comerse el remate', () => {
+  const words = 'y entonces le digo que es eso no manches y se cae de la silla jajaja'.split(' ');
+  const tr = words.map((w, i) => ({ start: 1000 + i * 0.5, end: 1000 + i * 0.5 + 0.4, text: w }));
+  const av = T.refineAvance({ start: 1000, end: 1007, why: '' }, tr, { start: 995, end: 1015 }, 'que es eso no manches');
+  assert.ok(av.end >= tr[8].end && av.end < tr[9].start, `corte ${av.end} debe quedar entre ${tr[8].end} y ${tr[9].start}`);
+});
