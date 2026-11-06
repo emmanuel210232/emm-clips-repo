@@ -34,6 +34,7 @@
     "ritmo.js",
     "muletillas.js",
     "autozoom-ui.js",
-    "streamer.js"
+    "streamer.js",
+    "lib/smartcut.js"
   ]
 }

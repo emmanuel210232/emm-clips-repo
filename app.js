@@ -980,9 +980,9 @@ async function buildExportBody(){await selectionSave;
   else { if(mode==='mute'){if(!ids.length&&!(state.manualCuts||[]).length)throw Error('Para silenciar, selecciona al menos una palabra o agrega un corte manual. (Las pausas solo aplican al modo Cortar.)');}else if(!ids.length&&!pauseIds.length&&!(state.manualCuts||[]).length)throw Error('Selecciona palabras, pausas, o edita clips en la línea del tiempo (Paso 1).'); }
   const enhance={denoise:$('auDenoise')?.checked,compress:$('auCompress')?.checked,normalize:$('auNormalize')?.checked,voice:$('auVoice')?.checked&&!$('auVoice')?.disabled};
   const smooth=edited && !!$('silSmooth')?.checked;
-  const censor=!!$('exCensor')?.checked, gpu=!!$('exGpu')?.checked;
+  const censor=!!$('exCensor')?.checked, gpu=!!$('exGpu')?.checked, smart=!!$('exSmart')?.checked;
   const teaser=teaserRequest(segments);
-  const body={selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,smooth,censor,gpu,teaser,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8};
+  const body={selectedIds:ids,selectedPauseIds:pauseIds,mode,segments,smooth,censor,gpu,teaser,smart,quality:($('exportQuality')||{}).value||'original',enhance,intro:($('introTpl')||{}).value||'none',outro:($('outroTpl')||{}).value||'none',clipIn:($('clipIn')||{}).value||'none',clipOut:($('clipOut')||{}).value||'none',clipDur:Number(($('clipDur')||{}).value)||0.8};
   return {body,edited,mode,segments};}
 window.emmExportBody=buildExportBody;
 $('export').onclick=safe(async()=>{const {body,edited,mode,segments}=await buildExportBody();
@@ -998,6 +998,8 @@ function teaserRequest(segments){
   const fp=segFp(segments);
   return {on:true, frags:(teaserFrags&&teaserFp===fp)?teaserFrags.map(f=>({start:f.start,end:f.end,label:f.label})):null};
 }
+try{ if(localStorage.getItem('eirl_smart')==='1'&&$('exSmart')) $('exSmart').checked=true; }catch{}
+if($('exSmart')) $('exSmart').addEventListener('change',()=>{ try{ localStorage.setItem('eirl_smart',$('exSmart').checked?'1':'0'); }catch{} });
 function syncTeaserBox(){ const b=$('teaserBox'); if(b) b.hidden=!$('exTeaser')?.checked; try{ localStorage.setItem('eirl_teaser',$('exTeaser')?.checked?'1':'0'); }catch{} }
 function renderTeaserList(){
   const box=$('teaserList'); if(!box) return; box.replaceChildren();

@@ -484,7 +484,7 @@ async function exportVideo(...args) {
   try { return await exportVideoInner(reserved, ...args); }
   catch (e) { if (job === reserved) job = reserved.cancelRequested ? { status:'cancelled', message:'Cancelado.', progress:'', percent:0 } : prev; throw e; } // falló antes de arrancar ffmpeg: se libera la reserva
 }
-async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false,teaser=null) {
+async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='mute',quality='original',enhance='std',intro='none',outro='none',clipIn='none',clipOut='none',clipDur=0.8,segments=null,smooth=false,censor=false,gpu=false,teaser=null,smart=false) {
   const wantTeaser = !!(teaser && teaser.on);
   if (wantTeaser && !teaserLib) throw Error('Falta el archivo lib/teaser.js para el avance. Busca actualizaciones o exporta sin avance.');
   const teaserFrags = wantTeaser && Array.isArray(teaser.frags) ? teaser.frags.slice(0,10) : null;
@@ -777,6 +777,128 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
       await fsp.unlink(list).catch(()=>{});
     }
   }
+  let smartNote='';
+  // ===== CORTE INTELIGENTE (beta, lib/smartcut.js) =====
+  // Copia sin recodificar los GOPs que no se tocan (calidad idéntica al original) y recodifica solo alrededor de cada
+  // corte, los fundidos, las transiciones y los clips con zoom. El audio se arma aparte con los MISMOS límites en cuadros
+  // (sincronía exacta) y se codifica una sola vez. Regresa false (y el export sigue por el método normal) si este video
+  // no se puede (sin copia MP4 del original, cuadros irregulares, GOP abierto, efecto no soportado, demasiados clips).
+  async function exportSmart(){
+    const SC=require('./lib/smartcut');
+    const SUPPORTED_FX={none:null,negro:'black',fundNegro:'black',blanco:'white',fundBlanco:'white'};
+    if(!(clipIn in SUPPORTED_FX)||!(clipOut in SUPPORTED_FX)) { smartNote=' · corte inteligente: ese efecto de entrada/salida no se puede; se exportó normal'; return false; }
+    if(keep.length>150) { smartNote=' · corte inteligente: demasiados clips (para quitar silencios no sirve); se exportó normal'; return false; }
+    if(!q.copy) { smartNote=' · corte inteligente: solo en calidad Original; se exportó normal'; return false; }
+    // Fuente que se puede copiar: el original si ya es MP4/MOV; si es MPEG-TS (Kick), su vista previa SOLO si es copia exacta.
+    const probe=(f,entries)=>{ const o=spawnSync(bins.ffprobe,['-v','error','-select_streams','v:0','-show_entries',entries,'-of','json',f],{encoding:'utf8',windowsHide:true}); return (JSON.parse(o.stdout||'{}').streams||[])[0]||{}; };
+    const vo=probe(project.videoPath,'stream=codec_name,width,height,profile,level,r_frame_rate');
+    let src=null;
+    if(/(^|,)(mov|mp4)(,|$)/.test(containerOf(project.videoPath))) src=project.videoPath;
+    else if(project.previewPath&&fs.existsSync(project.previewPath)){
+      const pv=probe(project.previewPath,'stream=codec_name,width,height');
+      if(pv.codec_name==='h264'&&pv.width===vo.width&&pv.height===vo.height&&fs.statSync(project.previewPath).size>0.85*fs.statSync(project.videoPath).size) src=project.previewPath;
+    }
+    if(!src||vo.codec_name!=='h264') { smartNote=' · corte inteligente: falta la vista previa MP4 de este video (Paso 1 → "Crear vista previa MP4"); se exportó normal'; return false; }
+    const [fn,fd]=String(vo.r_frame_rate||'60/1').split('/').map(Number); const FPS=fn/(fd||1);
+    const TS=fd===1?fn*256:fn; // escala de tiempo exacta para el cuadro (60 → 15360)
+    job.message='Corte inteligente: leyendo los cuadros clave…'; job.percent=1;
+    const kc=readJson(path.join(DATA,'keyframes.json'),{}); const kkey=(()=>{ const st=fs.statSync(src); return `${src}|${st.size}|${Math.round(st.mtimeMs)}`; })();
+    let K=kc.key===kkey?kc.k:null;
+    if(!K){ const out=await capture(bins.ffprobe,['-v','error','-select_streams','v:0','-show_entries','packet=pts_time,flags','-of','csv=p=0',src],400*1024*1024); K=SC.parseKeyframes(String(out),FPS); writeJson(path.join(DATA,'keyframes.json'),{key:kkey,k:K}); }
+    if(!K.ok) { smartNote=` · corte inteligente: este video no se puede (${K.reason}); se exportó normal`; return false; }
+    const T=i=>K.v0+i/FPS; // tiempo (absoluto en la fuente) del cuadro i
+    const lens=keep.map(k=>k.end-k.start);
+    // Transiciones: las mismas que el método normal (clip.trans 0.5 s, unir 0.2 s, suavizar 0.14 s, cortes 0.05 s).
+    const xfFrames=i=>{ if(!canSmooth) return 0; const k=keep[i]; const want=k.trans?0.5:k.join?0.2:(smooth?0.14:0.05); const d=Math.min(want,lens[i]/2,lens[i-1]/2); return Math.max(1,Math.round(d*FPS)); };
+    const D=Math.max(0.3,Math.min(3,Number(clipDur)||0.8));
+    const fin=SUPPORTED_FX[clipIn]?Math.round(D*FPS):0, fout=SUPPORTED_FX[clipOut]?Math.round(D*FPS):0;
+    const P=SC.plan(keep,K.keys,K.v0,FPS,{xfadeFrames:xfFrames,fadeInFrames:fin,fadeOutFrames:fout,noCore:s=>AZ.zoomValue(s)>1});
+    const {width:W,height:H}=vo;
+    const prof=String(vo.profile||'High').toLowerCase().includes('main')?'main':'high', lvl=vo.level?String(vo.level/10):'4.2';
+    const ENC=['-c:v','libx264','-preset','medium','-crf','14','-profile:v',prof,'-level',lvl,'-pix_fmt','yuv420p','-x264-params','keyint=900:bframes=1','-r',String(FPS),'-video_track_timescale',String(TS)];
+    const work=path.join(DATA,`smart_${crypto.randomUUID()}`); await fsp.mkdir(work,{recursive:true});
+    const files=[]; const t0=Date.now();
+    const encTotal=P.pieces.reduce((s,p)=>s+(p.type==='enc'?p.ranges.reduce((a,r)=>a+r.b-r.a,0):0),0)+(tPlan?Math.round(tDur*FPS):0);
+    let encDone=0;
+    const tick=(label)=>{ job.percent=Math.min(95,Math.round(5+encDone/Math.max(1,encTotal)*80)); job.message=`Corte inteligente: ${label}`; };
+    try{
+      // 1) Avance (si va): se recodifica completo, igual que siempre, con los mismos parámetros que las demás piezas.
+      let teaserWav=null;
+      if(tPlan){
+        const ai=audioInfo(project.videoPath);
+        const ln=stdEnhance?audioChain.lastIndexOf(',loudnorm='):-1; const preAf=ln>0?audioChain.slice(0,ln):'';
+        const tg=teaserLib.buildTeaserGraph({fmtStart:seek.startTimeOf(bins.ffprobe,project.videoPath),frags:tPlan.fragments,firstInput:0,videoPath:project.videoPath,fps:FPS,width:W,height:H,fontFile:teaserFont(),muteOf:teaserMute,audioPost:preAf,sampleRate:ai.sampleRate,layout:ai.layout});
+        const f=[...tg.filters,`${tg.v}settb=AVTB,fps=${FPS},format=yuv420p,setsar=1[tzv]`];
+        const fs1=path.join(work,'teaser.txt'); await fsp.writeFile(fs1,f.join(';\n'),'utf8');
+        const tv=path.join(work,'p_teaser.mp4'); teaserWav=path.join(work,'teaser.wav');
+        tick(`avance (${tPlan.fragments.length} momentos)…`);
+        await run(bins.ffmpeg,['-y',...seek.COPYTS,...tg.inputs,'-/filter_complex',fs1,'-map','[tzv]',...ENC,tv,'-map',tg.a,'-c:a','pcm_s16le',teaserWav]);
+        files.push(tv); encDone+=Math.round(tDur*FPS);
+      }
+      // 2) Piezas: copiadas (GOPs completos) o recodificadas (bordes de los cortes, transiciones, fundidos, zooms).
+      let pi=0;
+      for(const p of P.pieces){
+        if(job.cancelRequested) throw Error('Proceso cancelado por el usuario.');
+        const out=path.join(work,`p${String(pi++).padStart(4,'0')}.mp4`);
+        if(p.type==='copy'){
+          await run(bins.ffmpeg,['-y','-ss',(T(p.a)+0.25/FPS).toFixed(6),'-i',src,'-frames:v',String(p.b-p.a),'-an','-c:v','copy','-avoid_negative_ts','make_zero','-video_track_timescale',String(TS),out]);
+        } else {
+          const ins=[], g=[]; let L=0, cur='';
+          p.ranges.forEach((r,j)=>{
+            const pre=Math.max(0,T(r.a)-4);
+            ins.push('-ss',pre.toFixed(3),'-i',src);
+            const zf=AZ.zoomValue(keep[r.seg])>1?AZ.cropZoomFilter(keep[r.seg],W,H):'';
+            g.push(`[${j}:v]trim=start=${(T(r.a)-0.5/FPS).toFixed(6)}:end=${(T(r.b)-0.5/FPS).toFixed(6)},setpts=PTS-STARTPTS,fps=${FPS},format=yuv420p${zf},setsar=1[r${j}]`);
+            const len=r.b-r.a;
+            if(j===0){ cur='[r0]'; L=len; return; }
+            const x=p.xfades[j-1]||0;
+            if(x>0){ g.push(`${cur}[r${j}]xfade=transition=fade:duration=${(x/FPS).toFixed(6)}:offset=${((L-x)/FPS).toFixed(6)}[c${j}]`); L=L+len-x; }
+            else { g.push(`${cur}[r${j}]concat=n=2:v=1:a=0[c${j}]`); L+=len; }
+            cur=`[c${j}]`;
+          });
+          const fx=[]; if(p.fadeIn&&fin) fx.push(`fade=t=in:st=0:d=${D}:color=${SUPPORTED_FX[clipIn]}`); if(p.fadeOut&&fout) fx.push(`fade=t=out:st=${Math.max(0,L/FPS-D).toFixed(6)}:d=${D}:color=${SUPPORTED_FX[clipOut]}`);
+          g.push(`${cur}${fx.length?fx.join(','):'null'}[vo]`);
+          const fsc=path.join(work,`f${pi}.txt`); await fsp.writeFile(fsc,g.join(';\n'),'utf8');
+          tick(`recodificando alrededor de los cortes (${pi} de ${P.pieces.length})…`);
+          await run(bins.ffmpeg,['-y','-copyts',...ins,'-/filter_complex',fsc,'-map','[vo]','-frames:v',String(L),...ENC,'-an',out]);
+          encDone+=p.ranges.reduce((a,r)=>a+r.b-r.a,0);
+        }
+        files.push(out);
+      }
+      // 3) Audio: los mismos límites en cuadros que el video (sincronía exacta), groserías calladas, transiciones y mejora de voz.
+      tick('armando el audio…');
+      const ln=stdEnhance?audioChain.lastIndexOf(',loudnorm='):-1; const preAf=ln>0?audioChain.slice(0,ln):(stdEnhance&&ln<0?audioChain:''); const postAf=stdEnhance&&ln>0?audioChain.slice(ln+1):'';
+      const ag=[]; let acur='', aL=0;
+      keep.forEach((k,i)=>{
+        const {fs:a,fe:b}=P.frames[i]; if(b<=a) return;
+        const len=(b-a)/FPS, fade=Math.min(.03,len/3);
+        ag.push(`[0:a]atrim=start=${T(a).toFixed(6)}:end=${T(b).toFixed(6)},asetpts=PTS-STARTPTS${censorAf(k.start,k.end)}${canSmooth?'':`,afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(len-fade).toFixed(3)}:d=${fade.toFixed(3)}`}[a${i}]`);
+        if(!acur){ acur=`[a${i}]`; aL=len; return; }
+        const x=xfFrames(i);
+        if(x>0){ ag.push(`${acur}[a${i}]acrossfade=d=${(x/FPS).toFixed(6)}:c1=tri:c2=tri[ax${i}]`); aL=aL+len-x/FPS; }
+        else { ag.push(`${acur}[a${i}]concat=n=2:v=0:a=1[ax${i}]`); aL+=len; }
+        acur=`[ax${i}]`;
+      });
+      ag.push(`${acur}${preAf?preAf:'anull'}[aout]`);
+      const asc=path.join(work,'audio.txt'); await fsp.writeFile(asc,ag.join(';\n'),'utf8');
+      const mainWav=path.join(work,'main.wav');
+      await run(bins.ffmpeg,['-y','-copyts','-i',src,'-vn','-/filter_complex',asc,'-map','[aout]','-c:a','pcm_s16le',mainWav]);
+      // 4) Unir: video copiado tal cual (concat sin recodificar) + audio codificado una sola vez.
+      tick('uniendo las piezas (sin recodificar)…');
+      const list=path.join(work,'list.txt'); await fsp.writeFile(list,files.map(f=>`file '${f.replace(/\\/g,'/').replace(/'/g,"'\\''")}'`).join('\n'),'utf8');
+      const ains=teaserWav?['-i',teaserWav,'-i',mainWav]:['-i',mainWav];
+      const af=(teaserWav?'[1:a][2:a]concat=n=2:v=0:a=1,':'[1:a]')+['aresample=async=1:first_pts=0',postAf||null].filter(Boolean).join(',')+'[a]';
+      await run(bins.ffmpeg,['-y','-f','concat','-safe','0','-i',list,...ains,'-filter_complex',af,'-map','0:v:0','-map','[a]','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',temporary]);
+      // 5) Revisión: el número de cuadros debe ser exacto; si no, se exporta por el método normal.
+      const want=P.totalFrames+(tPlan?files.length&&Math.round(tDur*FPS):0);
+      const got=Number(String(spawnSync(bins.ffprobe,['-v','error','-count_packets','-select_streams','v:0','-show_entries','stream=nb_read_packets','-of','csv=p=0',temporary],{encoding:'utf8',windowsHide:true}).stdout).trim());
+      if(tPlan){ const tp=Number(String(spawnSync(bins.ffprobe,['-v','error','-count_packets','-select_streams','v:0','-show_entries','stream=nb_read_packets','-of','csv=p=0',files[0]],{encoding:'utf8',windowsHide:true}).stdout).trim()); if(got!==P.totalFrames+tp) throw Error(`revisión de cuadros: ${got} vs ${P.totalFrames+tp}`); }
+      else if(got!==want) throw Error(`revisión de cuadros: ${got} vs ${want}`);
+      const secs=Math.round((Date.now()-t0)/1000);
+      smartNote=` · ⚡ corte inteligente: ${Math.round(P.copiedFrames/Math.max(1,P.totalFrames)*100)} % copiado sin recodificar (${secs} s)`;
+      return true;
+    } finally { await fsp.rm(work,{recursive:true,force:true}).catch(()=>{}); }
+  }
   const script = path.join(DATA,'filter.txt');
   const name = path.parse(project.videoPath).name.replace(/[^\p{L}\p{N}._-]+/gu,'_').slice(0,80);
   const output = path.join(EXPORTS, `${name}_limpio_${Date.now()}.mp4`);
@@ -802,7 +924,10 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
       await fsp.writeFile(script, filter.join(';\n'), 'utf8');
       const cutBase=['-y',...seek.COPYTS,...segInputs,...cutExtraInputs,...teaserInputs,'-/filter_complex',script,'-map',vLabel,'-map',aLabel];
       const cutTail=['-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
-      if(BATCH) await exportBatched();
+      let smartDone=false;
+      if(smart){ try{ smartDone=await exportSmart(); } catch(e){ if(job.cancelRequested) throw e; smartNote=' · corte inteligente falló ('+e.message+'); se exportó normal'; await fsp.unlink(temporary).catch(()=>{}); job.message='Exportando video limpio…'; job.percent=0; } }
+      if(smartDone){}
+      else if(BATCH) await exportBatched();
       else try{
         await runDec(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal+tDur,'Exportando'), gpu);
       }catch(gpuErr){
@@ -810,9 +935,9 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
         job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; job.percent=0;
         await runDec(bins.ffmpeg, [...cutBase,...cutVx264,...cutTail], progress(keptTotal+tDur,'Exportando'), gpu);
       }
-      await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,cutFxIn,cutFxOut,clipDur);
+      await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,smartDone?'none':cutFxIn,smartDone?'none':cutFxOut,clipDur);
       const tNote=wantTeaser?(tPlan?` · con avance de ${tPlan.fragments.length} momentos (${Math.round(tPlan.duration)} s)`:' · sin avance (no encontré suficientes momentos; el video es muy corto)'):'';
-      const dl2=toDownloads(output); job = { status:'done', message:(dl2?`✅ Listo y guardado en Descargas: ${path.basename(dl2)}`:`Video exportado: ${output}`)+tNote, progress:'', percent:100, output, downloaded:dl2, teaser:tPlan?tPlan.fragments:null };
+      const dl2=toDownloads(output); job = { status:'done', message:(dl2?`✅ Listo y guardado en Descargas: ${path.basename(dl2)}`:`Video exportado: ${output}`)+tNote+smartNote, progress:'', percent:100, output, downloaded:dl2, teaser:tPlan?tPlan.fragments:null };
     } catch (e) { await fsp.unlink(temporary).catch(()=>{});job = { status: job.cancelRequested?'cancelled':'error', message:e.message, progress:'', percent:0 }; }
   })();
   return { output, cuts:keep.length };
@@ -1989,7 +2114,7 @@ async function researchRoute(req, res, url) {
 }
 
 // Mismas opciones que el botón "Exportar MP4" (el botón y la cola usan esta función: misma calidad, mismo método).
-function exportFromBody(body){ body=body||{}; const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); return exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu,(body.teaser&&typeof body.teaser==='object')?{on:!!body.teaser.on,frags:Array.isArray(body.teaser.frags)?body.teaser.frags:null}:null); }
+function exportFromBody(body){ body=body||{}; const enh=(body.enhance!=null&&typeof body.enhance==='object')?body.enhance:String(body.enhance||'std'); return exportVideo(Array.isArray(body.selectedIds)?body.selectedIds:[],Array.isArray(body.selectedPauseIds)?body.selectedPauseIds:[],body.mode==='cut'?'cut':'mute',String(body.quality||'original'),enh,String(body.intro||'none'),String(body.outro||'none'),String(body.clipIn||'none'),String(body.clipOut||'none'),Number(body.clipDur)||0.8,Array.isArray(body.segments)?body.segments.slice(0,2000):null,!!body.smooth,!!body.censor,!!body.gpu,(body.teaser&&typeof body.teaser==='object')?{on:!!body.teaser.on,frags:Array.isArray(body.teaser.frags)?body.teaser.frags:null}:null,!!body.smart); }
 
 // ===== MINIATURAS: fotogramas del ORIGINAL a resolución completa =====
 // Fotograma EXACTO: en MPEG-TS el salto -ss no cae donde se pide (y ffmpeg pone el 0 donde cayó), así que se usa
