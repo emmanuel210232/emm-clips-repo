@@ -1,6 +1,6 @@
 {
-  "version": "1.28.0",
-  "notes": "Nuevo: antes de cada actualización la app guarda un respaldo, y en ⚙️ Configuración aparece \"Volver a la versión anterior\" por si una versión nueva no te gusta (tus videos y proyectos no se tocan). Si la app ya no abriera, usa el archivo \"Volver a la version anterior.cmd\" en la carpeta de Emm Clips. Funciona a partir de la siguiente actualización.",
+  "version": "1.29.0",
+  "notes": "Versión grande: nuevo diseño de editor, línea del tiempo con deshacer/rehacer y Vista de la edición, intro de avance PRÓXIMAMENTE con los mejores momentos, Corte inteligente (beta: exporta mucho más rápido copiando lo que no cambia), Ritmo y márgenes para silencios, muletillas, zoom automático en los cortes centrado en la gente, galería de miniaturas, cola de exports, streamer por video y marca @ elegible en Shorts (ya nada fijo de un canal), y arreglos (la app ya no se cae, miniaturas de otro video, archivos vacíos). Si algo no te gusta: ⚙️ Configuración → Volver a la versión anterior.",
   "files": [
     "server.js",
     "app.js",
