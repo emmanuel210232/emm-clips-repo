@@ -56,6 +56,7 @@ function rsRender() {
   ${s.keySet ? rsChannelsCard(s, tracked) : ''}
   ${s.analysis && s.analysis.totals.videos ? rsResultsCard(s.analysis) : ''}
   ${s.analysis && s.analysis.totals.videos ? rsInsightsCard(s) : ''}
+  ${rsCoverageCard(s)}
   ${rsGenerateCard(s)}`;
   rsBind();
   rsRenderJob();
@@ -211,6 +212,37 @@ function rsInsightsCard(s) {
     </div></div>`;
 }
 
+// ---------- ★ ¿Qué ya subieron de este directo? ----------
+const RS_COVER = { libre: ['✅', 'Libre', 'nadie la ha subido'], cubierta: ['⚠️', 'Cubierta', 'ya hay poco'], saturada: ['❌', 'Saturada', 'ya la subieron varios'] };
+const rsAgo = iso => { const h = (Date.now() - Date.parse(iso)) / 3600e3; return h < 1 ? 'hace minutos' : h < 48 ? `hace ${Math.round(h)} h` : `hace ${Math.round(h / 24)} días`; };
+function rsCoverageCard(s) {
+  const c = s.coverage;
+  const can = s.keySet && s.cloud.keySet && s.video && (s.hasBestof || s.hasTranscript);
+  const why = !s.video ? 'Abre primero el directo que vas a subir.' : !(s.hasBestof || s.hasTranscript) ? 'Procesa primero el directo en 🎬 Resumen del directo para saber de qué trata.' : !s.keySet ? 'Conecta YouTube en el paso 1.' : !s.cloud.keySet ? 'Falta la API key de Claude (🎬 Resumen del directo → Motor de IA).' : '';
+  const head = `<div class="card" id="rsCoverCard"><div class="cardhead"><div><span class="number">★</span><h2>🔎 ¿Qué ya subieron de este directo?</h2></div><span class="status">${s.video ? '🎞️ ' + rsEsc(s.video.length > 40 ? s.video.slice(0, 38) + '…' : s.video) : 'Sin video abierto'}</span></div>
+    <p class="hint">Separa tu directo en <b>historias</b> (con los momentos del Resumen${s.hasBestof ? '' : ' o la transcripción'}) y revisa qué subieron los canales que sigues desde ese directo. Así eliges un tema que <b>nadie ha subido</b>: si ya hay varios videos de lo mismo, YouTube casi no muestra el tuyo. Usa ~250 de las 10,000 unidades diarias de YouTube (también busca canales que no sigues) + una llamada corta a la nube (centavos).</p>
+    <div class="row wrap" style="gap:8px"><button id="rsCover" class="primary big" type="button" data-busy ${can ? '' : 'disabled'}>${c ? '🔁 Revisar otra vez' : '🔎 Revisar qué ya subieron'}</button>${why ? `<span class="muted">⚠️ ${why}</span>` : ''}</div>`;
+  if (!c) return head + '</div>';
+  const rec = c.stories.find(x => x.name === c.recommended);
+  const vrow = v => `<a class="rsCovVid" href="https://www.youtube.com/watch?v=${rsEsc(v.id)}" target="_blank" rel="noopener" title="${rsEsc(v.title)}">
+      <img src="${rsEsc(v.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer"><span><b>${rsEsc(v.title)}</b><span class="muted">${rsEsc(v.channel)} · ${v.duration > 180 ? Math.round(v.duration / 60) + ' min' : 'Short'} · ${rsNum(v.views)} vistas · ${rsAgo(v.publishedAt)}</span></span></a>`;
+  const story = x => {
+    const [ico, label, help] = RS_COVER[x.state] || RS_COVER.cubierta;
+    const count = x.longs ? `${x.longs} video${x.longs > 1 ? 's' : ''}${x.shorts ? ` + ${x.shorts} Short${x.shorts > 1 ? 's' : ''}` : ''}` : x.shorts ? `solo ${x.shorts} Short${x.shorts > 1 ? 's' : ''}` : 'nadie';
+    return `<div class="rsCov ${x.state}${x.name === c.recommended ? ' rec' : ''}">
+      <div class="rsCovHead"><span class="rsCovBadge ${x.state}" title="${help}">${ico} ${label}</span><b>${rsEsc(x.name)}</b>${x.name === c.recommended ? ' <span class="rsTag mine">⭐ Recomendada</span>' : ''}
+        <span class="muted">${x.moments.length} momento${x.moments.length === 1 ? '' : 's'}${x.moments.length ? ' (' + x.moments.slice(0, 6).map(m => rsDur(Math.round(m.t))).join(', ') + (x.moments.length > 6 ? '…' : '') + ')' : ''} · ya subido: ${count}</span></div>
+      ${x.title ? `<div class="rsTitle"><div><b>${rsEsc(x.title)}</b><div class="muted">${x.thumbText ? 'Miniatura: “' + rsEsc(x.thumbText) + '”' : ''}${x.thumbIdea ? ' — ' + rsEsc(x.thumbIdea) : ''}</div></div><button type="button" class="secondary compact" data-copy="${rsEsc(x.title)}">📋</button></div>` : ''}
+      ${x.videos.length ? `<details class="rsMore"><summary>Ver lo que ya subieron (${x.videos.length})</summary><div class="rsCovVids">${x.videos.map(vrow).join('')}</div></details>` : ''}
+    </div>`;
+  };
+  return head + `<div class="rsGenMeta muted" style="margin-top:12px">Revisado ${new Date(c.createdAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })} · ${c.channels} canales · ${c.found} videos subidos desde el directo · historias sacadas de ${rsEsc(c.source)}</div>
+    ${rec ? `<div class="rsInsResumen">⭐ <b>Haz tu video sobre “${rsEsc(rec.name)}”</b>: ${rec.state === 'libre' ? 'nadie la ha subido todavía' : `solo hay ${rec.longs} video${rec.longs > 1 ? 's' : ''} de otros`} y es de lo más fuerte de tu directo. Ponla en el título y la miniatura.</div>`
+      : '<div class="rsInsResumen">⚠️ Todas las historias ya las subieron varios canales. Si puedes, colabora con el canal oficial o busca un ángulo distinto.</div>'}
+    ${c.stories.map(story).join('')}</div>`;
+}
+function rsRunCoverage() { return rsAction('/api/research/coverage', {}).then(rsWatch); }
+
 // ---------- 5. Generar para mi video ----------
 function rsGenerateCard(s) {
   const g = s.generated;
@@ -256,6 +288,7 @@ function rsBind() {
   on('rsToggleIgnored', () => { rsShowIgnored = !rsShowIgnored; rsRender(); });
   on('rsRefresh', () => rsAction('/api/research/refresh', { max: Number($('rsMax').value) || 150 }).then(rsWatch));
   on('rsInsights', () => rsAction('/api/research/insights', { model: $('rsInsModel').value }).then(rsWatch));
+  on('rsCover', rsRunCoverage);
   on('rsGenerate', () => rsAction('/api/research/generate', { model: $('rsGenModel').value, format: $('rsGenFmt').value, notes: $('rsNotes').value, useTranscript: !!$('rsUseT')?.checked }).then(rsWatch));
   document.querySelectorAll('#rsRoot [data-ch]').forEach(b => b.onclick = () => rsAction('/api/research/channel/status', b.dataset.mine != null ? { id: b.dataset.ch, mine: b.dataset.mine === '1' } : { id: b.dataset.ch, status: b.dataset.st }));
   document.querySelectorAll('#rsRoot [data-fmt]').forEach(b => b.onclick = () => { rsFormat = b.dataset.fmt; rsRender(); });

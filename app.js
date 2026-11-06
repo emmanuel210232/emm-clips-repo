@@ -883,6 +883,8 @@ function updateBestofCounts(){
   const sel=$('bestofSel'); if(sel) sel.textContent=on.length+' aprobados · total ~'+bfmt(on.reduce((a,c)=>a+(c.end-c.start),0));
 }
 $('modeToggle').onclick=()=>switchMode(inBestof()?'cortos':'bestof');
+// Atajo desde el Resumen del directo: abre Investigar y revisa qué historias de este directo ya subieron otros canales.
+if($('bestofCover')) $('bestofCover').onclick=async()=>{switchMode('research');try{await rsLoad();rsRender();await rsRunCoverage();const c=$('rsCoverCard');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});}catch(e){notice(e.message,true);}};
 if($('researchToggle')) $('researchToggle').onclick=()=>switchMode(document.body.classList.contains('research-mode')?'cortos':'research');
 $('bestofPick').onclick=safe(async()=>{notice('Elige el directo en el explorador…');const r=await api('/api/pick-video',{});if(r.cancelled){notice('Cancelado.');return;}await api('/api/project/open',{path:r.path});await refresh();buildBestof();notice('Directo abierto. Pulsa “Procesar directo”.');});
 $('bestofEngine').onchange=safe(async()=>{

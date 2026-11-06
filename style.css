@@ -765,3 +765,16 @@ body.research-mode .appShell .stage,body.research-mode .appShell .dock,body.rese
 .streamerCard>summary{cursor:pointer;font-weight:700}
 .stField{display:flex;flex-direction:column;gap:4px;margin:8px 0;font-size:12.5px;font-weight:600}
 .stField input{width:100%}
+
+/* ¿Qué ya subieron de este directo? */
+.rsCov{border:1px solid rgba(128,140,130,.22);border-left:4px solid #888;border-radius:12px;padding:12px 14px;margin-top:10px;display:grid;gap:8px}
+.rsCov.libre{border-left-color:#3aa85a}.rsCov.cubierta{border-left-color:#e0b020}.rsCov.saturada{border-left-color:#d9534f;opacity:.85}
+.rsCov.rec{background:rgba(83,252,24,.06);border-color:#3aa85a}
+.rsCovHead{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.rsCovHead .muted{flex-basis:100%;font-size:12px}
+.rsCovBadge{font-size:12px;font-weight:800;border-radius:6px;padding:2px 8px}
+.rsCovBadge.libre{background:rgba(83,252,24,.16);color:#2f7a1a}.rsCovBadge.cubierta{background:rgba(224,176,32,.18);color:#9a7208}.rsCovBadge.saturada{background:rgba(217,83,79,.16);color:#b3302c}
+.rsCovVids{display:grid;gap:6px;margin-top:8px}
+.rsCovVid{display:flex;gap:10px;align-items:center;text-decoration:none;color:inherit;padding:4px;border-radius:8px}.rsCovVid:hover{background:rgba(128,140,130,.1)}
+.rsCovVid img{width:96px;aspect-ratio:16/9;object-fit:cover;border-radius:6px;flex:none;background:#0002}
+.rsCovVid>span{display:grid;gap:2px;min-width:0;font-size:13px}.rsCovVid b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rsCovVid .muted{font-size:12px}
+[data-theme="dark"] .rsCovBadge.libre{color:#8ef06a}[data-theme="dark"] .rsCovBadge.cubierta{color:#e0b020}[data-theme="dark"] .rsCovBadge.saturada{color:#ff8a85}

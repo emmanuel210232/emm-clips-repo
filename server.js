@@ -1899,7 +1899,7 @@ function researchState() {
     keySet: !!ytConf.key, quota: { units: rs.quota.date === d ? rs.quota.units : 0, limit: 10000 },
     channels: rs.channels, refreshedAt: rs.refreshedAt, analysis: rs.analysis, insights: rs.insights, generated: rs.generated, target: researchTarget(),
     job: researchJob, cloud: { keySet: !!cloud.key, model: cloud.model },
-    video: project?.videoPath ? path.basename(project.videoPath) : '', hasTranscript: Array.isArray(transcript) && transcript.length > 0,
+    video: project?.videoPath ? path.basename(project.videoPath) : '', hasBestof: !!currentBestof(), coverage: rs.coverage && project?.videoPath === rs.coverage.videoPath ? rs.coverage : null, hasTranscript: Array.isArray(transcript) && transcript.length > 0,
   };
 }
 function runResearch(label, fn) {
@@ -2066,6 +2066,93 @@ Da 5 títulos.`;
   rs.generated = { ...looseJson(txt), createdAt: Date.now(), format, video: useT && project?.videoPath ? path.basename(project.videoPath) : '', usedInsights: !!ins };
   return 'Propuesta lista.';
 }
+// ¿QUÉ YA SUBIERON DE ESTE DIRECTO? Junta las historias del directo abierto (momentos del Resumen o la transcripción)
+// con lo que los canales en seguimiento subieron desde ese directo, y marca cada historia libre/cubierta/saturada.
+// Cuesta ~2 unidades de YouTube por canal + 2 búsquedas (200 u) + 1 llamada corta a la nube.
+const COVER_MAX = 2; // hasta 2 videos largos de otros = "cubierta"; más = "saturada"
+const coverState = n => n === 0 ? 'libre' : n <= COVER_MAX ? 'cubierta' : 'saturada';
+async function coverageScan(progress) {
+  const vp = project?.videoPath;
+  if (!vp) throw Error('Abre primero el directo que vas a subir.');
+  const bo = currentBestof();
+  const hasT = Array.isArray(transcript) && transcript.length > 0;
+  if (!bo && !hasT) throw Error('Primero procesa el directo en 🎬 Resumen del directo (o transcríbelo) para saber de qué trata.');
+  const tracked = () => rs.channels.filter(c => c.status === 'track' && !c.mine && c.uploads);
+  let list = tracked();
+  if (!list.length) {
+    progress({ message: 'No hay canales en seguimiento: buscándolos primero…', percent: 2 });
+    await discoverChannels(progress);
+    list = tracked();
+    if (!list.length) throw Error('No encontré canales que resuban a este streamer. Agrégalos en 🔍 Investigar → Canales.');
+  }
+  // Desde cuándo buscar: inicio aproximado del directo (fecha del archivo − su duración − 12 h), máximo 7 días atrás.
+  const durSec = bo?.total || (hasT ? transcript[transcript.length - 1].end || 0 : 0);
+  let fileMs = Date.now(); try { fileMs = fs.statSync(vp).mtimeMs; } catch {}
+  const since = Math.max(Date.now() - 7 * 864e5, fileMs - durSec * 1000 - 12 * 3600e3);
+  const client = yt(); const vids = []; let i = 0;
+  for (const c of list) {
+    progress({ message: `Revisando qué subió ${c.title} (${++i}/${list.length})…`, percent: 5 + Math.round(i / list.length * 55) });
+    try {
+      const j = await client.get('playlistItems', { part: 'contentDetails', playlistId: c.uploads, maxResults: '50' });
+      const ids = (j.items || []).filter(it => Date.parse(it.contentDetails?.videoPublishedAt || 0) >= since).map(it => it.contentDetails.videoId);
+      if (ids.length) for (const v of await client.videosByIds(ids)) if (!v.live && v.duration > 0) vids.push({ ...v, channelTitle: c.title });
+    } catch (e) { if (/cuota/i.test(e.message)) throw e; } // un canal borrado o privado no tumba todo
+  }
+  // La lista de canales nunca está completa: busca además en YouTube lo subido desde el directo con el nombre del
+  // streamer (100 u por búsqueda), para no perder canales que no sigues. Se excluyen mis canales y los ignorados.
+  const skip = new Set(rs.channels.filter(c => c.mine || c.status === 'ignore').map(c => c.id));
+  const seen = new Set(vids.map(v => v.id)); const extra = new Map();
+  for (const q of researchTarget().slice(0, 2)) {
+    progress({ message: `Buscando en YouTube "${q}" desde el directo…`, percent: 62 });
+    try {
+      const j = await client.get('search', { part: 'snippet', q, type: 'video', order: 'date', publishedAfter: new Date(since).toISOString(), maxResults: '50', regionCode: 'MX', relevanceLanguage: 'es' });
+      for (const it of j.items || []) { const id = it.id?.videoId, sn = it.snippet || {}; if (id && !seen.has(id) && !skip.has(sn.channelId)) { seen.add(id); extra.set(id, sn.channelTitle || ''); } }
+    } catch (e) { if (/cuota/i.test(e.message)) throw e; }
+  }
+  if (extra.size) for (const v of await client.videosByIds([...extra.keys()])) if (!v.live && v.duration > 0) vids.push({ ...v, channelTitle: extra.get(v.id) });
+  vids.sort((a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt));
+  const fmt = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+  const mine = bo
+    ? 'MOMENTOS DE MI DIRECTO (índice · minuto · gancho — por qué):\n' + bo.candidates.map((m, k) => `[${k}] ${fmt(m.start)} ${m.gancho} — ${m.por || ''}`).join('\n')
+    : 'TRANSCRIPCIÓN DE MI DIRECTO (cada línea empieza con su minuto [Nm]):\n' + research.compactTranscript(transcript, 40000);
+  const theirs = vids.length ? vids.map((v, k) => `[${k}] ${v.channelTitle} | ${v.duration <= 180 ? 'SHORT' : Math.round(v.duration / 60) + ' min'} | ${v.title}`).join('\n') : '(ninguno)';
+  const prompt = `Analizo un directo de ${targetLabel()} (streamer IRL de Kick) que voy a subir a mi canal de YouTube. El archivo se llama "${path.basename(vp)}" (suele ser el título del directo).
+
+${mine}
+
+VIDEOS QUE OTROS CANALES YA SUBIERON DESDE ESE DIRECTO (índice · canal · duración · título):
+${theirs}
+
+TAREA:
+1) Agrupa ${bo ? 'mis momentos' : 'el directo'} en 3 a 8 HISTORIAS: cada una es un tema que podría ser un video por sí mismo (una persona, un lugar, un problema, una sorpresa). ${bo ? 'Cada momento va en una sola historia; los de relleno pueden quedar fuera.' : 'Indica los minutos donde pasa.'}
+2) Para cada historia, di qué videos de la lista tratan ESA MISMA historia según su título. Ojo: pueden llamar distinto a la misma persona (apodos, "el primo", nombre mal escrito). Si el título no deja claro que es esa historia, NO lo cuentes. Un video puede cubrir varias historias.
+3) Para cada historia propón un título para MI video (estilo del nicho, en MAYÚSCULAS, concreto: quién + qué pasó; sin copiar los de la lista ni inventar cosas que no pasaron), 2-4 palabras para la miniatura y la idea de miniatura en una frase.
+
+Responde SOLO un JSON válido, español de México:
+{"historias":[{"nombre":"nombre corto de la historia","${bo ? 'momentos":[índices de mis momentos]' : 'minutos":[minutos donde pasa]'},"videos":[índices de la lista de otros canales],"titulo":"...","textoMiniatura":"...","miniatura":"..."}]}`;
+  progress({ message: `La IA está comparando tus historias con ${vids.length} video(s) de otros canales…`, percent: 65 });
+  const txt = await cloudPick(prompt, CLOUD_MODEL, n => progress({ percent: Math.min(98, 65 + Math.round(n / 80)) }), 6000, 'Investigar: qué ya subieron');
+  const out = looseJson(txt);
+  const stories = (Array.isArray(out.historias) ? out.historias : []).map(h => {
+    const idx = [...new Set((h.videos || []).map(Number).filter(k => Number.isInteger(k) && vids[k]))];
+    const matched = idx.map(k => vids[k]).map(v => ({ id: v.id, title: v.title, channel: v.channelTitle, views: v.views, duration: v.duration, publishedAt: v.publishedAt, thumb: v.thumbSmall || v.thumb }));
+    const longs = matched.filter(v => v.duration > 180);
+    const moments = bo
+      ? (h.momentos || []).map(Number).filter(k => bo.candidates[k]).map(k => ({ t: bo.candidates[k].start, gancho: bo.candidates[k].gancho, score: bo.candidates[k].score || 0 }))
+      : (h.minutos || []).map(Number).filter(Number.isFinite).map(m => ({ t: m * 60, gancho: '', score: 0 }));
+    return { name: String(h.nombre || 'Historia'), state: coverState(longs.length), longs: longs.length, shorts: matched.length - longs.length,
+      weight: moments.reduce((s, m) => s + (m.score || 5), 0), moments, videos: matched,
+      title: String(h.titulo || ''), thumbText: String(h.textoMiniatura || ''), thumbIdea: String(h.miniatura || '') };
+  });
+  if (!stories.length) throw Error('La IA no devolvió historias. Intenta otra vez.');
+  // Recomendada = la historia con más peso (momentos × score) que no esté saturada.
+  const rec = stories.filter(s => s.state !== 'saturada').sort((a, b) => b.weight - a.weight || a.longs - b.longs)[0] || null;
+  const order = { libre: 0, cubierta: 1, saturada: 2 };
+  stories.sort((a, b) => (b === rec) - (a === rec) || order[a.state] - order[b.state] || b.weight - a.weight); // la recomendada primero
+  rs.coverage = { video: path.basename(vp), videoPath: vp, createdAt: Date.now(), since, channels: list.length, found: vids.length, source: bo ? 'momentos' : 'transcripción', stories, recommended: rec ? rec.name : '' };
+  const libres = stories.filter(s => s.state === 'libre').length;
+  return `Listo: ${stories.length} historias, ${libres} libre(s). Revisé ${list.length} canales (${vids.length} videos desde el directo).`;
+}
 function pickModel() { return CLOUD_MODEL; } // única opción
 async function researchRoute(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/research/target') {
@@ -2109,6 +2196,7 @@ async function researchRoute(req, res, url) {
   if (p === '/api/research/refresh') { const b = await jsonBody(req).catch(() => ({})); const max = Math.max(50, Math.min(500, Number(b.max) || 150)); return respond(res, 202, runResearch('Actualizando…', pr => refreshResearch(pr, max))); }
   const needCloud = () => { if (!cloud.key) throw Error('Falta la API key de la nube (Claude). Pégala en 🎬 Resumen del directo → Motor de IA.'); };
   if (p === '/api/research/insights') { needCloud(); const b = await jsonBody(req).catch(() => ({})); return respond(res, 202, runResearch('Preparando análisis…', pr => buildInsights(pr, pickModel(b.model)))); }
+  if (p === '/api/research/coverage') { needCloud(); if (!ytConf.key) throw Error('Conecta primero YouTube (🔍 Investigar → paso 1).'); return respond(res, 202, runResearch('Revisando qué ya subieron…', coverageScan)); }
   if (p === '/api/research/generate') { needCloud(); const b = await jsonBody(req).catch(() => ({})); return respond(res, 202, runResearch('Preparando…', pr => generateForVideo(pr, { ...b, model: pickModel(b.model) }))); }
   return false;
 }
