@@ -46,7 +46,15 @@ function toDownloads(file){
 function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } }
 function writeJson(file, value) { fs.writeFileSync(file, JSON.stringify(value, null, 2), 'utf8'); }
 let project = readJson(files.project, null);
-let config = { ffmpeg: '', ffprobe: '', whisper: '', model: '', brandHandle: channelStyle.brandHandle || '', brandMark: channelStyle.brandMark || '', ...readJson(files.config, {}) };
+let config = { ffmpeg: '', ffprobe: '', whisper: '', model: '', brandHandle: '', brandMark: channelStyle.brandMark || '', ...readJson(files.config, {}) };
+// STREAMER POR VIDEO: la app se usa con varios canales/streamers. Cada proyecto guarda {name, handle, names} y se
+// recuerda el último usado (data/last_streamer.json) para no reescribirlo en cada video del mismo canal.
+const LAST_STREAMER = path.join(DATA, 'last_streamer.json');
+const BRAND_HANDLES = path.join(DATA, 'brand_handles.json'); // los @ usados (para elegir en Shorts)
+const cleanStreamer = o => ({ name: String((o && o.name) || '').trim().slice(0, 60), handle: String((o && o.handle) || '').trim().slice(0, 60), names: String((o && o.names) || '').trim().slice(0, 300) });
+const streamerOf = () => (project && project.streamer) ? project.streamer : cleanStreamer(readJson(LAST_STREAMER, { handle: config.brandHandle || '' }));
+// @ de la marca de ESTE video: el del streamer; si el proyecto aún no tiene, el de Configuración (si se puso a mano).
+const brandHandleNow = () => { const st = project && project.streamer; return st ? st.handle : (config.brandHandle || ''); };
 let dictionary = readJson(files.dictionary, []);
 let transcript = readJson(files.transcript, []);
 let shorts = readJson(files.shorts, []);
@@ -142,7 +150,7 @@ function cachedMatches(){
   if(_mCache.sig!==sig){ _mCache={sig,val:findMatches(t,dictionary)}; }
   return _mCache.val;
 }
-function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: cachedMatches(), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan:currentBestof(), cloud:{engine:cloud.engine,model:cloud.model,keySet:!!cloud.key}, version: APP_VERSION, job }; }
+function state() { return { project, config, dictionary, transcript, shorts, adjustments, pauses, manualCuts, selection, exports:listExports(), matches: cachedMatches(), readiness: readiness(), captionStyles: captionStyles(), qualities: qualityLabels(), brandTemplates: brandTemplates(), clipFx: clipFxLabels(), dfReady: dfReady(), filmstrip, sensitiveScan, silenceScan, bestofScan:currentBestof(), brandHandles:readJson(BRAND_HANDLES, config.brandHandle?[config.brandHandle]:[]), cloud:{engine:cloud.engine,model:cloud.model,keySet:!!cloud.key}, version: APP_VERSION, job }; }
 function respond(res, code, data) { const body = JSON.stringify(data); res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'access-control-allow-origin': 'http://127.0.0.1:' + PORT }); res.end(body); }
 function error(res, err, code = 400) { respond(res, code, { error: String(err.message || err) }); }
 async function jsonBody(req) { let size = 0; const chunks=[]; for await (const chunk of req) { size += chunk.length; if (size > 1024*1024) throw Error('Solicitud demasiado grande'); chunks.push(chunk); } return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
@@ -254,7 +262,8 @@ async function transcribe(opts) {
     try {
       await run(bins.ffmpeg, ['-y','-i',project.videoPath,'-vn','-ar','16000','-ac','1','-c:a','pcm_s16le',wav], progress(total,'Audio'));
       job.message='Transcribiendo en español…'; job.progress=''; job.percent=0;
-      const prompt = channelStyle.transcriptionPrompt || 'Conversación informal en español de México. Directo, chat, güey, no mames.';
+      const st = streamerOf(); const who = [st.name, st.names].filter(Boolean).join(', ');
+      const prompt = 'Conversación informal en español de México.' + (who ? ' ' + who + '.' : '') + ' Directo, chat, güey, no mames.';
       const wargs=['-m',bins.model,'-f',wav,'-l','es','-ml','1','-sow','-ojf','-of',outputBase,'--prompt',prompt];
       if(useVad){ wargs.push('--vad','--vad-model',vadModel); job.message='Transcribiendo en español (saltando silencios)…'; }
       try { await run(bins.whisper, wargs, progress(total,'Texto')); }
@@ -418,7 +427,7 @@ async function finalizeExport(bin,temporary,output,intro,outro,studio,clipIn='no
   if((!intro||intro==='none')&&(!outro||outro==='none')){ await fsp.rename(main,output); return; }
   job.message='Agregando intro/outro…';
   const {width,height}=videoDimensions(main); const fps=videoFps(main);
-  const handle=config.brandHandle||channelStyle.brandHandle||'@TuCanal';
+  const handle=brandHandleNow()||'@TuCanal';
   const clips=[];
   if(intro&&intro!=='none'){ const p=path.join(DATA,`intro_${crypto.randomUUID()}.mp4`); await makeBrandClip(bin,false,intro,width,height,fps,handle,p); clips.push(p); }
   clips.push(main);
@@ -1218,7 +1227,7 @@ async function proposeShorts(opts) {
         const candidate=candidates[i];
         const excerpt=words.filter(w=>w.start>=candidate.start&&w.start<candidate.end).map(w=>w.text.trim()).join(' ');
         let criteria=null, gancho='';
-        try { const r=await assessCandidate(model,excerpt); criteria=r.criteria; gancho=r.gancho; } catch(err) { /* una escena mala no tumba el lote */ }
+        try { const r=await assessCandidate(model,excerpt,streamerOf().name); criteria=r.criteria; gancho=r.gancho; } catch(err) { /* una escena mala no tumba el lote */ }
         if (criteria) { const summary=summarizeAssessment(criteria); evaluated.push({...candidate,editorialScore:summary.score,reason:summary.reason,gancho,method:'modelo local'}); }
         else { evaluated.push({...candidate,editorialScore:candidate.score,reason:'por ritmo (la IA no evaluó esta)',gancho:'',method:'ritmo'}); }
         job.percent=Math.round((i+1)/candidates.length*100);
@@ -1316,7 +1325,7 @@ async function renderOneShort(clip,bin) {
   // GANCHO AL INICIO (como Opus): la frase más fuerte se pone primero y luego el Short completo.
   const hs=clip.hookFirst&&Number.isFinite(clip.hookStart)?clip.hookStart-clip.start:null, he=hs!=null?clip.hookEnd-clip.start:null;
   const hookFirst=hs!=null&&he>hs+1&&hs>=0&&he<=dur;
-  await fsp.writeFile(assFile,makeAss(transcript,{...clip,...(hookFirst?{hook:''}:{}),censorRanges,brandHandle:config.brandHandle ?? channelStyle.brandHandle,brandMark:config.brandMark ?? channelStyle.brandMark}),'utf8');
+  await fsp.writeFile(assFile,makeAss(transcript,{...clip,...(hookFirst?{hook:''}:{}),censorRanges,brandHandle:brandHandleNow(),brandMark:brandHandleNow()?(config.brandMark ?? channelStyle.brandMark):''}),'utf8');
   const output=path.join(EXPORTS,`short_${clip.rank}_${Date.now()}.mp4`);
   const temporary=path.join(DATA,`short_${crypto.randomUUID()}.mp4`);
   // Salida en 1080p (como Opus; YouTube da más calidad a Shorts 1080×1920). Los subtítulos (.ass) siguen medidos en 720×1280
@@ -2130,7 +2139,7 @@ async function thumbsQueueRoute(req,res,url){
   return false;
 }
 
-const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/lib/thumbs.js':'lib/thumbs.js', '/miniaturas.js':'miniaturas.js', '/cola.js':'cola.js', '/timeline-core.js':'lib/timeline-core.js', '/lib/pace.js':'lib/pace.js', '/ritmo.js':'ritmo.js', '/lib/fillers.js':'lib/fillers.js', '/muletillas.js':'muletillas.js', '/lib/autozoom.js':'lib/autozoom.js', '/autozoom-ui.js':'autozoom-ui.js' };
+const staticFiles = { '/':'index.html', '/index.html':'index.html', '/app.js':'app.js', '/style.css':'style.css', '/investigar.js':'investigar.js', '/vision.js':'vision.js', '/lib/thumbs.js':'lib/thumbs.js', '/miniaturas.js':'miniaturas.js', '/cola.js':'cola.js', '/timeline-core.js':'lib/timeline-core.js', '/lib/pace.js':'lib/pace.js', '/ritmo.js':'ritmo.js', '/lib/fillers.js':'lib/fillers.js', '/muletillas.js':'muletillas.js', '/lib/autozoom.js':'lib/autozoom.js', '/autozoom-ui.js':'autozoom-ui.js', '/streamer.js':'streamer.js' };
 const contentTypes = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8' };
 const server=http.createServer(async (req,res) => {
   try {
@@ -2173,6 +2182,14 @@ const server=http.createServer(async (req,res) => {
       writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts); writeJson(files.adjustments,adjustments); writeJson(files.pauses,pauses); writeJson(files.manualCuts,manualCuts); writeJson(files.selection,selection);
       return respond(res,200,state());
     }
+    if (req.method==='POST' && url.pathname==='/api/project/streamer') {
+      if (!project) throw Error('Abre un video primero.');
+      const body = await jsonBody(req) || {};
+      const st = cleanStreamer({ ...(project.streamer || {}), ...Object.fromEntries(['name', 'handle', 'names'].filter(k => k in body).map(k => [k, body[k]])) });
+      project.streamer = st; writeJson(files.project, project); writeJson(LAST_STREAMER, st);
+      if (st.handle) { const hs = readJson(BRAND_HANDLES, config.brandHandle?[config.brandHandle]:[]); writeJson(BRAND_HANDLES, [st.handle, ...hs.filter(h => h !== st.handle)].slice(0, 12)); }
+      return respond(res, 200, { ...state(), brandHandles: readJson(BRAND_HANDLES, config.brandHandle?[config.brandHandle]:[]) });
+    }
     if (req.method==='POST' && url.pathname==='/api/project/open') {
       if (job.status==='running') throw Error('Espera a que termine el proceso actual antes de cambiar de video.');
       const body=await jsonBody(req), videoPath=path.resolve(String(body.path||''));
@@ -2182,7 +2199,7 @@ const server=http.createServer(async (req,res) => {
       if (fs.statSync(videoPath).size === 0) throw Error(`"${path.basename(videoPath)}" está vacío (0 bytes): la descarga no se completó. Vuelve a descargar el directo o abre el archivo bueno.`);
       try { await durationOf(videoPath); } catch { throw Error(`No pude leer "${path.basename(videoPath)}": el archivo está dañado o incompleto (¿la descarga se cortó?). Vuelve a descargarlo.`); }
       if (!['.mp4','.mov','.mkv','.webm','.avi','.m4v','.mpg','.mpeg'].includes(path.extname(videoPath).toLowerCase())) throw Error('Formato de video no admitido.');
-      project={videoPath,openedAt:new Date().toISOString()}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null; clearBestof();writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
+      project={videoPath,openedAt:new Date().toISOString(),streamer:cleanStreamer(readJson(LAST_STREAMER,{handle:config.brandHandle||''}))}; transcript=[]; shorts=[]; adjustments={};pauses=[];manualCuts=[];selection=null;filmstrip=null; clearBestof();writeJson(files.project,project); writeJson(files.transcript,transcript); writeJson(files.shorts,shorts);writeJson(files.adjustments,adjustments);writeJson(files.pauses,pauses);writeJson(files.manualCuts,manualCuts);writeJson(files.selection,selection);
       prepareProject(); // genera vista previa (si hace falta) + miniaturas + onda automáticamente
       return respond(res,200,state());
     }
@@ -2365,7 +2382,7 @@ const server=http.createServer(async (req,res) => {
       if (!transcript.length) throw Error('Transcribe el video primero.');
       const excerpt=tokenizeTranscript(transcript).filter(w=>w.start>=clip.start&&w.start<clip.end).map(w=>w.text.trim()).join(' ');
       const model=process.env.EDITOR_IRL_MODEL||'gemma3:4b';
-      const meta=await writePackage(model,excerpt);
+      const meta=await writePackage(model,excerpt,streamerOf().name);
       clip.meta=meta; writeJson(files.shorts,shorts);
       return respond(res,200,{meta});
     }

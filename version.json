@@ -33,6 +33,7 @@
     "lib/fillers.js",
     "ritmo.js",
     "muletillas.js",
-    "autozoom-ui.js"
+    "autozoom-ui.js",
+    "streamer.js"
   ]
 }

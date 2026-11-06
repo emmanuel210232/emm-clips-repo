@@ -40,7 +40,7 @@
       </nav>
       <div class="railLabel">Herramientas</div>
       <button id="modeToggle" class="railItem" type="button" title="Cambiar entre el editor de cortos y el Resumen del directo">🎬 Resumen del directo</button>
-      <button id="researchToggle" class="railItem researchToggle" type="button" title="Investigar a los canales que resuben a Shifu: qué pega, a qué hora, títulos y miniaturas">🔍 Investigar</button>
+      <button id="researchToggle" class="railItem researchToggle" type="button" title="Investigar a los canales de tu nicho: qué pega, a qué hora, títulos y miniaturas">🔍 Investigar</button>
       <div class="railSpacer"></div>
       <button id="reqOpen" class="railItem" type="button" title="Comprobar que esta PC tiene todo lo necesario">🧰 Requisitos</button>
       <button id="railConfig" class="railItem" type="button" title="Rutas de FFmpeg/Whisper, marca y actualizaciones">⚙️ Configuración</button>
@@ -134,6 +134,7 @@
             <input id="videoFile" type="file" accept="video/*,.mkv,.avi,.mpg,.mpeg">
           </details>
           <div class="previewAction"><button id="makePreview" class="secondary">Crear vista previa MP4</button><span class="muted">Útil para MPG y formatos que el navegador no reproduce.</span></div>
+          <details class="streamerCard" id="streamerCard" open><summary>👤 Streamer de este video</summary><div id="streamerBox"></div></details>
         </div>
         <div class="card animCard">
           <div class="animPanel">
@@ -145,7 +146,7 @@
               <button id="animPreviewOut" type="button" class="secondary compact">▶ Ver salida</button>
               <label>Duración <input id="clipDur" type="number" min="0.3" max="3" step="0.1" value="0.8" style="width:64px"> s</label>
             </div>
-            <details class="animBrand"><summary>Intro / outro con tu @usuario (opcional)</summary>
+            <details class="animBrand" hidden><summary>Intro / outro con tu @usuario (opcional)</summary>
               <div class="row wrap"><label style="flex:1">Intro <select id="introTpl"></select></label><label style="flex:1">Outro <select id="outroTpl"></select></label></div>
               <p class="hint">Agrega una tarjeta corta (2.5s) con tu @usuario al inicio/final. Si eliges alguna, el video se reencoda.</p>
             </details>
@@ -224,6 +225,7 @@
             </label>
             <span id="shortsEngineStatus" class="muted"></span>
           </div>
+          <div class="row wrap shortsBrandRow" id="shortsBrandBox"></div>
           <div class="row wrap"><button id="suggestShorts" class="primary">🤖 Buscar momentos virales</button><button id="renderAllShorts" class="secondary">Crear todos los Shorts</button><span class="muted">30–60 s con gancho · o crea uno exacto abajo</span></div>
           <details class="manualEditor" id="manualShortBox"><summary>➕ Crear Short de un momento exacto</summary>
             <p class="hint">Escribe el <b>inicio</b> y el <b>final</b> del momento (en <b>mm:ss</b> como <code>12:00</code>, o en segundos). La app lo hace vertical con subtítulos y zoom. Debe durar entre 10 y 100 s. Aparece arriba en la lista; luego pulsa <b>Crear Short vertical</b>.</p>
@@ -351,5 +353,6 @@
   <script src="/muletillas.js"></script>
   <script src="/lib/autozoom.js"></script>
   <script src="/autozoom-ui.js"></script>
+  <script src="/streamer.js"></script>
 </body>
 </html>
