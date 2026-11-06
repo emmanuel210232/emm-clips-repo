@@ -35,6 +35,27 @@
       say(`🎥 Puse ${n} acercamiento(s) alternados en los cortes (${level.options[level.selectedIndex].text}). Se ven al exportar; quita los que no quieras con 🔍 o Ctrl+Z.`);
     } catch (e) { say(e.message, true); }
   };
+  // VISTA PREVIA del zoom en el reproductor: mientras el video pasa por un clip con zoom (automático o a mano), el
+  // reproductor se acerca igual que el export (aproximado: mismo factor y centro), sin tener que exportar.
+  const video = document.getElementById('video');
+  if (video) {
+    let lastKey = '';
+    const apply = () => {
+      const t = video.currentTime;
+      const list = (typeof clips !== 'undefined' && clips) || [];
+      const c = list.find(k => t >= k.start && t < k.end);
+      const pt = c ? AZ.previewTransform(c) : { transform: '', origin: '' };
+      const key = pt.transform + '|' + pt.origin;
+      if (key === lastKey) return;
+      lastKey = key;
+      video.style.transition = 'transform .12s ease-out';
+      video.style.transformOrigin = pt.origin || '';
+      video.style.transform = pt.transform || '';
+    };
+    video.addEventListener('timeupdate', apply);
+    video.addEventListener('seeked', apply);
+    video.addEventListener('emptied', () => { lastKey = ''; video.style.transform = ''; });
+  }
   off.onclick = () => {
     try {
       ensureClips();
