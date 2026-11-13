@@ -202,7 +202,7 @@ function nativeDialog(kind, defaultName='') {
   });
 }
 // ===== Auto-actualizador (descarga el codigo nuevo desde GitHub) =====
-const APP_VERSION = '1.29.0';
+const APP_VERSION = '1.30.0';
 // EMM_UPDATE_URL solo sirve para PROBAR con un servidor de actualizaciones falso (nunca contra main).
 const UPDATE_RAW = process.env.EMM_UPDATE_URL || 'https://raw.githubusercontent.com/emmanuel210232/emm-clips-repo/main/';
 async function fetchText(url){const r=await fetch(url,{signal:AbortSignal.timeout(20000),cache:'no-store'});if(!r.ok)throw Error('No se pudo descargar ('+r.status+')');return r.text();}
@@ -309,9 +309,17 @@ const QUALITY = {
 function qualityLabels(){ return Object.entries(QUALITY).map(([id,q])=>({id,label:q.label})); }
 // Reencodeo visualmente SIN pérdida (crf 18 = calidad alta, conserva resolución original). Se usa cuando no se puede copiar el stream tal cual.
 const HQ_VIDEO = ['-c:v','libx264','-preset','medium','-crf','18','-pix_fmt','yuv420p'];
-// Render rápido por GPU (NVIDIA NVENC), calidad alta: preset lento de NVENC (p6) + AQ. La escala CQ de NVENC no es la
+// Render rápido por GPU (NVIDIA NVENC), calidad alta: preset p4 de NVENC + AQ. La escala CQ de NVENC no es la
 // del CRF de x264: medido en video de Kick 1080p60, NVENC cq 23 ≈ SSIM 0.995 (x264 crf 18 ≈ 0.993) y ~1.5× más rápido.
-const nvencArgs = cq => ['-c:v','h264_nvenc','-pix_fmt','yuv420p','-preset','p6','-tune','hq','-rc','vbr','-cq',String(cq),'-b:v','0','-spatial-aq','1'];
+// Si NVENC falla se exporta por CPU. Antes el aviso siempre decía "actualiza el driver" (engañoso): ahora se guarda el
+// motivo REAL en data/errores.log y, si fue por memoria de la tarjeta, se dice (p. ej. ComfyUI abierto ocupando la GPU).
+function gpuFail(e){
+  const why=String((e&&(e.stderr||e.message))||e).split(/\r?\n/).filter(l=>/nvenc|cuda|error|memory|session|failed|incompatible/i.test(l)).slice(-3).join(' | ').slice(0,400);
+  try{ fs.appendFileSync(path.join(DATA,'errores.log'),new Date().toISOString()+' GPU->CPU: '+why+'\n'); }catch{}
+  return 'La tarjeta de video no pudo exportar'+(/out of memory|memory|OpenEncodeSessionEx/i.test(why)?' (no tiene memoria o sesiones libres: cierra programas que usen la GPU, como ComfyUI)':'')+'; exportando por CPU (más lento)…';
+}
+// Preset p4: medido (13-nov, 1080p60 de Kick) 50 % más rápido que p5/p6 con la misma calidad (VMAF 98.8 vs 98.8, mismo tamaño).
+const nvencArgs = cq => ['-c:v','h264_nvenc','-pix_fmt','yuv420p','-preset','p4','-tune','hq','-rc','vbr','-cq',String(cq),'-b:v','0','-spatial-aq','1'];
 // Plantillas de intro/outro (fondo + color de texto; animación fade). Propias, no de CapCut.
 // Plantillas de intro/outro: cada una combina un LOOK (colores) con un MOVIMIENTO del texto.
 // El clip siempre funde a/desde negro en los bordes → transición suave con el video.
@@ -552,7 +560,7 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
           const targs=enc=>['-y',...seek.COPYTS,'-i',project.videoPath,...extra,...tg.inputs,'-/filter_complex',fscript,'-map',vOut,'-map','[tzoa]',...enc,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
           job.message=`Silenciando y exportando con avance (${tPlan.fragments.length} momentos, ${Math.round(tg.duration)} s)…`;
           try{ await runDec(bins.ffmpeg, targs(gpu?gpuEnc:cpuEnc), progress(total,gpu?'Exportando con avance (GPU)':'Exportando con avance'), gpu); }
-          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await runDec(bins.ffmpeg, targs(cpuEnc), progress(total,'Exportando con avance'), gpu); }
+          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message=gpuFail(e); job.percent=0; await runDec(bins.ffmpeg, targs(cpuEnc), progress(total,'Exportando con avance'), gpu); }
         } else if(fx && !q.scale && !q.fps){
           // UN SOLO PASO: silenciar + efecto de entrada/salida juntos (no hay dos barras).
           const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=videoFps(project.videoPath);
@@ -560,7 +568,7 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
           const parts=[`[0:v]settb=AVTB,fps=${efps},format=yuv420p,setsar=1[m]`, ...fxg.parts, `[0:a]${af}[ao]`];
           const fxArgs=enc=>['-y','-i',project.videoPath,...fxg.inputs,'-filter_complex',parts.join(';'),'-map',fxg.label,'-map','[ao]',...enc,'-c:a','aac','-b:a','192k','-movflags','+faststart',temporary];
           try{ await runDec(bins.ffmpeg, fxArgs(gpu?nvencArgs(23):HQ_VIDEO), progress(duration,gpu?'Silenciando y aplicando efecto (GPU)':'Silenciando y aplicando efecto'), gpu); }
-          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message='La GPU no está disponible; exportando por CPU…'; job.percent=0; await runDec(bins.ffmpeg, fxArgs(HQ_VIDEO), progress(duration,'Silenciando y aplicando efecto'), gpu); }
+          catch(e){ if(!gpu||job.cancelRequested) throw e; job.message=gpuFail(e); job.percent=0; await runDec(bins.ffmpeg, fxArgs(HQ_VIDEO), progress(duration,'Silenciando y aplicando efecto'), gpu); }
           fxInFinalizeIn='none'; fxInFinalizeOut='none'; // ya aplicado
         } else {
           const base=['-y','-i',project.videoPath,'-map','0:v:0','-map','0:a:0'];
@@ -693,14 +701,21 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
   const cutCrf=String(q.crf||18);
   // Render rápido cuando gpu=true: intenta GPU (NVENC) y, si el driver no lo soporta, cae solo a CPU veryfast.
   const cutVx264 = ['-c:v','libx264','-pix_fmt','yuv420p','-preset',gpu?'veryfast':'medium','-crf',cutCrf];
-  const cutVnvenc = ['-c:v','h264_nvenc','-pix_fmt','yuv420p','-preset','p5','-rc','vbr','-cq',cutCrf,'-b:v','0'];
+  const cutVnvenc = ['-c:v','h264_nvenc','-pix_fmt','yuv420p','-preset','p4','-rc','vbr','-cq',cutCrf,'-b:v','0'];
   // MUCHOS clips (>120, p. ej. tras quitar silencios): el método de 1 sola entrada mandaba CADA fotograma del directo
   // a CADA clip (1403 filtros) → tardaba minutos en arrancar y HORAS en exportar. Ahora se exporta por TANDAS de
   // ≤100 clips con el método rápido (salto por clip + pre-roll para la sincronía) y al final se unen SIN reencodear
   // el video. El audio va sin pérdida (PCM) en las tandas y se codifica UNA sola vez al final (con la mejora de voz).
-  const BATCH = !SEG && !canSmooth;
+  // MUCHOS clips CON TRANSICIONES (resumen de 70 momentos con fundido): en UNA pasada ffmpeg abre los 70 pedazos a la
+  // vez y se hunde (medido 13-nov: 76 clips = 0 cuadros en 45 s → ~4 h; 10 clips = 199 fps). Ahora van en tandas de 10:
+  // el fundido entre tandas se hace al final de cada tanda con la "cabeza" del primer clip de la siguiente, y esa tanda
+  // empieza ese clip justo después del fundido → mismos cuadros que en una sola pasada.
+  const SMOOTH_BATCH = canSmooth && keep.length > 40; // medido: hasta ~35 clips la pasada única va bien; 76 no arrancaba
+  const BATCH = (!SEG && !canSmooth) || SMOOTH_BATCH;
+  // Duración del fundido ANTES del clip i (misma regla que la pasada única).
+  const xdOf = i => { const k=keep[i], p=keep[i-1]; const want = k.trans ? 0.5 : k.join ? 0.2 : (smooth ? 0.14 : 0.05); return Math.min(want, (k.end-k.start)/2, (p.end-p.start)/2); };
   async function exportBatched(){
-    const B=100, groups=[]; for(let i=0;i<keep.length;i+=B) groups.push(keep.slice(i,i+B));
+    const B=SMOOTH_BATCH?10:100, groups=[]; for(let i=0;i<keep.length;i+=B) groups.push(keep.slice(i,i+B));
     const {width:EW,height:EH}=videoDimensions(project.videoPath); const efps=q.fps||videoFps(project.videoPath);
     // Mejora de voz: la parte por-muestra (filtros, reducción de ruido, compresor) se hace EN las tandas, mientras la GPU
     // codifica el video (el CPU está libre); al unir solo queda loudnorm sobre el audio COMPLETO (volumen parejo en todo).
@@ -721,12 +736,35 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
         const args=enc=>['-y',...seek.COPYTS,...tg.inputs,'-/filter_complex',fscript,'-map',vl,'-map',tg.a,...enc,'-c:a','pcm_s16le',out];
         job.message=`Exportando el avance (${tPlan.fragments.length} momentos)…`;
         try{ await runDec(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando avance',{t0}),gpu); }
-        catch(e){ if(!useGpu||job.cancelRequested) throw e; useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; await runDec(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando avance',{t0}),gpu); }
+        catch(e){ if(!useGpu||job.cancelRequested) throw e; useGpu=false; job.message=gpuFail(e); await runDec(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando avance',{t0}),gpu); }
         doneSec+=tDur;
       }
       for(let g=0; g<groups.length; g++){
         if(job.cancelRequested) throw Error('Proceso cancelado por el usuario.');
-        const grp=groups[g], gLen=grp.reduce((a,k)=>a+(k.end-k.start),0);
+        const grp=groups[g]; let gLen=grp.reduce((a,k)=>a+(k.end-k.start),0);
+        let ins, f, nIn;
+        if(SMOOTH_BATCH){
+          const i0=g*B, i1=i0+grp.length-1, lastG=g===groups.length-1;
+          // El 1er clip de la tanda (salvo la 1ª) empieza DESPUÉS del fundido, que ya quedó al final de la tanda anterior.
+          const pcs=grp.map((k,m)=>({k, s:(m===0&&i0>0)?k.start+xdOf(i0):k.start, e:k.end}));
+          let head=null;
+          if(!lastG){ const k=keep[i1+1], d=xdOf(i1+1), e=Math.min(k.end, k.start+d+0.1); head={k, s:k.start, e, d:Math.min(d, e-k.start)}; }
+          const all=head?[...pcs, head]:pcs;
+          ins=[]; f=[];
+          all.forEach((p,m)=>{ const ex=seek.exactInput(project.videoPath, p.s, p.e, { pre: PRE, fmtStart: T0 }); ins.push(...ex.input);
+            f.push(`[${m}:v]${ex.vtrim}${zoomOf(p.k)},settb=AVTB,fps=${efps},format=yuv420p,setsar=1[v${m}]`);
+            f.push(`[${m}:a]${ex.atrim}${censorAf(p.s,p.e)}[a${m}]`); });
+          let vp='[v0]', ap='[a0]', L=pcs[0].e-pcs[0].s;
+          for(let m=1;m<pcs.length;m++){ const d=xdOf(i0+m);
+            f.push(`${vp}[v${m}]xfade=transition=fade:duration=${d.toFixed(3)}:offset=${(L-d).toFixed(3)}[vx${m}]`);
+            f.push(`${ap}[a${m}]acrossfade=d=${d.toFixed(3)}[ax${m}]`); vp=`[vx${m}]`; ap=`[ax${m}]`; L+=(pcs[m].e-pcs[m].s)-d; }
+          if(head){ const m=pcs.length, d=head.d;
+            f.push(`${vp}[v${m}]xfade=transition=fade:duration=${d.toFixed(3)}:offset=${(L-d).toFixed(3)},trim=end=${L.toFixed(3)},setpts=PTS-STARTPTS[vh]`);
+            f.push(`${ap}[a${m}]acrossfade=d=${d.toFixed(3)},atrim=end=${L.toFixed(3)},asetpts=PTS-STARTPTS[ah]`); vp='[vh]'; ap='[ah]'; }
+          gLen=L; nIn=all.length;
+          f.push(`${ap}${preAf||'anull'}[ca]`);
+          f.push(`${vp}settb=AVTB,fps=${efps},format=yuv420p,setsar=1[n]`);
+        } else {
         // TRAMOS: clips vecinos en el original (quitar silencios = cientos de clips separados por pausas cortas) comparten
         // UNA lectura del video. Antes cada clip abría el video y decodificaba 15 s extra → 1403 clips de 4 s = >7 h de
         // decodificación. Así cada segundo del original se decodifica una vez. Misma sincronía: salto PRE s antes del
@@ -734,9 +772,9 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
         const spans=[];
         for(const k of grp){ const sp=spans[spans.length-1], last=sp&&sp.clips[sp.clips.length-1];
           if(last && k.start>=last.end-0.001 && k.start-last.end<20 && sp.clips.length<12) sp.clips.push(k); else spans.push({clips:[k]}); }
-        const ins=spans.flatMap(sp=>{ const s0=sp.clips[0].start, e=sp.clips[sp.clips.length-1].end; sp.s0=s0; sp.pre=Math.min(PRE,s0);
+        ins=spans.flatMap(sp=>{ const s0=sp.clips[0].start, e=sp.clips[sp.clips.length-1].end; sp.s0=s0; sp.pre=Math.min(PRE,s0);
           return seek.exactInput(project.videoPath, s0, e, { pre: PRE, fmtStart: T0 }).input; });
-        const f=[]; let i=0;
+        f=[]; let i=0;
         spans.forEach((sp,j)=>{
           const n=sp.clips.length;
           if(n>1){ f.push(`[${j}:v]split=${n}${sp.clips.map((_,m)=>`[sv${j}_${m}]`).join('')}`); f.push(`[${j}:a]asplit=${n}${sp.clips.map((_,m)=>`[sa${j}_${m}]`).join('')}`); }
@@ -748,10 +786,12 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
             i++;
           });
         });
-        const nIn=spans.length;
+        nIn=spans.length;
         f.push(grp.map((_,i)=>`[v${i}][a${i}]`).join('')+`concat=n=${grp.length}:v=1:a=1[cv][ca0]`); f.push(`[ca0]${preAf||'anull'}[ca]`);
         // Todas las tandas con los MISMOS parámetros (fps/formato/tamaño) para poder unirlas sin reencodear.
-        f.push(`[cv]settb=AVTB,fps=${efps},format=yuv420p,setsar=1[n]`); let vl='[n]', extra=[];
+        f.push(`[cv]settb=AVTB,fps=${efps},format=yuv420p,setsar=1[n]`);
+        }
+        let vl='[n]', extra=[];
         const fxIn=g===0?clipIn:'none', fxOut=g===groups.length-1?clipOut:'none'; // fundido de entrada en la 1ª tanda, de salida en la última
         if((fxIn&&fxIn!=='none')||(fxOut&&fxOut!=='none')){ const fx=clipFxParts(vl,gLen,fxIn,fxOut,clipDur,EW,EH,efps,nIn); if(fx.applied){ f.push(...fx.parts); vl=fx.label; extra=fx.inputs; } }
         if(!q.copy && q.scale){ f.push(`${vl}${q.scale}[sc]`); vl='[sc]'; }
@@ -762,7 +802,7 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
         try{ await runDec(bins.ffmpeg,args(useGpu?cutVnvenc:cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0}),gpu); }
         catch(e){
           if(!useGpu||g>0||tPlan||job.cancelRequested) throw e;
-          useGpu=false; job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…';
+          useGpu=false; job.message=gpuFail(e);
           await runDec(bins.ffmpeg,args(cutVx264),progress(progTotal,'Exportando',{offset:doneSec,t0}),gpu);
         }
         doneSec+=gLen;
@@ -932,7 +972,7 @@ async function exportVideoInner(reserved,selectedIds,selectedPauseIds=[],mode='m
         await runDec(bins.ffmpeg, [...cutBase,...(gpu?cutVnvenc:cutVx264),...cutTail], progress(keptTotal+tDur,'Exportando'), gpu);
       }catch(gpuErr){
         if(!gpu || job.cancelRequested) throw gpuErr;
-        job.message='El render por GPU no está disponible (actualiza el driver NVIDIA); exportando rápido por CPU…'; job.percent=0;
+        job.message=gpuFail(gpuErr); job.percent=0;
         await runDec(bins.ffmpeg, [...cutBase,...cutVx264,...cutTail], progress(keptTotal+tDur,'Exportando'), gpu);
       }
       await finalizeExport(bins.ffmpeg,temporary,output,intro,outro,studioOn,smartDone?'none':cutFxIn,smartDone?'none':cutFxOut,clipDur);

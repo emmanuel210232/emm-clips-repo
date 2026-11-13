@@ -1,6 +1,6 @@
 {
-  "version": "1.29.0",
-  "notes": "Versión grande: nuevo diseño de editor, línea del tiempo con deshacer/rehacer y Vista de la edición, intro de avance PRÓXIMAMENTE con los mejores momentos, Corte inteligente (beta: exporta mucho más rápido copiando lo que no cambia), Ritmo y márgenes para silencios, muletillas, zoom automático en los cortes centrado en la gente, galería de miniaturas, cola de exports, streamer por video y marca @ elegible en Shorts (ya nada fijo de un canal), y arreglos (la app ya no se cae, miniaturas de otro video, archivos vacíos). Si algo no te gusta: ⚙️ Configuración → Volver a la versión anterior.",
+  "version": "1.30.0",
+  "notes": "Exportar mucho más rápido: el render por GPU ahora usa un ajuste 50-80 % más rápido con la misma calidad (medido). Los resúmenes con muchos momentos y transiciones (70+) ya no tardan horas: se exportan por partes con los mismos fundidos. Nuevo en 🔍 Investigar: «¿Qué ya subieron de este directo?» separa tu directo en historias y te dice cuáles ya subieron otros canales, cuál te conviene y qué título y miniatura usar. Si la tarjeta de video falla, ahora dice el motivo real (p. ej. otro programa ocupando la GPU). Si algo no te gusta: ⚙️ Configuración → Volver a la versión anterior.",
   "files": [
     "server.js",
     "app.js",
