@@ -562,7 +562,10 @@ function render() {
   // Encadena: si se pidió best-of sin transcripción, al terminar la transcripción arranca el análisis solo.
   if(bestofPendingAnalyze && state.transcript && state.transcript.length && state.job.status==='done'){
     bestofPendingAnalyze=false;
-    api('/api/bestof/analyze',{minutes:bestofPendingCount}).then(()=>notice('⚙️ Transcrito. Ahora analizando los mejores momentos con IA (modelo pesado)…')).catch(e=>notice(e.message,true));
+    // pollJob(): sin esto la pantalla seguía creyendo "terminado" (de la transcripción), dejaba de preguntar el progreso y
+    // no salía la barra del análisis, aunque sí estaba corriendo ("Espera a que termine el proceso actual" sin barra).
+    const nube=(state.cloud&&state.cloud.engine)==='cloud';
+    api('/api/bestof/analyze',{minutes:bestofPendingCount}).then(()=>{ notice(nube?'☁️ Transcrito. Ahora analizando los mejores momentos con la nube…':'⚙️ Transcrito. Ahora analizando los mejores momentos con IA (modelo pesado)…'); return pollJob(); }).catch(e=>notice(e.message,true));
   }
   // Auto-preparar el video al abrirlo (como CapCut): vista previa si el formato no se ve + miniaturas + onda.
   if(p && state.job.status!=='running'){
