@@ -1,6 +1,6 @@
 {
-  "version": "1.30.0",
-  "notes": "Exportar mucho más rápido: el render por GPU ahora usa un ajuste 50-80 % más rápido con la misma calidad (medido). Los resúmenes con muchos momentos y transiciones (70+) ya no tardan horas: se exportan por partes con los mismos fundidos. Nuevo en 🔍 Investigar: «¿Qué ya subieron de este directo?» separa tu directo en historias y te dice cuáles ya subieron otros canales, cuál te conviene y qué título y miniatura usar. Si la tarjeta de video falla, ahora dice el motivo real (p. ej. otro programa ocupando la GPU). Si algo no te gusta: ⚙️ Configuración → Volver a la versión anterior.",
+  "version": "1.30.1",
+  "notes": "Resumen del directo más largo: ahora puedes pedir resúmenes de ~120, ~150 y ~180 min (para directos de 5 h o más; el resumen nunca pasa del 60 % del directo). Para los más largos conviene usar la IA en la nube. También: la barra de progreso ya aparece cuando el resumen arranca solo después de transcribir. Si algo no te gusta: ⚙️ Configuración → Volver a la versión anterior.",
   "files": [
     "server.js",
     "app.js",

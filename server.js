@@ -1123,12 +1123,12 @@ async function detectBestMoments(opts){
   if(!project?.videoPath||!bin) throw Error('Abre un video primero.');
   if(!Array.isArray(transcript)||!transcript.length) throw Error('Primero transcribe el video.');
   if(job.status==='running') throw Error('Espera a que termine el proceso actual.');
-  // Objetivo de duración del resumen: de 3 a 90 min (resúmenes largos de directos de 6-7 h).
-  let targetSec=Math.max(180,Math.min(5400,(Number(opts&&opts.minutes)||12)*60));
+  // Objetivo de duración del resumen: de 3 a 180 min (resúmenes largos de directos de 6-12 h).
+  let targetSec=Math.max(180,Math.min(10800,(Number(opts&&opts.minutes)||12)*60));
   // Un "resumen" no puede ser casi todo el directo: máximo 60 % de lo que dura (p. ej. directo de 1 h → hasta 36 min).
   const srcLen=Number(transcript[transcript.length-1]?.end)||0;
   if(srcLen>0) targetSec=Math.min(targetSec,Math.max(180,Math.round(srcLen*0.6)));
-  const want=Math.max(8,Math.min(110,Math.round(targetSec/55)+5)); // cuántos candidatos pedir al modelo (~1 por cada 55 s)
+  const want=Math.max(8,Math.min(200,Math.round(targetSec/55)+5)); // cuántos candidatos pedir al modelo (~1 por cada 55 s)
   const engine=((opts&&opts.engine)||cloud.engine||'local'); const useCloud=engine==='cloud'&&!!cloud.key;
   const cloudModel=CLOUD_MODEL;
   job={status:'running',message:useCloud?'Analizando el directo con la nube…':'Analizando el directo con IA (modelo pesado)…',progress:'',percent:0,cancelRequested:false};
